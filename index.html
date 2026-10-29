@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://i.ytimg.com https://lh3.googleusercontent.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://apis.google.com; frame-src https://road-to-elite.firebaseapp.com https://accounts.google.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://i.ytimg.com https://lh3.googleusercontent.com; media-src 'self' blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://apis.google.com; frame-src https://road-to-elite.firebaseapp.com https://accounts.google.com https://apis.google.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Road To Elite</title>
 <meta name="description" content="Fabrik + extras + carrera · Pablo">
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#0a0a0b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Road To Elite">
@@ -21,15 +21,8 @@
 </head>
 <body>
 <div class="wrap" id="app">
-  <div class="splash"><div class="logo">E</div><div class="hint">Cargando…</div></div>
+  <div class="splash"><div class="logo-e">E</div><div class="hint">Cargando…</div></div>
 </div>
-<nav class="tabs" id="tabs" hidden>
-  <button data-tab="semana" class="on"><span>▦</span>Semana</button>
-  <button data-tab="cobertura"><span>%</span>Cobertura</button>
-  <button data-tab="marcas"><span>▲</span>Marcas</button>
-  <button data-tab="mas"><span>☰</span>Más</button>
-</nav>
-<div class="sheet" id="sheet" hidden></div>
 <div class="scrim" id="scrim" hidden></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>

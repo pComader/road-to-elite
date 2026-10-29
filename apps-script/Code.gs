@@ -1,12 +1,13 @@
 /**
- * Road To Elite — servidor (Apps Script) · versión 0.2
+ * Road To Elite — servidor (Apps Script) · versión 0.3
  * ------------------------------------------------------------
  * Se pega en: Road to Elite · Training Coverage → Extensiones → Apps Script.
  *
  * Seguridad (por capas):
  *  · Solo responde a UNA cuenta (CONFIG.EMAIL_PERMITIDO). Cada petición trae el token de Firebase y se
  *    comprueba aquí, en el servidor, con Google (no basta con que la web lo diga).
- *  · ESCRIBE solo en este archivo (CONFIG.SHEET_ID). Cualquier intento de escribir en otro libro lanza error.
+ *  · ESCRIBE solo en este archivo (CONFIG.SHEET_ID) y, los domingos, una copia de seguridad en tu carpeta Backups.
+ *    Cualquier intento de escribir en otro libro lanza error.
  *  · FABRIK PROGRAM y la app de Gabi (ProgramAPP) se abren SOLO para leer. Ninguna función escribe en ellos.
  *
  * Lectura de Fabrik: reutiliza el lector de la app de Gabi (mismas funciones puras, copiadas, sin modificar).
@@ -16,13 +17,14 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.2',
+  VERSION: '0.3',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
   SHEET_ID: '1q_DbqA4VWLb-1CUuT8ZDGt-yMfiy__YeoT9-4V2IEJ4',      // Road to Elite · Training Coverage (único sitio donde se escribe)
   FABRIK_ID: '1DRBQteuUHesG2gMODigDBTr5LK5PHMsqRIdHpCtT82g',     // FABRIK PROGRAM · SOLO LECTURA
   PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · SOLO LECTURA (copia semanal de vídeos)
+  BACKUPS_ID: '1X2gFr5Wd-HfI5JsMcfiKscCu5GPXO-aS',             // Drive: APP / Configuración / Backups
   ZONA: 'Europe/Madrid',
   CACHE_SEG: 300
 };
@@ -244,8 +246,9 @@ function guardarRegistro_(r) {
   o.REGISTRADO = ahora_();
   return bloqueo_(function () {
     var sh = hojaMia_(HOJAS.REGISTRO), cab = cabeceras_(sh);
+    // Mismo día + mismo bloque del plan (ID_PLAN). Sin ID_PLAN, se empareja por el nombre del bloque.
     var existe = listar_(HOJAS.REGISTRO).filter(function (x) {
-      return x.FECHA === o.FECHA && x.ID_PLAN === (o.ID_PLAN || '') && x.BLOQUE === (o.BLOQUE || '');
+      return x.FECHA === o.FECHA && (o.ID_PLAN ? x.ID_PLAN === o.ID_PLAN : (!x.ID_PLAN && x.BLOQUE === (o.BLOQUE || '')));
     })[0];
     var fila = existe ? existe._fila : Math.max(1, sh.getLastRow()) + 1;
     sh.getRange(fila, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
@@ -256,10 +259,10 @@ function guardarRegistro_(r) {
 
 function borrarRegistro_(r) {
   var x = listar_(HOJAS.REGISTRO).filter(function (y) {
-    return y.FECHA === String(r.FECHA || '') && y.ID_PLAN === String(r.ID_PLAN || '') && y.BLOQUE === String(r.BLOQUE || '');
+    return y.FECHA === String(r.FECHA || '') && (r.ID_PLAN ? y.ID_PLAN === String(r.ID_PLAN) : y.BLOQUE === String(r.BLOQUE || ''));
   })[0];
   if (!x) throw new Error('no_encontrado');
-  borrarFila_(HOJAS.REGISTRO, x._fila, { FECHA: x.FECHA, ID_PLAN: x.ID_PLAN, BLOQUE: x.BLOQUE });
+  borrarFila_(HOJAS.REGISTRO, x._fila, x.ID_PLAN ? { FECHA: x.FECHA, ID_PLAN: x.ID_PLAN } : { FECHA: x.FECHA, BLOQUE: x.BLOQUE });
 }
 
 // ===================== VÍDEOS =====================
@@ -301,11 +304,28 @@ function cobertura_() {
   };
 }
 
+// ===================== COPIA DE SEGURIDAD EN DRIVE =====================
+/**
+ * Copia completa de Training Coverage (todas las pestañas, fórmulas incluidas) en APP / Configuración / Backups,
+ * con la fecha en el nombre. Se ejecuta sola los domingos a las 23:30 (ver configurar()). También se puede lanzar a mano.
+ */
+function backupSemanal() {
+  var carpeta = DriveApp.getFolderById(CONFIG.BACKUPS_ID);
+  var nombre = 'Road to Elite · Training Coverage · backup ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyy-MM-dd HHmm');
+  var copia = DriveApp.getFileById(CONFIG.SHEET_ID).makeCopy(nombre, carpeta);
+  PROPS.setProperty('ULTIMO_BACKUP', ahora_() + ' · ' + copia.getId());
+  Logger.log('OK · Backup: ' + nombre);
+  return copia.getId();
+}
+
 // ===================== INSTALACIÓN =====================
-/** Ejecutar UNA vez desde el editor: crea la copia semanal de vídeos (domingo 23:00, Madrid) y comprueba accesos. */
+/** Ejecutar desde el editor tras cada actualización: crea la copia semanal de vídeos (domingo 23:00) y el backup (domingo 23:30, Madrid) y comprueba accesos. */
 function configurar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'copiarVideosGabi') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('copiarVideosGabi').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).inTimezone(CONFIG.ZONA).create();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupSemanal') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('backupSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(30).inTimezone(CONFIG.ZONA).create();
+  Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
   var est = estructura_(fabrik_());
   Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
   Logger.log('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { return hojaMia_(HOJAS[k]).getName(); }).join(', '));
