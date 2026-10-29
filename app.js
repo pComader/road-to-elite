@@ -1,5 +1,5 @@
-/* Road To Elite · web 0.2 · misma estructura que la app de Gabi (Fabrik Program), solo para Pablo.
- * Fabrik (solo lectura) + EXTRA de APP · PLAN + registro de lo realizado + marcas + cobertura + timer y calculadora.
+/* Road To Elite · web · misma estructura que la app de Gabi (Fabrik Program), solo para Pablo.
+ * Fabrik (solo lectura) + EXTRA de APP · PLAN + registro de lo realizado + marcas + cobertura + eventos + propuestas + timer y calculadora.
  * Partes reutilizadas de pComader/programapp: utilidades, %→kg, vídeos, variantes, marcas, calculadora, instalar, timer y hojas. */
 (function () {
   'use strict';
@@ -233,41 +233,75 @@
     if (S.data) S.data.misMarcas = S.misMarcas;
   }
 
-  /** Une Fabrik, el plan y lo registrado en la estructura de días que pinta la app (lunes → domingo). */
+  /**
+   * Une Fabrik, el plan y lo registrado en la estructura de días que pinta la app (lunes → domingo).
+   * APP · PLAN manda: una fila ORIGEN=FABRIK con FABRIK_REF «LUNES» coloca ese día entero y «LUNES·2» solo el bloque 2
+   * (fecha, turno y orden de la fila), y además aporta su «por qué», ciencia e interferencias. Sin fila, cada día de Fabrik va a su fecha.
+   * Estados: SUSTITUIDO no se pinta · NO HACER se pinta tachado · PROPUESTA / PROPUESTA · NO HACER se ven como propuesta.
+   */
+  function refFabrik(r) { var m = norm(r.FABRIK_REF || r['FABRIK_DÍA'] || '').replace(/\s+/g, ' ').trim().match(/^([A-Z]+)(?:\s*[·.:\- ]\s*(\d+))?$/); return m ? { dia: m[1], n: m[2] ? Number(m[2]) : null } : null; }
+  function infoPlan(b, r) {
+    if (!r) return b;
+    b.porque = r['POR QUÉ (cursiva)'] || b.porque || ''; b.ciencia = r['CIENCIA (técnica · fisiología · biología)'] || b.ciencia || '';
+    b.interf = r.INTERFERENCIAS || b.interf || ''; b.estado = r.ESTADO || ''; b.cambio = r.CAMBIO_ID || ''; b.filaPlan = r._fila;
+    if (r.ID) b.idPlan = r.ID;
+    return b;
+  }
   function construirDatos(sem) {
-    var fab = sem.fabrik, porNombre = {}, plan = sem.plan || [];
+    var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO'; });
     if (fab) { fab.dias.forEach(function (fd) { porNombre[fd.nombre] = fd; }); S.ciclo = fab.ciclo; guardar('rte-ciclo', fab.ciclo); }
     var dias = DIAS7.map(function (nom, i) { return { nombre: nom, iso: sumarDias(sem.lunes, i), foco: [], bloques: [], rpe: null, notasDia: [] }; });
     var porIso = {}; dias.forEach(function (x) { porIso[x.iso] = x; });
-    function ponerFabrik(dia, fd, nota) {
-      dia.fabrik = fd.nombre; dia.foco = fd.foco || []; dia.rpe = fd.rpe; dia.notasDia = fd.notasDia || [];
+    var refDia = {}, refBloque = {};
+    plan.forEach(function (r) {
+      if (norm(r.ORIGEN) !== 'FABRIK') return;
+      var f = refFabrik(r); if (!f) return;
+      if (f.n == null) refDia[f.dia] = r; else refBloque[f.dia + '·' + f.n] = r;
+    });
+    function datosDia(dia, fd, nota) {
+      if (dia.fabrik && dia.fabrik !== fd.nombre) return;
+      dia.fabrik = fd.nombre; dia.foco = fd.foco || []; dia.rpe = dia.rpe || fd.rpe; dia.notasDia = fd.notasDia || [];
       dia.variantesNombres = fd.variantesNombres; dia.variantesExtra = fd.variantesExtra;
       if (nota) dia.notaPlan = nota;
-      fd.bloques.forEach(function (b, k) { b.turno = 'PM'; b.orden = 50 + k / 100; b.fabrikDia = fd.nombre; dia.bloques.push(b); });
     }
-    var colocados = plan.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK' && r['FABRIK_DÍA']; });
-    if (colocados.length) colocados.forEach(function (r) {
-      var dd = porIso[aIso(r.FECHA)], fd = porNombre[norm(r['FABRIK_DÍA']).trim()];
-      if (dd && fd) ponerFabrik(dd, fd, r.CONTENIDO);
+    if (fab) fab.dias.forEach(function (fd) {
+      var rd = refDia[fd.nombre], destino = rd ? porIso[aIso(rd.FECHA)] : porIso[fd.iso];
+      fd.bloques.forEach(function (b, k) {
+        var rb = refBloque[fd.nombre + '·' + b.n], d2 = rb ? porIso[aIso(rb.FECHA)] : destino;
+        if (!d2) return;
+        var r = rb || rd;
+        b.turno = r && norm(r.TURNO) === 'AM' ? 'AM' : 'PM';
+        b.orden = rb && rb.ORDEN !== '' ? Number(rb.ORDEN) : (rd && rd.ORDEN !== '' ? Number(rd.ORDEN) + k / 100 : 50 + k / 100);
+        b.fabrikDia = fd.nombre;
+        infoPlan(b, r);
+        if (rd && !rb) { b.porque = b.porque || ''; }
+        d2.bloques.push(b);
+        datosDia(d2, fd, rd && !rb ? rd.CONTENIDO : '');
+      });
     });
-    else if (fab) fab.dias.forEach(function (fd) { var dd = porIso[fd.iso]; if (dd) ponerFabrik(dd, fd); });
     plan.forEach(function (r, k) {
-      if (norm(r.ORIGEN) === 'FABRIK' && r['FABRIK_DÍA']) return;
+      if (norm(r.ORIGEN) === 'FABRIK') return;
       var dd = porIso[aIso(r.FECHA)];
       if (!dd) return;
-      dd.bloques.push({ n: 'E' + (k + 1), titulo: r['TÍTULO'] || r.BLOQUE || 'EXTRA', partes: [{ etiqueta: '', tipo: 'main', texto: r.CONTENIDO || '' }],
-        extra: true, turno: norm(r.TURNO) === 'AM' ? 'AM' : 'PM', orden: Number(r.ORDEN) || 0, intensidad: r.INTENSIDAD || '', min: r.MIN || '',
-        codigos: r['CÓDIGOS'] || '', porque: r['POR QUÉ (cursiva)'] || '', estado: r.ESTADO || '', id: r.ID || ('X-' + r._fila) });
+      dd.bloques.push(infoPlan({ n: 'E' + (k + 1), titulo: r['TÍTULO'] || r.BLOQUE || 'EXTRA', partes: [{ etiqueta: '', tipo: 'main', texto: r.CONTENIDO || '' }],
+        extra: true, origen: r.ORIGEN || 'EXTRA', turno: norm(r.TURNO) === 'AM' ? 'AM' : 'PM', orden: Number(r.ORDEN) || 0, intensidad: r.INTENSIDAD || '', min: r.MIN || '',
+        codigos: r['CÓDIGOS'] || '', id: r.ID || ('X-' + r._fila) }, r));
     });
     dias.forEach(function (dd) {
       dd.bloques.sort(function (a, b) { return (a.turno === 'AM' ? 0 : 1) - (b.turno === 'AM' ? 0 : 1) || a.orden - b.orden; });
-      dd.doble = dd.bloques.some(function (b) { return b.turno === 'AM'; }) && dd.bloques.some(function (b) { return b.turno === 'PM'; });
-      if (!dd.rpe && dd.bloques.some(function (b) { return b.extra; })) dd.rpe = '';
+      var activos = dd.bloques.filter(function (b) { return !/^PROPUESTA$/.test(norm(b.estado)); });
+      dd.doble = activos.some(function (b) { return b.turno === 'AM'; }) && activos.some(function (b) { return b.turno === 'PM'; });
+      dd.eventos = (sem.eventos || []).filter(function (e) { var i = aIso(e.INICIO), f = aIso(e.FIN) || i; return i && dd.iso >= i && dd.iso <= f; });
     });
+    var propuestas = {};
+    (sem.plan || []).forEach(function (r) { if (/^PROPUESTA/.test(norm(r.ESTADO)) && r.CAMBIO_ID) (propuestas[r.CAMBIO_ID] = propuestas[r.CAMBIO_ID] || []).push(r); });
     return { semana: sem.lunes, hoy: sem.hoy, ciclo: fab ? fab.ciclo : cicloPara(S.ciclo || leer('rte-ciclo'), sem.lunes), dias: dias,
-      erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: plan, borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
-      misMarcas: S.misMarcas || [], hayFabrik: !!fab };
+      erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: sem.plan || [], borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
+      misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
+      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas };
   }
+  /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
+  function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); }
 
   function cargar(semana) {
     S.cargando = true;
@@ -343,8 +377,10 @@
     }
     if (S.vista === 'ajustes') return renderAjustes();
     if (S.vista === 'cobertura') return renderCobertura();
+    if (S.vista === 'calendario') return renderCalendario();
+    if (S.vista === 'propuesta') return renderPropuesta();
     TM.reg = [];
-    var aviso = d.borrador ? '<div class="unpub">Plan en borrador · se cierra el domingo/lunes</div>' : '';
+    var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
       (S.aviso ? '<div class="stale">' + esc(S.aviso) + '</div>' : '');
     enlazarCabecera();
@@ -390,7 +426,7 @@
       return '<button class="day-btn' + (vacio ? ' rest' : '') + '" type="button" data-dia="' + i + '" aria-pressed="' + (i === S.dia) + '" style="--c:' + rpeColor(x.rpe) + '">' +
         '<span class="d">' + CORTO_DIA[x.nombre] + '</span><span class="n">' + diaMes(x.iso) + '</span>' +
         (x.rpe ? '<span class="r">' + esc(x.rpe) + '</span>' : x.bloques.some(function (b) { return b.extra; }) && !x.fabrik ? '<span class="r ex">EX</span>' : '<span class="r" style="visibility:hidden">–</span>') +
-        '<span class="dot' + (x.iso === d.hoy ? '' : ' off') + (x.doble ? ' doble' : '') + '"></span></button>';
+        '<span class="dot' + (x.iso === d.hoy ? '' : ' off') + (x.doble ? ' doble' : '') + '"></span>' + ((x.eventos || []).length ? '<span class="evdot" title="Evento"></span>' : '') + '</button>';
     }).join('') + '</nav>';
   }
 
@@ -414,6 +450,11 @@
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
+    html += (x.eventos || []).map(function (e) {
+      return '<button class="notice" type="button" data-evento="' + esc(e.ID) + '"><span class="lbl">' + esc(e.TIPO || 'Evento') + (e.HORA ? ' · ' + esc(e.HORA) : '') + ' · ' + esc(e.BLOQUEA || '') + '</span><b>' + esc(e.EVENTO) + '</b>' +
+        (e['CÓMO PROCEDER'] ? '<span class="txt">' + esc(e['CÓMO PROCEDER']) + '</span>' : '<span class="txt">Sin decidir cómo proceder</span>') + '</button>';
+    }).join('');
+    if (x.iso >= d.hoy && x.iso <= sumarDias(d.hoy, 7)) html += '<button class="surge" type="button" data-surge="' + x.iso + '">⚡ Ha surgido algo · reestructurar</button>';
     if (x.notaPlan) html += '<div class="variant-note"><span class="v-tag">Plan</span><span>' + esc(x.notaPlan) + '</span></div>';
     if (x.variantesNombres && x.variantesNombres.length) html += '<div class="variant-note">' + x.variantesNombres.map(function (n) {
       return '<span class="v-tag">' + esc(nombreVersion(n)) + '</span>'; }).join('') + '<span>Si compites, abre los desplegables naranjas de cada bloque: ahí está lo que cambia.</span></div>';
@@ -473,10 +514,16 @@
       '<div class="b-head"><span class="b-num">' + (b.n || '•') + '</span><span class="b-title">' + esc(b.titulo) + '</span>' +
         (b.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(b.rpe) + '">RPE ' + esc(b.rpe) + '</span>' : '') + '</div>';
 
-    return '<article class="block' + (b.extra ? ' extra' : '') + '" id="b-' + esc(b.n) + '">' + cab +
+    var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes</div>' :
+      est === 'PROPUESTA' ? '<div class="b-state prop">Propuesta de cambio · pendiente de tu aprobación</div>' :
+      est === 'PROPUESTA · NO HACER' ? '<div class="b-state prop">Propuesta: no hacer este bloque</div>' : '';
+    var sci = (b.porque || b.ciencia || b.interf) ? '<details class="sci"><summary>Por qué aquí · ciencia · interferencias</summary><div class="exp-body">' +
+      (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
+      (b.ciencia ? '<div class="part-lbl">Explicación técnica, fisiológica y biológica</div><div class="prose-n">' + esc(b.ciencia) + '</div>' : '') +
+      (b.interf ? '<div class="part-lbl">Posibles interferencias</div><div class="prose-n">' + esc(b.interf) + '</div>' : '') + '</div></details>' : '';
+    return '<article class="block' + (b.extra ? ' extra' : '') + (est === 'NO HACER' ? ' off' : '') + (/^PROPUESTA/.test(est) ? ' prop' : '') + '" id="b-' + esc(b.n) + '">' + cab + tagEst +
       (prep.length ? '<details><summary>Calentamiento y activación</summary><div class="exp-body">' + prep.map(parte).join('') + '</div></details>' : '') +
-      main.map(parte).join('') +
-      (b.porque ? '<div class="why">' + esc(b.porque) + '</div>' : '') +
+      main.map(parte).join('') + sci +
       (adapt.length ? '<details><summary>Adaptaciones</summary><div class="exp-body">' + adapt.map(parte).join('') + '</div></details>' : '') +
       (notas ? '<details><summary class="coach-sum">Notas del coach</summary><div class="exp-body">' + notas + '</div></details>' : '') +
       (b.variantes || []).map(function (v) { return htmlVariante(v, parte); }).join('') +
@@ -485,7 +532,7 @@
   }
 
   // ---------- registro de lo realizado (APP · REGISTRO) ----------
-  function idPlanDe(x, b) { return b.extra ? b.id : 'F-' + (b.fabrikDia || x.nombre) + '-' + b.n; }
+  function idPlanDe(x, b) { return b.extra ? b.id : (b.idPlan || 'F-' + (b.fabrikDia || x.nombre) + '-' + b.n); }
   function registroDe(iso, idPlan) {
     var f = aTxt(iso);
     return (S.data.registro || []).filter(function (r) { return (r.FECHA === f || aIso(r.FECHA) === iso) && r.ID_PLAN === idPlan; })[0] || null;
@@ -495,7 +542,10 @@
     var est = r ? (r.HECHO === 'Sí' ? '<span class="reg-st ok">✔ Hecho</span>' : r.HECHO === 'Parcial' ? '<span class="reg-st part">◐ Parcial</span>' : '<span class="reg-st no">✕ No hecho</span>') +
       (r.RPE ? '<span class="vb-v" style="--c:' + rpeColor(String(r.RPE)) + '">RPE ' + esc(r.RPE) + '</span>' : '') : '<span class="hint">Sin registrar</span>';
     var dato = esc(JSON.stringify({ iso: x.iso, id: idPlanDe(x, b), bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo }));
-    return '<div class="reg-row">' + est + '<span class="grow"></span><button type="button" class="btn-ghost sm" data-reg="' + dato + '">' + (r ? 'Editar' : 'Registrar') + '</button></div>';
+    var off = /NO HACER|PROPUESTA/.test(norm(b.estado));
+    var nh = esc(JSON.stringify({ id: idPlanDe(x, b), fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }));
+    return '<div class="reg-row">' + est + '<span class="grow"></span>' + (off ? '' : '<button type="button" class="btn-ghost sm" data-nohacer="' + nh + '">No hacer</button>') +
+      '<button type="button" class="btn-ghost sm" data-reg="' + dato + '">' + (r ? 'Editar' : 'Registrar') + '</button></div>';
   }
   function abrirRegistro(ref) {
     var r = registroDe(ref.iso, ref.id) || {};
@@ -536,6 +586,127 @@
         S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === reg.FECHA && y.ID_PLAN === reg.ID_PLAN); }).concat([res.registro]);
         cerrarHoja(); render(); toast('Guardado');
       }).catch(falloApi(b));
+    };
+  }
+
+  // =====================================================================
+  //  PLANIFICACIÓN: borrador, confirmar la semana, propuestas de cambio, ha surgido algo, no hacer
+  // =====================================================================
+  function avisosArriba(d) {
+    var h = '';
+    Object.keys(d.propuestas || {}).forEach(function (cid) {
+      var c = (d.cambios || []).filter(function (x) { return x.ID === cid; })[0];
+      h += '<button class="prop-banner" type="button" data-ver-prop="' + esc(cid) + '"><b>Propuesta de cambios lista</b><span>' + esc(c ? c.EVENTO : '') + ' · ' + d.propuestas[cid].length + ' cambios · toca para revisar y aprobar</span></button>';
+    });
+    (d.cambios || []).filter(function (c) { return c.ESTADO === 'Solicitada'; }).forEach(function (c) {
+      h += '<div class="unpub">Reestructuración solicitada: ' + esc(c.EVENTO) + ' · pídeme «reestructura» en el chat</div>';
+    });
+    if (d.borrador) h += '<div class="draft-banner"><span>Plan de la semana en borrador</span><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button></div>';
+    var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
+    if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Confirma la semana del ' + fechaCorta(sig) + '</b><span>Mañanas para doble, descansos y eventos. Sin esto no se programa.</span></button>';
+    if (d.conf && /^Pendiente/.test(d.conf.ESTADO || '')) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Esta semana está sin confirmar</b><span>Confírmala para poder programarla.</span></button>';
+    var np = (d.pendientes || []).filter(function (p) { return p.ESTADO === 'Pendiente'; }).length;
+    if (np) h += '<button class="pend-banner" type="button" data-ver-pend>' + np + ' pendiente' + (np > 1 ? 's' : '') + ' para reincorporar · se te propondrán al programar la semana</button>';
+    return h;
+  }
+
+  var DIAS_CORTOS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  function chipsDias(id, sel) {
+    return '<div class="dchips" id="' + id + '">' + DIAS_CORTOS.map(function (x) { return '<button type="button" data-dch="' + x + '" aria-pressed="' + (sel.indexOf(x) >= 0) + '">' + x + '</button>'; }).join('') + '</div>';
+  }
+  function leerChips(id) { return [].map.call(document.querySelectorAll('#' + id + ' [aria-pressed="true"]'), function (b) { return b.dataset.dch; }).join(', '); }
+
+  /** Confirmar una semana: mañanas libres para doble, descanso y decisión sobre cada evento. */
+  function abrirConfirmar(lunes) {
+    var fin = sumarDias(lunes, 6), d = S.data;
+    var cs = lunes === d.semana ? d.conf : lunes === sumarDias(d.semana, 7) ? d.confSiguiente : null;
+    api({ action: 'eventos' }).then(ok).then(function (r) {
+      var evs = r.eventos.filter(function (e) { var i = aIso(e.INICIO), f = aIso(e.FIN) || i; return i && f >= lunes && i <= fin; });
+      S._evsConf = evs;
+      abrirHoja('<div class="row"><h2>Semana del ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+        '<form id="conff" class="avf"><label>Mañanas libres para sesión doble</label>' + chipsDias('cf-dob', String(cs && cs['DOBLES (mañanas libres)'] || '')) +
+        '<label>Días sin entrenar (descanso)</label>' + chipsDias('cf-des', String(cs && cs.DESCANSO || '')) +
+        '<div class="part-lbl" style="margin-top:10px">Eventos de la semana</div>' +
+        (evs.length ? evs.map(function (e, i) {
+          return '<div class="evc"><div class="evc-top"><b>' + esc(e.EVENTO) + '</b><span class="hint">' + esc(e.INICIO) + (e.HORA ? ' ' + esc(e.HORA) : '') + '</span></div>' +
+            '<div class="two"><div><label>Bloquea</label><select data-cf="' + i + '" data-k="BLOQUEA">' + ['Día completo', 'Mañana', 'Tarde', 'Parcial', 'No bloquea'].map(function (o) { return '<option' + (o === e.BLOQUEA ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></div>' +
+            '<div><label>Días antes bajando volumen</label><select data-cf="' + i + '" data-k="ANTES (días bajar volumen)">' + ['0', '1', '2', '3'].map(function (o) { return '<option' + (o === String(e['ANTES (días bajar volumen)'] || '0') ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></div></div>' +
+            '<div class="two"><div><label>Días después de recuperación</label><select data-cf="' + i + '" data-k="DESPUÉS (días recuperación)">' + ['0', '1', '2', '3'].map(function (o) { return '<option' + (o === String(e['DESPUÉS (días recuperación)'] || '0') ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></div><div></div></div>' +
+            '<label>Cómo proceder</label><input data-cf="' + i + '" data-k="CÓMO PROCEDER" value="' + esc(e['CÓMO PROCEDER'] || '') + '" placeholder="Ej. Mover el WOD al sábado AM; ese día solo movilidad">' + '</div>';
+        }).join('') : '<div class="hint">No hay eventos esa semana. Si hay alguno, añádelo en el calendario.</div>') +
+        '<button class="btn" type="button" data-nuevo-evento="' + lunes + '">＋ Añadir evento</button>' +
+        '<label for="cf-not">Notas para la planificación</label><textarea id="cf-not" rows="2">' + esc(cs && cs.NOTAS || '') + '</textarea>' +
+        '<button class="btn btn-primary" type="submit" id="cf-ok">Confirmar semana</button>' +
+        '<div class="hint">Al confirmar, cada evento queda «Decidido». Hasta que la semana esté confirmada no se programa.</div></form>');
+      document.getElementById('conff').onsubmit = function (ev) {
+        ev.preventDefault();
+        var b = document.getElementById('cf-ok'); b.disabled = true; b.textContent = 'Guardando…';
+        var cambios = evs.map(function (e, i) {
+          var o = { ID: e.ID, EVENTO: e.EVENTO, INICIO: e.INICIO, FIN: e.FIN, ESTADO: 'Decidido' };
+          $scrim.querySelectorAll('[data-cf="' + i + '"]').forEach(function (inp) { o[inp.dataset.k] = inp.value.trim(); });
+          return o;
+        });
+        var dec = cambios.map(function (o) { return o.EVENTO + ': ' + (o['CÓMO PROCEDER'] || o.BLOQUEA); }).join(' | ');
+        cambios.reduce(function (p, o) { return p.then(function () { return api({ action: 'evento', evento: o }).then(ok); }); }, Promise.resolve())
+          .then(function () { return api({ action: 'semana_conf', lunes: lunes, ver: d.semana, dobles: leerChips('cf-dob'), descanso: leerChips('cf-des'), decisiones: dec, notas: val('cf-not'), confirmar: true }); })
+          .then(ok).then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Semana confirmada'); })
+          .catch(falloApi(b));
+      };
+    }).catch(function (e) { toast(mensajeError(e.message)); });
+  }
+
+  /** «Ha surgido algo»: crea el evento y la solicitud de reestructuración desde ese momento. */
+  function abrirSurge(iso) {
+    var d = S.data, ahora = new Date(), turno = ahora.getHours() < 14 ? 'AM' : 'PM';
+    abrirHoja('<div class="row"><h2>Ha surgido algo</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="hint">Se reestructura desde el momento que indiques hasta el domingo. Fabrik no se mueve salvo que tú lo digas. Nada cambia hasta que apruebes la propuesta.</div>' +
+      '<form id="surf" class="avf"><label for="su-e">¿Qué ha surgido?</label><input id="su-e" required maxlength="200" placeholder="Ej. Compromiso de trabajo">' +
+      '<div class="two"><div><label for="su-f">Día del evento</label><input id="su-f" type="date" value="' + iso + '"></div><div><label for="su-h">Hora (opcional)</label><input id="su-h" type="time"></div></div>' +
+      '<label>Qué bloquea</label><select id="su-b"><option>Tarde</option><option>Mañana</option><option>Día completo</option><option>Parcial</option></select>' +
+      '<div class="two"><div><label for="su-d">Reestructurar desde</label><input id="su-d" type="date" value="' + (d.hoy > d.semana ? d.hoy : d.semana) + '"></div>' +
+      '<div><label for="su-t">Turno</label><select id="su-t"><option' + (turno === 'AM' ? ' selected' : '') + '>AM</option><option' + (turno === 'PM' ? ' selected' : '') + '>PM</option></select></div></div>' +
+      '<label for="su-a">¿Puedo mover algún bloque de Fabrik?</label><select id="su-a"><option>No, Fabrik no se mueve</option><option>Sí, si hace falta</option></select>' +
+      '<label for="su-n">Notas (opcional)</label><textarea id="su-n" rows="2" placeholder="Ej. llego cansado el viernes; prefiero no hacer sesión doble"></textarea>' +
+      '<button class="btn btn-primary" type="submit" id="su-ok">Enviar solicitud</button></form>');
+    document.getElementById('surf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var b = document.getElementById('su-ok'); b.disabled = true; b.textContent = 'Enviando…';
+      api({ action: 'cambio', ver: d.semana, evento: val('su-e'), fechaEvento: val('su-f'), hora: val('su-h'), bloquea: val('su-b'), desde: val('su-d'), turno: val('su-t'),
+        afecta: val('su-b') + ' del ' + val('su-f') + ' · Fabrik: ' + val('su-a'), notas: val('su-n') })
+        .then(ok).then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Solicitud guardada. Pídeme «reestructura» en el chat.'); })
+        .catch(falloApi(b));
+    };
+  }
+
+  /** Revisión de una propuesta de cambios: lo nuevo, lo que se quita y lo que pasa a pendientes. */
+  function renderPropuesta() {
+    var d = S.data, cid = S.propuesta, filas = (d.propuestas || {})[cid] || [], c = (d.cambios || []).filter(function (x) { return x.ID === cid; })[0];
+    var porId = {}; (d.plan || []).forEach(function (r) { porId[r.ID] = r; });
+    var html = cabeceraVista('Propuesta', 'Semana') + '<section class="me" style="display:block"><b>' + esc(c ? c.EVENTO : 'Cambios') + '</b><div class="hint">' + esc(c ? (c.AFECTA || '') + (c.RESPUESTA ? ' · ' + c.RESPUESTA : '') : '') + '</div></section>';
+    html += filas.sort(function (a, b) { return aIso(a.FECHA) < aIso(b.FECHA) ? -1 : 1; }).map(function (r) {
+      var quita = String(r.REEMPLAZA || '').split(/[,;\s]+/).filter(Boolean).map(function (id) { return porId[id]; }).filter(Boolean);
+      var esNo = /NO HACER/.test(norm(r.ESTADO));
+      return '<article class="block' + (esNo ? ' off' : ' prop') + '"><div class="b-head"><span class="b-num ex">' + (esNo ? '–' : '+') + '</span><span class="b-title">' + esc(r['TÍTULO'] || r.BLOQUE) + '</span></div>' +
+        '<div class="b-tags"><span class="tag">' + esc(r['DÍA'] || '') + ' ' + esc(r.FECHA) + ' · ' + esc(r.TURNO) + '</span><span class="tag ex">' + esc(esNo ? 'No hacer → pendientes' : 'Nuevo / movido') + '</span></div>' +
+        (r.CONTENIDO && !esNo ? '<div class="board small">' + esc(r.CONTENIDO) + '</div>' : '') +
+        (quita.length ? '<div class="hint">Sustituye a: ' + quita.map(function (q) { return esc((q['TÍTULO'] || q.BLOQUE) + ' (' + q.FECHA + ' ' + q.TURNO + ')'); }).join(' · ') + '</div>' : '') +
+        (r['POR QUÉ (cursiva)'] ? '<p class="why-t">' + esc(r['POR QUÉ (cursiva)']) + '</p>' : '') + '</article>';
+    }).join('');
+    html += '<div class="two-btn"><button class="btn" type="button" data-prop-res="0">Rechazar</button><button class="btn btn-primary" type="button" data-prop-res="1">Aprobar cambios</button></div>';
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = volverSemana;
+  }
+
+  function abrirNoHacer(o) {
+    abrirHoja('<div class="row"><h2>No hacer</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="hint">' + esc(o.titulo) + ' · ' + fechaCorta(o.fecha) + '. Pasa a <b>pendientes</b> y se te propondrá reincorporarlo al programar la semana siguiente.</div>' +
+      '<form id="nhf" class="avf"><label for="nh-m">Motivo</label><input id="nh-m" maxlength="300" placeholder="Ej. fatiga lumbar, viaje, falta de tiempo">' +
+      '<button class="btn btn-primary" type="submit" id="nh-ok">Marcar como no hacer</button></form>');
+    document.getElementById('nhf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var b = document.getElementById('nh-ok'); b.disabled = true;
+      api(Object.assign({ action: 'no_hacer', ver: S.data.semana, motivo: val('nh-m') }, o)).then(ok)
+        .then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Marcado. Lo tienes en pendientes.'); }).catch(falloApi(b));
     };
   }
 
@@ -609,6 +780,9 @@
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Cobertura y carrera<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-calendario"><span class="set-ico">▦</span>Calendario de eventos<span class="go">›</span></button>';
+    var pend = (d.pendientes || []);
+    html += seccion('s-pend', 'Pendientes', htmlPendientes(pend), pend.length ? String(pend.length) : '', '↺');
     html += seccion('s-marcas', 'Mis marcas', htmlMarcas(d), '', '◆');
     html += seccion('s-semana', 'Esta semana', htmlResumenSemana(d), hechos ? hechos + ' registrados' : '', '✓');
     html += seccion('s-desc', '% Descuentos', '<div id="desc-body"><div class="hint">Cargando…</div></div>', '', '%');
@@ -624,6 +798,7 @@
     document.getElementById('atras').onclick = volverSemana;
     document.getElementById('logout').onclick = function () { S.vista = null; auth.signOut(); };
     document.getElementById('ir-cobertura').onclick = function () { S.vista = 'cobertura'; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     document.getElementById('s-desc').addEventListener('toggle', function () { if (this.open) cargarDescuentos(); });
     document.getElementById('s-webs').addEventListener('toggle', function () { if (this.open) cargarWebs(); });
     var q = document.getElementById('vid-q'); q.oninput = function () { pintarVideos(q.value); }; pintarVideos('');
@@ -719,35 +894,146 @@
     };
   }
 
-  // ---------- Cobertura (pestañas Dashboard, Semana, Mes y carrera, solo lectura) ----------
+  // ---------- Cobertura en tarjetas (Dashboard, Semana, Mes y carrera del Sheet) ----------
+  function pctNum(t) { var m = String(t || '').match(/(\d+(?:[.,]\d+)?)\s*%/); return m ? Math.min(100, parseFloat(m[1].replace(',', '.'))) : null; }
+  function anillo(pct, lbl, sub) {
+    var p = pct == null ? 0 : pct, r = 30, c = 2 * Math.PI * r;
+    return '<div class="ring"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="' + r + '" class="ring-bg"/><circle cx="36" cy="36" r="' + r + '" class="ring-fg' + (p >= 100 ? ' full' : '') +
+      '" stroke-dasharray="' + (c * p / 100).toFixed(1) + ' ' + c.toFixed(1) + '"/></svg><b>' + (pct == null ? '—' : Math.round(p) + '%') + '</b><span>' + esc(lbl) + '</span>' + (sub ? '<em>' + esc(sub) + '</em>' : '') + '</div>';
+  }
+  function progresoMeta(m) {
+    var inc = parseFloat(String(m.incluido).replace(',', '.')) || 0, n = String(m.meta).match(/(\d+(?:[.,]\d+)?)/), meta = n ? parseFloat(n[1].replace(',', '.')) : 1;
+    if (/^>/.test(String(m.meta).trim())) meta = meta + 0.0001;
+    return Math.max(0, Math.min(100, meta ? inc / meta * 100 : 0));
+  }
+  function tarjetasMetas(lista) {
+    if (!lista.length) return '<div class="hint">Sin metas.</div>';
+    var grupos = {}, orden = [];
+    lista.forEach(function (m) { var k = m.prioridad || 'Otras'; if (!grupos[k]) { grupos[k] = []; orden.push(k); } grupos[k].push(m); });
+    return orden.map(function (k) {
+      return '<div class="part-lbl">' + esc(k) + '</div>' + grupos[k].map(function (m) {
+        var p = progresoMeta(m);
+        return '<details class="meta-c"><summary><div class="meta-t"><b>' + esc(m.estimulo) + '</b><span class="meta-n' + (p >= 100 ? ' ok' : '') + '">' + esc(m.incluido || '0') + ' / ' + esc(m.meta) + '</span></div>' +
+          '<div class="pbar"><i class="' + (p >= 100 ? 'full' : '') + '" style="width:' + p + '%"></i></div></summary>' +
+          (m.nota ? '<div class="exp-body hint">' + esc(m.nota) + '</div>' : '') + '</details>';
+      }).join('');
+    }).join('');
+  }
   function renderCobertura() {
     var html = cabeceraVista('Cobertura', 'Menú');
-    if (!S.cobertura) {
+    var C = S.cobertura;
+    if (!C) {
       $app.innerHTML = html + '<div class="hint">Leyendo tu Sheet…</div>';
       document.getElementById('atras').onclick = function () { abrirAjustes(); };
       api({ action: 'cobertura' }).then(ok).then(function (r) { S.cobertura = r.cobertura; if (S.vista === 'cobertura') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
       return;
     }
-    [['Dashboard', 'dashboard', true], ['Semana', 'semana'], ['Mes', 'mes'], ['Carrera', 'carrera']].forEach(function (x) {
-      html += '<details class="set"' + (x[2] ? ' open' : '') + '><summary>' + x[0] + '</summary><div class="set-body scrollx">' + tablaGrid(S.cobertura[x[1]] || []) + '</div></details>';
-    });
+    var tab = S.cobTab || 'semana';
+    html += '<div class="rings">' + anillo(pctNum(C.semana.pct), 'Semana', C.semana.resumen) + anillo(pctNum(C.mes.pct), 'Mes', C.mes.resumen) + '</div>';
+    html += '<div class="seg" role="group" aria-label="Vista">' + [['semana', 'Semana'], ['mes', 'Mes'], ['carrera', 'Carrera']].map(function (t) {
+      return '<button type="button" data-cob="' + t[0] + '" aria-pressed="' + (tab === t[0]) + '">' + t[1] + '</button>'; }).join('') + '</div>';
+    if (tab === 'carrera') {
+      var hoy = S.data.hoy, sems = C.carrera.semanas || [];
+      html += (C.carrera.intro || []).slice(1, 3).map(function (t) { return '<div class="hint">' + esc(t) + '</div>'; }).join('');
+      html += sems.map(function (w, i) {
+        return '<details class="set"' + (i < 2 ? ' open' : '') + '><summary>' + esc(w.titulo.split('·').slice(0, 2).join('·')) + '</summary><div class="set-body">' +
+          '<div class="hint">' + esc(w.titulo.split('·').slice(2).join('·')) + '</div>' +
+          w.sesiones.map(function (x) {
+            return '<div class="run-c"><div class="run-h"><b>' + esc(x.sesion) + '</b><span class="tag">' + esc(String(x.zona || '').split('·')[0]) + '</span></div>' +
+              '<div class="run-t">' + esc(x.trabajo) + '</div>' + (x.ritmo ? '<div class="hint">🎯 ' + esc(x.ritmo) + '</div>' : '') +
+              (x.datos ? '<div class="hint">📝 ' + esc(x.datos) + '</div>' : '') + '</div>';
+          }).join('') + '</div></details>';
+      }).join('');
+    } else {
+      var B = C[tab];
+      html += '<div class="hint">' + (tab === 'semana' ? esc(B.desde) + ' – ' + esc(B.hasta) : 'Mes de ' + esc(B.periodo)) + '</div>';
+      if ((B.porCubrir || []).length) html += '<section class="por-cubrir"><div class="part-lbl">Por cubrir</div>' + B.porCubrir.map(function (t) { return '<div class="pc-i">' + esc(t) + '</div>'; }).join('') + '</section>';
+      html += tarjetasMetas(B.metas || []);
+    }
     html += '<button class="btn" type="button" id="cob-re">Actualizar</button>';
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
     document.getElementById('cob-re').onclick = function () { S.cobertura = null; render(); };
+    $app.querySelectorAll('[data-cob]').forEach(function (b) { b.onclick = function () { S.cobTab = b.dataset.cob; render(); }; });
   }
-  function tablaGrid(g) {
-    var filas = g.filter(function (r) { return r.some(function (c) { return String(c).trim(); }); });
-    if (!filas.length) return '<div class="hint">Vacío</div>';
-    var ancho = 0;
-    filas.forEach(function (r) { r.forEach(function (c, j) { if (String(c).trim() && j + 1 > ancho) ancho = j + 1; }); });
-    return '<table class="tbl">' + filas.map(function (r) {
-      return '<tr>' + r.slice(0, ancho).map(function (c) {
-        var s = String(c).trim(), m = s.match(/^(\d{1,3}(?:[.,]\d+)?)\s*%$/);
-        if (m) { var p = Math.min(100, parseFloat(m[1].replace(',', '.'))); return '<td class="n">' + esc(s) + '<div class="pbar"><i class="' + (p >= 100 ? 'full' : '') + '" style="width:' + p + '%"></i></div></td>'; }
-        return '<td' + (/^[\d.,:′'"\/ -]+$/.test(s) && s ? ' class="n"' : '') + '>' + esc(s) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</table>';
+
+  // ---------- Calendario de eventos (APP · EVENTOS) ----------
+  var MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function abrirCalendario() {
+    S.vista = 'calendario'; S.calDia = null; render(); window.scrollTo({ top: 0 });
+    api({ action: 'eventos' }).then(ok).then(function (r) { S.eventos = r.eventos; if (S.vista === 'calendario') render(); }).catch(function () {});
+  }
+  function tarjetaEv(e) {
+    var i = aIso(e.INICIO), f = aIso(e.FIN) || i;
+    return '<div class="evc"><div class="evc-top"><span class="ev-tipo">' + esc(e.TIPO || 'Evento') + '</span><b>' + esc(e.EVENTO) + '</b></div>' +
+      '<div class="hint">' + fechaCorta(i) + (f !== i ? ' – ' + fechaCorta(f) : '') + (e.HORA ? ' · ' + esc(e.HORA) : '') + (e.LUGAR ? ' · ' + esc(e.LUGAR) : '') + ' · ' + esc(e.BLOQUEA || '') + '</div>' +
+      (e['CÓMO PROCEDER'] ? '<p class="ev-desc">' + esc(e['CÓMO PROCEDER']) + '</p>' : '<p class="ev-desc err">Sin decidir cómo proceder</p>') +
+      ((+e['ANTES (días bajar volumen)'] || +e['DESPUÉS (días recuperación)']) ? '<div class="hint">' + (+e['ANTES (días bajar volumen)'] ? e['ANTES (días bajar volumen)'] + ' día(s) antes bajando volumen · ' : '') +
+        (+e['DESPUÉS (días recuperación)'] ? e['DESPUÉS (días recuperación)'] + ' día(s) de recuperación después' : '') + '</div>' : '') +
+      '<div class="evc-acc"><button class="btn-ghost sm" type="button" data-evento="' + esc(e.ID) + '">Editar</button></div></div>';
+  }
+  function renderCalendario() {
+    var d = S.data, hoy = d.hoy, mes = S.calMes || hoy.slice(0, 7), y = +mes.slice(0, 4), m = +mes.slice(5, 7);
+    var evs = (S.eventos || d.eventos || []).map(function (e) { e._i = aIso(e.INICIO); e._f = aIso(e.FIN) || e._i; return e; }).filter(function (e) { return e._i; });
+    var primero = new Date(Date.UTC(y, m - 1, 1)), dow = (primero.getUTCDay() + 6) % 7, ndias = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    var celdas = '';
+    for (var k = 0; k < dow; k++) celdas += '<span class="cal-d vacio"></span>';
+    for (var dd = 1; dd <= ndias; dd++) {
+      var iso = mes + '-' + (dd < 10 ? '0' : '') + dd, ese = evs.filter(function (e) { return iso >= e._i && iso <= e._f; });
+      celdas += '<button type="button" class="cal-d' + (iso === hoy ? ' hoy' : '') + (iso === S.calDia ? ' sel' : '') + (ese.length ? ' mio' : '') + '" data-cal-dia="' + iso + '"><b>' + dd + '</b>' +
+        (ese.length ? '<i>' + ese.slice(0, 3).map(function () { return '<em class="m"></em>'; }).join('') + '</i>' : '') + '</button>';
+    }
+    var lista = S.calDia ? evs.filter(function (e) { return S.calDia >= e._i && S.calDia <= e._f; }) : evs.filter(function (e) { return e._f >= mes + '-01' && e._i <= mes + '-31'; });
+    var html = cabeceraVista('Calendario', 'Menú') +
+      '<section class="cal"><div class="cal-nav"><button class="icon-btn" type="button" data-cal-mes="-1" aria-label="Mes anterior">‹</button><b>' + cap(MESES_L[m - 1]) + ' ' + y + '</b>' +
+      '<button class="icon-btn" type="button" data-cal-mes="1" aria-label="Mes siguiente">›</button></div>' +
+      '<div class="cal-sem">' + ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(function (x) { return '<span>' + x + '</span>'; }).join('') + '</div>' +
+      '<div class="cal-grid">' + celdas + '</div></section>' +
+      '<button class="btn btn-primary" type="button" data-nuevo-evento="' + (S.calDia || hoy) + '">＋ Nuevo evento</button>' +
+      '<div class="part-lbl">' + (S.calDia ? 'Eventos del ' + fechaCorta(S.calDia) + ' <button type="button" class="btn-ghost sm" data-cal-dia="">Ver el mes</button>' : 'Eventos de ' + MESES_L[m - 1]) + '</div>' +
+      '<div class="ev-list">' + (lista.length ? lista.map(tarjetaEv).join('') : '<div class="hint">No hay eventos.</div>') + '</div>';
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = function () { abrirAjustes(); };
+  }
+  /** Formulario de evento (nuevo o editar). Lo usan el calendario, el día y la confirmación de semana. */
+  function abrirFormEvento(e, isoDef) {
+    e = e || {};
+    var i = aIso(e.INICIO) || isoDef || S.data.hoy, f = aIso(e.FIN) || i, sel = function (v, l) { return l.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>'; }).join(''); };
+    abrirHoja('<div class="row"><h2>' + (e.ID ? 'Editar evento' : 'Nuevo evento') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<form id="evf" class="avf"><label for="ev-n">Evento</label><input id="ev-n" required maxlength="120" value="' + esc(e.EVENTO || '') + '" placeholder="Ej. HYROX Madrid, boda, viaje de trabajo">' +
+      '<div class="two"><div><label for="ev-t">Tipo</label><select id="ev-t">' + sel(e.TIPO || 'Otro', ['Competición', 'HYROX', 'Carrera', 'Viaje', 'Trabajo', 'Personal', 'Otro']) + '</select></div>' +
+      '<div><label for="ev-h">Hora</label><input id="ev-h" type="time" value="' + esc(e.HORA || '') + '"></div></div>' +
+      '<div class="two"><div><label for="ev-i">Inicio</label><input id="ev-i" type="date" required value="' + i + '"></div><div><label for="ev-f">Fin</label><input id="ev-f" type="date" value="' + f + '"></div></div>' +
+      '<label for="ev-l">Lugar</label><input id="ev-l" maxlength="120" value="' + esc(e.LUGAR || '') + '">' +
+      '<label for="ev-b">Qué bloquea del entreno</label><select id="ev-b">' + sel(e.BLOQUEA || 'Día completo', ['Día completo', 'Mañana', 'Tarde', 'Parcial', 'No bloquea']) + '</select>' +
+      '<div class="two"><div><label for="ev-a">Días antes bajando volumen</label><select id="ev-a">' + sel(String(e['ANTES (días bajar volumen)'] || '0'), ['0', '1', '2', '3']) + '</select></div>' +
+      '<div><label for="ev-p">Días de recuperación después</label><select id="ev-p">' + sel(String(e['DESPUÉS (días recuperación)'] || '0'), ['0', '1', '2', '3']) + '</select></div></div>' +
+      '<label for="ev-c">Cómo proceder (si lo dejas vacío, te lo preguntaré antes de programar)</label><textarea id="ev-c" rows="2">' + esc(e['CÓMO PROCEDER'] || '') + '</textarea>' +
+      '<label for="ev-o">Notas</label><input id="ev-o" maxlength="300" value="' + esc(e.NOTAS || '') + '">' +
+      '<div class="two-btn">' + (e.ID ? '<button class="btn" type="button" id="ev-del">Borrar</button>' : '') + '<button class="btn btn-primary" type="submit" id="ev-ok">Guardar</button></div></form>');
+    var del = document.getElementById('ev-del');
+    if (del) del.onclick = function () {
+      if (!confirmar(del, '¿Borrar? Toca otra vez')) return;
+      api({ action: 'evento_borrar', id: e.ID }).then(ok).then(function (r) { S.eventos = r.eventos; cerrarHoja(); cargar(S.data.semana); toast('Evento borrado'); if (S.vista === 'calendario') render(); }).catch(falloApi(del));
+    };
+    document.getElementById('evf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var b = document.getElementById('ev-ok'); b.disabled = true;
+      var o = { ID: e.ID || '', EVENTO: val('ev-n'), TIPO: val('ev-t'), HORA: val('ev-h'), INICIO: aTxt(val('ev-i')), FIN: aTxt(val('ev-f') || val('ev-i')), LUGAR: val('ev-l'), BLOQUEA: val('ev-b'),
+        'ANTES (días bajar volumen)': val('ev-a'), 'DESPUÉS (días recuperación)': val('ev-p'), 'CÓMO PROCEDER': val('ev-c'), NOTAS: val('ev-o'),
+        ESTADO: val('ev-c') || val('ev-b') === 'No bloquea' ? 'Decidido' : 'Por decidir' };
+      api({ action: 'evento', evento: o }).then(ok).then(function (r) { S.eventos = r.eventos; cerrarHoja(); toast('Evento guardado'); cargar(S.data.semana); if (S.vista === 'calendario') render(); }).catch(falloApi(b));
+    };
+  }
+
+  // ---------- Pendientes (APP · PENDIENTES) ----------
+  function htmlPendientes(lista) {
+    if (!lista.length) return '<div class="hint">No hay nada pendiente.</div>';
+    return '<div class="hint">Se te propondrán al programar la semana siguiente; nada entra sin tu aprobación.</div><div class="pr-list">' + lista.map(function (p) {
+      return '<div class="pend-i"><div class="pend-t"><b>' + esc(p.BLOQUE) + '</b><span class="tag">' + esc(p.TIPO) + '</span><span class="tag' + (p.ESTADO === 'Propuesto' ? ' ex' : '') + '">' + esc(p.ESTADO) + '</span></div>' +
+        '<div class="hint">' + esc(p['FECHA ORIGINAL']) + (p.MOTIVO ? ' · ' + esc(p.MOTIVO) : '') + '</div>' +
+        '<div class="evc-acc"><button class="btn-ghost sm" type="button" data-pend="' + esc(p.ID) + '" data-est="Descartado">Descartar</button></div></div>';
+    }).join('') + '</div>';
   }
 
   // ---------- Descuentos (APP · DESCUENTOS) ----------
@@ -830,7 +1116,8 @@
   function mensajeError(m) {
     return { marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
-      sesion_caducada: 'La sesión ha caducado: vuelve a entrar.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');
+      sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
+      evento_incompleto: 'Pon nombre y fecha al evento.', falta_evento: 'Escribe qué ha surgido.', faltan_datos: 'Faltan datos del bloque.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');
   }
   // ---------- marcas: agrupar y formatos (de la app de Gabi) ----------
   function agruparMarcas(lista) {
@@ -1777,6 +2064,44 @@
     if ((b = t.closest('.vid'))) { e.preventDefault(); abrirVideo(+b.dataset.v); return; }
     if ((b = t.closest('[data-v]')) && b.classList.contains('vid-row')) { abrirVideo(+b.dataset.v); return; }
     if ((b = t.closest('[data-reg]'))) { abrirRegistro(JSON.parse(b.dataset.reg)); return; }
+    if ((b = t.closest('[data-nohacer]'))) { abrirNoHacer(JSON.parse(b.dataset.nohacer)); return; }
+    if ((b = t.closest('[data-dch]'))) { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); return; }
+    if ((b = t.closest('[data-surge]'))) { abrirSurge(b.dataset.surge); return; }
+    if ((b = t.closest('[data-confirmar]'))) { abrirConfirmar(b.dataset.confirmar); return; }
+    if ((b = t.closest('[data-nuevo-evento]'))) { abrirFormEvento(null, b.dataset.nuevoEvento); return; }
+    if ((b = t.closest('[data-evento]'))) {
+      var evx = (S.eventos || []).concat(S.data.eventos || []).filter(function (z) { return z.ID === b.dataset.evento; })[0];
+      if (evx) abrirFormEvento(evx); return;
+    }
+    if ((b = t.closest('[data-cal-mes]'))) {
+      var base = S.calMes || S.data.hoy.slice(0, 7), yy = +base.slice(0, 4), mm = +base.slice(5, 7) + Number(b.dataset.calMes);
+      if (mm < 1) { mm = 12; yy--; } if (mm > 12) { mm = 1; yy++; }
+      S.calMes = yy + '-' + (mm < 10 ? '0' : '') + mm; S.calDia = null; render(); return;
+    }
+    if ((b = t.closest('[data-cal-dia]'))) { S.calDia = b.dataset.calDia || null; render(); return; }
+    if ((b = t.closest('[data-ver-prop]'))) { S.propuesta = b.dataset.verProp; S.vista = 'propuesta'; render(); window.scrollTo({ top: 0 }); return; }
+    if ((b = t.closest('[data-prop-res]'))) {
+      var apr = b.dataset.propRes === '1';
+      if (!confirmar(b, apr ? '¿Aprobar? Toca otra vez' : '¿Rechazar? Toca otra vez')) return;
+      b.disabled = true;
+      api({ action: 'cambio_resolver', cambio: S.propuesta, aprobar: apr, ver: S.data.semana }).then(ok).then(function (r) {
+        aplicarSemana(r.semana); S.vista = null; render(); toast(apr ? 'Cambios aprobados' : 'Propuesta rechazada: todo sigue como estaba');
+      }).catch(falloApi(b));
+      return;
+    }
+    if ((b = t.closest('[data-aprobar-plan]'))) {
+      if (!confirmar(b, '¿Aprobar? Toca otra vez')) return;
+      b.disabled = true;
+      api({ action: 'plan_aprobar', lunes: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.aprobados + ' bloques programados'); }).catch(falloApi(b));
+      return;
+    }
+    if (t.closest('[data-ver-pend]')) { abrirAjustes('s-pend'); return; }
+    if ((b = t.closest('[data-pend]'))) {
+      if (!confirmar(b, '¿Seguro?')) return;
+      b.disabled = true;
+      api({ action: 'pendiente', id: b.dataset.pend, estado: b.dataset.est }).then(ok).then(function (r) { S.data.pendientes = r.pendientes; S._abrir = 's-pend'; render(); toast('Actualizado'); }).catch(falloApi(b));
+      return;
+    }
     if ((b = t.closest('[data-fase]'))) { abrirFase(+b.dataset.fase); return; }
     if ((b = t.closest('[data-tema]'))) { guardar('rte-tema', b.dataset.tema); aplicarTema(b.dataset.tema); S._abrir = 's-tema'; render(); return; }
     if (t.closest('[data-calc]')) { abrirHerramientas(); return; }
@@ -1815,7 +2140,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.2';
+  var WEB_VERSION = 'web 0.3';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

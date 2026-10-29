@@ -1,5 +1,5 @@
 /**
- * Road To Elite — servidor (Apps Script) · versión 0.3
+ * Road To Elite — servidor (Apps Script) · versión 0.4
  * ------------------------------------------------------------
  * Se pega en: Road to Elite · Training Coverage → Extensiones → Apps Script.
  *
@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.3',
+  VERSION: '0.4',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -35,7 +35,8 @@ var PROPS = PropertiesService.getScriptProperties();
 // Pestañas de la app (fila 1 = cabecera). Las columnas se buscan por nombre.
 var HOJAS = {
   CONFIG: 'APP · CONFIG', PLAN: 'APP · PLAN', REGISTRO: 'APP · REGISTRO', MARCAS: 'APP · MARCAS',
-  DESCUENTOS: 'APP · DESCUENTOS', WEBS: 'APP · WEBS', VIDEOS: 'APP · VÍDEOS'
+  DESCUENTOS: 'APP · DESCUENTOS', WEBS: 'APP · WEBS', VIDEOS: 'APP · VÍDEOS',
+  EVENTOS: 'APP · EVENTOS', SEMANAS: 'APP · SEMANAS', PENDIENTES: 'APP · PENDIENTES', CAMBIOS: 'APP · CAMBIOS'
 };
 
 // ===================== API WEB =====================
@@ -65,6 +66,19 @@ function doPost(e) {
       case 'web_borrar': borrarFila_(HOJAS.WEBS, body.fila, body.coincide || {}); return json_({ ok: true, webs: listar_(HOJAS.WEBS) });
       case 'videos':     return json_({ ok: true, videos: leerVideos_() });
       case 'cobertura':  return json_({ ok: true, cobertura: cobertura_() });
+      // --- v0.4: eventos, confirmación de semana, propuestas, pendientes ---
+      case 'eventos':    return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
+      case 'evento':     var idEv = guardarEvento_(body.evento || {}); return json_({ ok: true, id: idEv, eventos: listar_(HOJAS.EVENTOS) });
+      case 'evento_borrar': borrarEvento_(body.id); return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
+      case 'semana_conf': guardarSemanaConf_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'plan_aprobar': var nAp = aprobarPlanSemana_(body.lunes); return json_({ ok: true, aprobados: nAp, semana: semanaCompleta_(body.lunes) });
+      case 'cambio':     var idC = solicitarCambio_(body); return json_({ ok: true, id: idC, semana: semanaCompleta_(body.ver) });
+      case 'cambio_resolver': resolverCambio_(body.cambio, !!body.aprobar); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'no_hacer':   noHacer_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'pendiente':  var pd = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ID === String(body.id); })[0];
+                         if (!pd) throw new Error('no_encontrado');
+                         if (['Pendiente', 'Propuesto', 'Reprogramado', 'Descartado'].indexOf(body.estado) < 0) throw new Error('estado_no_valido');
+                         actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
     }
     return json_({ ok: false, error: 'accion_desconocida' });
   } catch (err) {
@@ -215,7 +229,10 @@ function semanaCompleta_(semana) {
     lunes: lunes, hoy: hoyIso_(), semanasFabrik: lista, erratasFabrik: est.erratas,
     fabrik: fab ? semanaBase_(fab, est) : null,
     plan: listar_(HOJAS.PLAN).filter(enSemana).sort(function (x, y) { return (Number(x.ORDEN) || 0) - (Number(y.ORDEN) || 0); }),
-    registro: listar_(HOJAS.REGISTRO).filter(enSemana)
+    registro: listar_(HOJAS.REGISTRO).filter(enSemana),
+    eventos: eventosEntre_(sumarDias(lunes, -35), sumarDias(lunes, 120)),
+    conf: filaSemana_(lunes), confSiguiente: filaSemana_(sumarDias(lunes, 7)),
+    pendientes: pendientesAbiertos_(), cambios: cambiosAbiertos_()
   };
 }
 
@@ -291,19 +308,6 @@ function copiarVideosGabi() {
   return nuevas.length;
 }
 
-// ===================== COBERTURA (solo lectura de las pestañas existentes) =====================
-/** Devuelve lo que se ve en Dashboard, Semana, Mes y carrera, para pintarlo en la app. */
-function cobertura_() {
-  var ss = miLibro_();
-  var leer = function (nombre, rango) { var sh = ss.getSheetByName(nombre); return sh ? sh.getRange(rango).getDisplayValues() : []; };
-  return {
-    dashboard: leer('Dashboard', 'A1:L45'),
-    semana: leer('Semana', 'A1:H45'),
-    mes: leer('Mes', 'A1:H60'),
-    carrera: leer('carrera', 'A1:G60')
-  };
-}
-
 // ===================== COPIA DE SEGURIDAD EN DRIVE =====================
 /**
  * Copia completa de Training Coverage (todas las pestañas, fórmulas incluidas) en APP / Configuración / Backups,
@@ -318,6 +322,296 @@ function backupSemanal() {
   return copia.getId();
 }
 
+// ===================== ESTRUCTURA DE LAS PESTAÑAS (la crea y la repara prepararHojas) =====================
+/**
+ * Cabeceras, anchos, desplegables, fechas y colores de cada pestaña de la app.
+ * prepararHojas() es idempotente: crea lo que falte y añade columnas nuevas al final sin tocar los datos.
+ */
+var ESQUEMA = {
+  'APP · PLAN': {
+    cab: ['ID', 'FECHA', 'DÍA', 'TURNO', 'ORDEN', 'ORIGEN', 'FABRIK_REF', 'BLOQUE', 'TÍTULO', 'CONTENIDO', 'INTENSIDAD', 'MIN', 'CÓDIGOS',
+      'POR QUÉ (cursiva)', 'CIENCIA (técnica · fisiología · biología)', 'INTERFERENCIAS', 'ESTADO', 'CAMBIO_ID', 'REEMPLAZA', 'ACTUALIZADO'],
+    anchos: [70, 95, 80, 60, 55, 85, 95, 110, 170, 280, 95, 55, 90, 260, 340, 260, 140, 80, 90, 120],
+    fechas: ['FECHA'], cursiva: 'POR QUÉ (cursiva)', negrita: 'TÍTULO', congelarCol: 3,
+    listas: { TURNO: ['AM', 'PM'], ORIGEN: ['FABRIK', 'EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD'],
+      ESTADO: ['BORRADOR', 'PROGRAMADO', 'PROPUESTA', 'PROPUESTA · NO HACER', 'NO HACER', 'SUSTITUIDO'] },
+    colores: [['ESTADO', 'PROPUESTA', '#ffedcc'], ['ESTADO', 'SUSTITUIDO|NO HACER', '#5a5a5a', '#ffffff'], ['ESTADO', 'BORRADOR', '#fff7e0'],
+      ['ORIGEN', 'FABRIK', '#eef0f4'], ['ORIGEN', 'EXTRA|CARRERA|Z6|TÉCNICA|MOVILIDAD', '#fff2e6']]
+  },
+  'APP · EVENTOS': {
+    cab: ['ID', 'EVENTO', 'TIPO', 'INICIO', 'FIN', 'HORA', 'LUGAR', 'BLOQUEA', 'ANTES (días bajar volumen)', 'DESPUÉS (días recuperación)', 'CÓMO PROCEDER', 'ESTADO', 'NOTAS', 'CREADO'],
+    anchos: [70, 200, 110, 95, 95, 60, 120, 110, 110, 110, 260, 100, 220, 120], fechas: ['INICIO', 'FIN'],
+    listas: { TIPO: ['Competición', 'HYROX', 'Carrera', 'Viaje', 'Trabajo', 'Personal', 'Otro'], BLOQUEA: ['Día completo', 'Mañana', 'Tarde', 'Parcial', 'No bloquea'],
+      'ANTES (días bajar volumen)': ['0', '1', '2', '3'], 'DESPUÉS (días recuperación)': ['0', '1', '2', '3'], ESTADO: ['Por decidir', 'Decidido'] },
+    colores: [['ESTADO', 'Por decidir', '#ffe6d9']]
+  },
+  'APP · SEMANAS': {
+    cab: ['LUNES', 'ESTADO', 'DOBLES (mañanas libres)', 'DESCANSO', 'EVENTOS DE LA SEMANA', 'DECISIONES', 'NOTAS', 'CONFIRMADA'],
+    anchos: [95, 160, 200, 140, 280, 320, 240, 130], fechas: ['LUNES'],
+    listas: { ESTADO: ['Pendiente de confirmar', 'Confirmada', 'Programada'] },
+    colores: [['ESTADO', 'Pendiente', '#ffe6d9'], ['ESTADO', 'Confirmada|Programada', '#e0f5e6']]
+  },
+  'APP · PENDIENTES': {
+    cab: ['ID', 'CREADO', 'FECHA ORIGINAL', 'ID_PLAN', 'BLOQUE', 'TIPO', 'MOTIVO', 'ESTADO', 'SEMANA DESTINO', 'NOTAS'],
+    anchos: [70, 120, 95, 90, 220, 90, 280, 110, 110, 220], fechas: ['FECHA ORIGINAL'],
+    listas: { TIPO: ['FABRIK', 'EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD'], ESTADO: ['Pendiente', 'Propuesto', 'Reprogramado', 'Descartado'] },
+    colores: [['ESTADO', '^Pendiente', '#ffedcc']]
+  },
+  'APP · CAMBIOS': {
+    cab: ['ID', 'CREADO', 'DESDE', 'TURNO DESDE', 'EVENTO', 'AFECTA', 'NOTAS', 'ESTADO', 'RESPUESTA'],
+    anchos: [70, 120, 95, 80, 220, 160, 240, 130, 300], fechas: ['DESDE'],
+    listas: { 'TURNO DESDE': ['AM', 'PM'], ESTADO: ['Solicitada', 'Propuesta lista', 'Aprobada', 'Rechazada'] },
+    colores: [['ESTADO', 'Solicitada|Propuesta', '#ffedcc']]
+  }
+};
+
+function colLetra_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+
+/** Crea o completa las pestañas de la app con su formato. No borra datos. */
+function prepararHojas() {
+  var ss = miLibro_();
+  Object.keys(ESQUEMA).forEach(function (nombre, k) {
+    var E = ESQUEMA[nombre], sh = ss.getSheetByName(nombre);
+    if (!sh) sh = ss.insertSheet(nombre);
+    var tiene = sh.getLastColumn() ? sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(function (h) { return String(h).trim(); }) : [];
+    var cab;
+    if (sh.getLastRow() <= 1) cab = E.cab.slice();                        // vacía: cabecera exacta
+    else { cab = tiene.slice(); E.cab.forEach(function (h) { if (cab.indexOf(h) < 0) cab.push(h); }); }   // con datos: añade al final
+    if (sh.getMaxColumns() < cab.length) sh.insertColumnsAfter(sh.getMaxColumns(), cab.length - sh.getMaxColumns());
+    sh.getRange(1, 1, 1, cab.length).setValues([cab]).setBackground('#121212').setFontColor('#ffffff').setFontWeight('bold')
+      .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+    sh.setFrozenRows(1);
+    if (E.congelarCol) sh.setFrozenColumns(E.congelarCol);
+    sh.setTabColor('#ff7a1a');
+    var filas = Math.max(sh.getMaxRows() - 1, 1);
+    sh.getRange(2, 1, filas, cab.length).setVerticalAlignment('top').setWrap(true);
+    cab.forEach(function (h, j) { var w = E.anchos[E.cab.indexOf(h)]; if (w) sh.setColumnWidth(j + 1, w); });
+    var col = function (h) { return cab.indexOf(h) + 1; };
+    (E.fechas || []).forEach(function (h) {
+      if (col(h) > 0) sh.getRange(2, col(h), filas, 1).setNumberFormat('dd/mm/yyyy')
+        .setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(true).build());
+    });
+    Object.keys(E.listas || {}).forEach(function (h) {
+      if (col(h) > 0) sh.getRange(2, col(h), filas, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(E.listas[h], true).setAllowInvalid(true).build());
+    });
+    if (E.cursiva && col(E.cursiva) > 0) sh.getRange(2, col(E.cursiva), filas, 1).setFontStyle('italic');
+    if (E.negrita && col(E.negrita) > 0) sh.getRange(2, col(E.negrita), filas, 1).setFontWeight('bold');
+    var reglas = (E.colores || []).filter(function (c) { return col(c[0]) > 0; }).map(function (c) {
+      var b = SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=REGEXMATCH($' + colLetra_(col(c[0])) + '2,"' + c[1] + '")')
+        .setBackground(c[2]).setRanges([sh.getRange(2, 1, filas, cab.length)]);
+      if (c[3]) b.setFontColor(c[3]);
+      return b.build();
+    });
+    sh.setConditionalFormatRules(reglas);
+  });
+  Logger.log('OK · Pestañas preparadas: ' + Object.keys(ESQUEMA).join(', '));
+}
+
+/** Al editar a mano APP · PLAN: rellena DÍA a partir de FECHA y pone un ID si falta. (Trigger simple: no necesita instalarse.) */
+function onEdit(e) {
+  try {
+    var sh = e.range.getSheet(), nombre = sh.getName();
+    if (nombre !== HOJAS.PLAN && nombre !== HOJAS.EVENTOS) return;
+    var cab = cabeceras_(sh), f0 = e.range.getRow(), n = e.range.getNumRows();
+    if (f0 < 2) return;
+    var cId = cab.indexOf('ID') + 1;
+    for (var f = f0; f < f0 + n; f++) {
+      if (cId > 0 && !String(sh.getRange(f, cId).getValue()).trim() && sh.getRange(f, 2).getValue() !== '') sh.getRange(f, cId).setValue(nuevoId_());
+      if (nombre === HOJAS.PLAN) {
+        var cF = cab.indexOf('FECHA') + 1, cD = cab.indexOf('DÍA') + 1;
+        if (cF > 0 && cD > 0) {
+          var v = sh.getRange(f, cF).getValue();
+          sh.getRange(f, cD).setValue(v instanceof Date ? NOMBRES_DIA[(v.getDay() + 6) % 7] : '');
+        }
+      }
+    }
+  } catch (err) { /* nunca bloquear la edición */ }
+}
+var NOMBRES_DIA = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+function nuevoId_() { return Utilities.getUuid().slice(0, 8); }
+function diaDe_(iso) { return iso ? NOMBRES_DIA[(new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7] : ''; }
+
+/** Actualiza columnas concretas de una fila (solo en este libro). */
+function actualizarFila_(nombre, fila, o) {
+  var sh = hojaMia_(nombre), cab = cabeceras_(sh);
+  Object.keys(o).forEach(function (h) { var j = cab.indexOf(h); if (j >= 0) sh.getRange(fila, j + 1).setValue(o[h]); });
+}
+
+// ===================== EVENTOS =====================
+var CAMPOS_EVENTO = ['EVENTO', 'TIPO', 'INICIO', 'FIN', 'HORA', 'LUGAR', 'BLOQUEA', 'ANTES (días bajar volumen)', 'DESPUÉS (días recuperación)', 'CÓMO PROCEDER', 'ESTADO', 'NOTAS'];
+function guardarEvento_(ev) {
+  var o = permitidas_(ev, CAMPOS_EVENTO);
+  if (!o.EVENTO || !o.INICIO) throw new Error('evento_incompleto');
+  if (!o.FIN) o.FIN = o.INICIO;
+  if (!o.ESTADO) o.ESTADO = (o['CÓMO PROCEDER'] || o.BLOQUEA === 'No bloquea') ? 'Decidido' : 'Por decidir';
+  return bloqueo_(function () {
+    var id = String(ev.ID || '');
+    var x = id ? listar_(HOJAS.EVENTOS).filter(function (r) { return r.ID === id; })[0] : null;
+    if (x) { actualizarFila_(HOJAS.EVENTOS, x._fila, o); return id; }
+    o.ID = nuevoId_(); o.CREADO = ahora_();
+    var sh = hojaMia_(HOJAS.EVENTOS), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+    return o.ID;
+  });
+}
+function borrarEvento_(id) {
+  var x = listar_(HOJAS.EVENTOS).filter(function (r) { return r.ID === String(id); })[0];
+  if (!x) throw new Error('no_encontrado');
+  borrarFila_(HOJAS.EVENTOS, x._fila, { ID: x.ID });
+}
+function eventosEntre_(desde, hasta) {
+  return listar_(HOJAS.EVENTOS).filter(function (r) {
+    var i = celdaIso_(r.INICIO), f = celdaIso_(r.FIN) || i;
+    return i && f >= desde && i <= hasta;
+  });
+}
+
+// ===================== SEMANAS (confirmación antes de programar) =====================
+function filaSemana_(lunes) {
+  return listar_(HOJAS.SEMANAS).filter(function (r) { return celdaIso_(r.LUNES) === lunes; })[0] || null;
+}
+/** Guarda disponibilidad y decisiones de la semana. Con confirmar=true queda «Confirmada» (ya se puede programar). */
+function guardarSemanaConf_(b) {
+  var lunes = lunesDe_(b.lunes);
+  var evs = eventosEntre_(lunes, sumarDias(lunes, 6));
+  var o = { LUNES: isoAFecha(lunes), 'DOBLES (mañanas libres)': String(b.dobles || '').slice(0, 200), DESCANSO: String(b.descanso || '').slice(0, 200),
+    'EVENTOS DE LA SEMANA': evs.map(function (e) { return e.EVENTO + ' (' + e.INICIO + (e.HORA ? ' ' + e.HORA : '') + ' · ' + (e.BLOQUEA || '—') + ')'; }).join(' | '),
+    DECISIONES: String(b.decisiones || '').slice(0, 2000), NOTAS: String(b.notas || '').slice(0, 2000) };
+  if (b.confirmar) {
+    var sinDecidir = evs.filter(function (e) { return e.ESTADO !== 'Decidido' && e.BLOQUEA !== 'No bloquea'; });
+    if (sinDecidir.length) throw new Error('eventos_sin_decidir');
+    o.ESTADO = 'Confirmada'; o.CONFIRMADA = ahora_();
+  }
+  return bloqueo_(function () {
+    var x = filaSemana_(lunes);
+    if (x) { actualizarFila_(HOJAS.SEMANAS, x._fila, o); return lunes; }
+    if (!o.ESTADO) o.ESTADO = 'Pendiente de confirmar';
+    var sh = hojaMia_(HOJAS.SEMANAS), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+    return lunes;
+  });
+}
+
+// ===================== PLAN: aprobar semana, cambios propuestos y «no hacer» =====================
+/** Pasa a PROGRAMADO todo lo que está en BORRADOR en la semana indicada. */
+function aprobarPlanSemana_(lunes) {
+  lunes = lunesDe_(lunes);
+  var fin = sumarDias(lunes, 6), n = 0;
+  bloqueo_(function () {
+    listar_(HOJAS.PLAN).forEach(function (r) {
+      var d = celdaIso_(r.FECHA);
+      if (d >= lunes && d <= fin && r.ESTADO === 'BORRADOR') { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() }); n++; }
+    });
+    var s = filaSemana_(lunes);
+    if (s && s.ESTADO === 'Confirmada') actualizarFila_(HOJAS.SEMANAS, s._fila, { ESTADO: 'Programada' });
+  });
+  return n;
+}
+
+function anadirPendiente_(r, motivo) {
+  var sh = hojaMia_(HOJAS.PENDIENTES), cab = cabeceras_(sh);
+  var tipo = r.ORIGEN || (String(r.ID || '').indexOf('F-') === 0 ? 'FABRIK' : 'EXTRA');
+  sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, {
+    ID: nuevoId_(), CREADO: ahora_(), 'FECHA ORIGINAL': r.FECHA || '', ID_PLAN: r.ID || '', BLOQUE: r['TÍTULO'] || r.BLOQUE || '', TIPO: tipo,
+    MOTIVO: String(motivo || '').slice(0, 1000), ESTADO: 'Pendiente' })]);
+}
+
+/** Aprueba o rechaza una propuesta de cambios (filas del PLAN con ese CAMBIO_ID). */
+function resolverCambio_(cambioId, aprobar) {
+  cambioId = String(cambioId || '');
+  if (!cambioId) throw new Error('falta_cambio');
+  return bloqueo_(function () {
+    var plan = listar_(HOJAS.PLAN), propias = plan.filter(function (r) { return r.CAMBIO_ID === cambioId; });
+    if (!propias.length) throw new Error('no_encontrado');
+    var aBorrar = [];
+    propias.forEach(function (r) {
+      if (r.ESTADO === 'PROPUESTA') {
+        if (aprobar) {
+          actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
+          String(r.REEMPLAZA || '').split(/[,;\s]+/).filter(Boolean).forEach(function (id) {
+            var v = plan.filter(function (y) { return y.ID === id; })[0];
+            if (v) actualizarFila_(HOJAS.PLAN, v._fila, { ESTADO: 'SUSTITUIDO', ACTUALIZADO: ahora_() });
+          });
+        } else aBorrar.push(r._fila);
+      } else if (r.ESTADO === 'PROPUESTA · NO HACER') {
+        if (aprobar) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'NO HACER', ACTUALIZADO: ahora_() }); anadirPendiente_(r, 'Reestructuración ' + cambioId); }
+        else actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', CAMBIO_ID: '', ACTUALIZADO: ahora_() });
+      }
+    });
+    var sh = hojaMia_(HOJAS.PLAN);
+    aBorrar.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
+    var c = listar_(HOJAS.CAMBIOS).filter(function (r) { return r.ID === cambioId; })[0];
+    if (c) actualizarFila_(HOJAS.CAMBIOS, c._fila, { ESTADO: aprobar ? 'Aprobada' : 'Rechazada' });
+    return propias.length;
+  });
+}
+
+/** Marca un bloque como «no hacer» y lo manda a PENDIENTES. Los de Fabrik (ID F-…) se anotan en el PLAN sin tocar Fabrik. */
+function noHacer_(b) {
+  var id = String(b.id || ''), motivo = String(b.motivo || '').slice(0, 1000);
+  if (!id || !b.fecha) throw new Error('faltan_datos');
+  return bloqueo_(function () {
+    var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0];
+    if (x) {
+      actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'NO HACER', ACTUALIZADO: ahora_() });
+      anadirPendiente_(x, motivo);
+    } else {
+      var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh), iso = celdaIso_(b.fecha);
+      var o = { ID: id, FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: b.turno || 'PM', ORDEN: b.orden || 50, ORIGEN: 'FABRIK', FABRIK_REF: b.ref || '',
+        'TÍTULO': b.titulo || '', ESTADO: 'NO HACER', ACTUALIZADO: ahora_() };
+      sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+      anadirPendiente_(o, motivo);
+    }
+  });
+}
+
+// ===================== CAMBIOS (ha surgido algo) =====================
+function solicitarCambio_(b) {
+  var desde = celdaIso_(b.desde) || hoyIso_();
+  if (!b.evento) throw new Error('falta_evento');
+  var evId = '';
+  if (b.fechaEvento) evId = guardarEvento_({ EVENTO: b.evento, TIPO: b.tipo || 'Otro', INICIO: isoAFecha(celdaIso_(b.fechaEvento)), FIN: isoAFecha(celdaIso_(b.fechaEvento)),
+    HORA: b.hora || '', BLOQUEA: b.bloquea || 'Parcial', 'CÓMO PROCEDER': 'Reestructurar la semana', ESTADO: 'Decidido', NOTAS: b.notas || '' });
+  var o = { ID: nuevoId_(), CREADO: ahora_(), DESDE: isoAFecha(desde), 'TURNO DESDE': b.turno || 'PM', EVENTO: String(b.evento).slice(0, 200),
+    AFECTA: String(b.afecta || '').slice(0, 200), NOTAS: String(b.notas || '').slice(0, 1000) + (evId ? ' · evento ' + evId : ''), ESTADO: 'Solicitada' };
+  anadirFila_(HOJAS.CAMBIOS, o);
+  return o.ID;
+}
+
+function pendientesAbiertos_() { return listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ESTADO === 'Pendiente' || r.ESTADO === 'Propuesto'; }); }
+function cambiosAbiertos_() { return listar_(HOJAS.CAMBIOS).filter(function (r) { return r.ESTADO === 'Solicitada' || r.ESTADO === 'Propuesta lista'; }); }
+
+// ===================== COBERTURA EN TARJETAS (lectura de Dashboard, Semana, Mes y carrera) =====================
+function cobertura_() {
+  var ss = miLibro_();
+  var leer = function (nombre, rango) { var sh = ss.getSheetByName(nombre); return sh ? sh.getRange(rango).getDisplayValues() : []; };
+  var metas = function (g) {
+    var i0 = -1;
+    g.forEach(function (r, i) { if (i0 < 0 && /^PRIORIDAD/i.test(String(r[0]).trim())) i0 = i; });
+    if (i0 < 0) return [];
+    return g.slice(i0 + 1).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
+      return { prioridad: r[0], estimulo: r[1], meta: r[2], incluido: r[3], nota: r[5] };
+    });
+  };
+  var d = leer('Dashboard', 'A1:K25'), sem = leer('Semana', 'A1:H60'), mes = leer('Mes', 'A1:H80'), car = leer('carrera', 'A1:G160');
+  var lista = function (desde, col) { var out = []; for (var i = desde; i < Math.min(desde + 10, d.length); i++) { var v = String(d[i][col] || '').trim(); if (v && v !== '—') out.push(v); else if (!v) break; } return out; };
+  var iPend = -1; d.forEach(function (r, i) { if (iPend < 0 && /^POR CUBRIR/i.test(String(r[0]).trim())) iPend = i; });
+  var iCab = -1; car.forEach(function (r, i) { if (iCab < 0 && /^Sesi[oó]n$/i.test(String(r[0]).trim())) iCab = i; });
+  var carrera = [], actual = null;
+  if (iCab >= 0) car.slice(iCab + 1).forEach(function (r) {
+    var t = String(r[0]).trim();
+    if (!t) return;
+    var soloTitulo = r.slice(1).every(function (c) { return !String(c).trim(); });
+    if (soloTitulo) { actual = { titulo: t, sesiones: [] }; carrera.push(actual); }
+    else if (actual) actual.sesiones.push({ sesion: t, trabajo: r[1], ritmo: r[2], zona: r[3], datos: r[4], sensaciones: r[5], revision: r[6] });
+  });
+  return {
+    semana: { desde: (sem[1] || [])[1], hasta: (sem[1] || [])[4], pct: (d[6] || [])[0], resumen: (d[8] || [])[0], porCubrir: iPend >= 0 ? lista(iPend + 1, 0) : [], metas: metas(sem) },
+    mes: { periodo: (mes[1] || [])[1], pct: (d[6] || [])[5], resumen: (d[8] || [])[5], porCubrir: iPend >= 0 ? lista(iPend + 1, 5) : [], metas: metas(mes) },
+    carrera: { intro: car.slice(0, iCab >= 0 ? iCab : 6).map(function (r) { return String(r[0]).trim(); }).filter(Boolean), semanas: carrera }
+  };
+}
+
 // ===================== INSTALACIÓN =====================
 /** Ejecutar desde el editor tras cada actualización: crea la copia semanal de vídeos (domingo 23:00) y el backup (domingo 23:30, Madrid) y comprueba accesos. */
 function configurar() {
@@ -326,6 +620,7 @@ function configurar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupSemanal') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('backupSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(30).inTimezone(CONFIG.ZONA).create();
   Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
+  prepararHojas();
   var est = estructura_(fabrik_());
   Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
   Logger.log('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { return hojaMia_(HOJAS[k]).getName(); }).join(', '));
