@@ -1,5 +1,5 @@
 /**
- * Road To Elite — servidor (Apps Script) · versión 0.1
+ * Road To Elite — servidor (Apps Script) · versión 0.2
  * ------------------------------------------------------------
  * Se pega en: Road to Elite · Training Coverage → Extensiones → Apps Script.
  *
@@ -16,7 +16,8 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.1',
+  VERSION: '0.2',
+  URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
   SHEET_ID: '1q_DbqA4VWLb-1CUuT8ZDGt-yMfiy__YeoT9-4V2IEJ4',      // Road to Elite · Training Coverage (único sitio donde se escribe)
@@ -84,7 +85,7 @@ function verificarUsuario_(idToken) {
   if (!email) {
     var res = UrlFetchApp.fetch(
       'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + CONFIG.FIREBASE_API_KEY,
-      { method: 'post', contentType: 'application/json', payload: JSON.stringify({ idToken: idToken }), muteHttpExceptions: true });
+      { method: 'post', contentType: 'application/json', headers: { Referer: CONFIG.URL_APP }, payload: JSON.stringify({ idToken: idToken }), muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return { ok: false, error: 'sesion_caducada' };
     var u = (JSON.parse(res.getContentText()).users || [])[0];
     if (!u || !u.email || u.emailVerified !== true) return { ok: false, error: 'sesion_caducada' };
