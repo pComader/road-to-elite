@@ -12,3 +12,6 @@ export const firebaseConfig = {
 
 // Única cuenta con acceso a la app (la del Drive). Se comprueba también en el servidor.
 export const ALLOWED_EMAIL = "pabloserranolopez@gmail.com";
+
+// URL del Apps Script publicado como aplicación web (v0.1, 29/10/2026).
+export const API_URL = "https://script.google.com/macros/s/AKfycbzAXPslG5m0E6ZkprL7Y79-lqnLfLtTLsgfas0TamMqDcWA0Ja12Nmk_BIlz_7c5kyC/exec";
