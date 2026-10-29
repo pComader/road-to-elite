@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.4',
+  VERSION: '0.5',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -75,6 +75,14 @@ function doPost(e) {
       case 'cambio':     var idC = solicitarCambio_(body); return json_({ ok: true, id: idC, semana: semanaCompleta_(body.ver) });
       case 'cambio_resolver': resolverCambio_(body.cambio, !!body.aprobar); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'no_hacer':   noHacer_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      // --- v0.5: metas editables, registro de carrera y análisis ---
+      case 'metas':      return json_({ ok: true, metas: metasDe_(body.fecha), lista: listar_(HOJAS.METAS) });
+      case 'meta':       var idM = guardarMeta_(body.meta || {}); return json_({ ok: true, id: idM, metas: metasDe_(body.fecha), lista: listar_(HOJAS.METAS) });
+      case 'meta_borrar': borrarMeta_(body.id); return json_({ ok: true, metas: metasDe_(body.fecha), lista: listar_(HOJAS.METAS) });
+      case 'meta_ajuste': ajusteMeta_(body); return json_({ ok: true, metas: metasDe_(body.fecha) });
+      case 'carrera':    var idCa = guardarCarrera_(body.carrera || {}); return json_({ ok: true, id: idCa, analisis: analizarCarrera_() });
+      case 'carrera_lista': return json_({ ok: true, carrera: listar_(HOJAS.CARRERA).slice(-60) });
+      case 'analisis':   return json_({ ok: true, analisis: analizarCarrera_() });
       case 'pendiente':  var pd = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ID === String(body.id); })[0];
                          if (!pd) throw new Error('no_encontrado');
                          if (['Pendiente', 'Propuesto', 'Reprogramado', 'Descartado'].indexOf(body.estado) < 0) throw new Error('estado_no_valido');
@@ -230,9 +238,11 @@ function semanaCompleta_(semana) {
     fabrik: fab ? semanaBase_(fab, est) : null,
     plan: listar_(HOJAS.PLAN).filter(enSemana).sort(function (x, y) { return (Number(x.ORDEN) || 0) - (Number(y.ORDEN) || 0); }),
     registro: listar_(HOJAS.REGISTRO).filter(enSemana),
+    carrera: listar_(HOJAS.CARRERA).filter(enSemana),
     eventos: eventosEntre_(sumarDias(lunes, -35), sumarDias(lunes, 120)),
     conf: filaSemana_(lunes), confSiguiente: filaSemana_(sumarDias(lunes, 7)),
-    pendientes: pendientesAbiertos_(), cambios: cambiosAbiertos_()
+    pendientes: pendientesAbiertos_(), cambios: cambiosAbiertos_(),
+    metas: metasDe_(lunes)
   };
 }
 
@@ -365,6 +375,276 @@ var ESQUEMA = {
   }
 };
 
+// ===================== METAS SEMANALES Y MENSUALES (v0.5) =====================
+/**
+ * Las metas viven en APP · METAS y se editan desde la app o el Sheet.
+ * Su avance se calcula con los bloques de APP · PLAN que llevan alguno de sus CÓDIGOS:
+ *   · programado = filas en estado PROGRAMADO (se marca al aprobar el plan de la semana)
+ *   · realizado  = esas filas con registro «Sí» en APP · REGISTRO (o «Parcial», que cuenta media)
+ *   · más los ajustes manuales de APP · AJUSTES METAS (con fecha, así que también se reinician).
+ * Semana: lunes–domingo (se reinicia el domingo por la noche).
+ * Mes: del día siguiente al último domingo del mes anterior hasta el último domingo de este mes
+ *      (una semana que cruza dos meses cuenta entera para el mes nuevo).
+ */
+ESQUEMA['APP · METAS'] = {
+  cab: ['ID', 'ÁMBITO', 'PRIORIDAD', 'ESTÍMULO', 'META', 'META POR MES', 'MÁXIMO', 'TIPO', 'UNIDAD', 'CÓDIGOS', 'ACTIVA', 'NOTAS', 'ORDEN'],
+  anchos: [70, 80, 160, 260, 60, 130, 70, 80, 130, 120, 70, 360, 60],
+  listas: { 'ÁMBITO': ['Semana', 'Mes'], TIPO: ['COUNT', 'MIN', 'MIN_GT', 'SALTOS'], ACTIVA: ['Sí', 'No'] },
+  colores: [['ACTIVA', '^No$', '#5a5a5a', '#ffffff'], ['ÁMBITO', 'Semana', '#eef4ff'], ['ÁMBITO', 'Mes', '#f3eefe']]
+};
+ESQUEMA['APP · AJUSTES METAS'] = {
+  cab: ['ID', 'FECHA', 'META_ID', 'ESTÍMULO', 'CANTIDAD', 'NOTA', 'CREADO'], anchos: [70, 95, 80, 260, 80, 300, 120], fechas: ['FECHA']
+};
+ESQUEMA['APP · HISTÓRICO METAS'] = {
+  cab: ['PERIODO', 'ÁMBITO', 'DESDE', 'HASTA', 'COBERTURA PROGRAMADA', 'COBERTURA REALIZADA', 'METAS CUBIERTAS', 'TOTAL METAS', 'DETALLE', 'CERRADO'],
+  anchos: [120, 80, 95, 95, 110, 110, 90, 80, 520, 120], fechas: ['DESDE', 'HASTA']
+};
+ESQUEMA['APP · CARRERA'] = {
+  cab: ['ID', 'FECHA', 'ID_PLAN', 'SESIÓN', 'TIPO', 'DISTANCIA (km)', 'TIEMPO', 'RITMO MEDIO (/km)', 'FC MEDIA', 'FC MÁX', 'FC ESTABLE (min)', 'PARCIALES POR KM',
+    'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS', 'REGISTRADO'],
+  anchos: [70, 95, 90, 160, 110, 80, 80, 90, 70, 70, 80, 220, 220, 100, 70, 70, 80, 100, 50, 220, 220, 120], fechas: ['FECHA'],
+  listas: { TIPO: ['Z2', 'Z2 larga', 'Z4 umbral', 'Z5 VO2max', 'Z6–Z8', 'Test 2 km', 'Test 10 km', 'Recuperación', 'HYROX', 'Otra'], 'PARCIALES CUMPLIDOS': ['Sí', 'Parcial', 'No'],
+    SUPERFICIE: ['Asfalto', 'Pista', 'Tierra', 'Cinta', 'Mixta'] }
+};
+ESQUEMA['APP · PLAN'].cab.push('CANTIDAD');
+ESQUEMA['APP · PLAN'].anchos.push(70);
+HOJAS.METAS = 'APP · METAS'; HOJAS.AJUSTES = 'APP · AJUSTES METAS'; HOJAS.HISTMETAS = 'APP · HISTÓRICO METAS'; HOJAS.CARRERA = 'APP · CARRERA';
+HOJAS.ANALISIS = 'APP · ANÁLISIS CARRERA';
+
+/** Pasa las metas de las pestañas Semana y Mes a APP · METAS (solo si está vacía). */
+function migrarMetas_() {
+  if (listar_(HOJAS.METAS).length) return 0;
+  var ss = miLibro_(), filas = [], orden = 0;
+  var metaMes = { R02: '11:3, 12:2, 1:1, *:3', R03: '11:1, 12:2, 1:2, *:1' };
+  [['Semana', 'Semana'], ['Mes', 'Mes']].forEach(function (x) {
+    var sh = ss.getSheetByName(x[0]); if (!sh) return;
+    var g = sh.getRange(1, 1, Math.min(sh.getLastRow(), 120), 21).getDisplayValues();
+    var i0 = -1; g.forEach(function (r, i) { if (i0 < 0 && /^PRIORIDAD/i.test(String(r[0]).trim())) i0 = i; });
+    if (i0 < 0) return;
+    g.slice(i0 + 1).forEach(function (r) {
+      if (!String(r[1]).trim() || !String(r[10]).trim()) return;
+      var cod = String(r[10]).trim();
+      filas.push({ ID: nuevoId_(), 'ÁMBITO': x[1], PRIORIDAD: r[0], 'ESTÍMULO': r[1], META: String(r[8] || '').replace(',', '.'), 'META POR MES': metaMes[cod] || '',
+        'MÁXIMO': String(r[13] || '').replace(',', '.'), TIPO: r[9] || 'COUNT', UNIDAD: r[2], 'CÓDIGOS': cod, ACTIVA: /^(TRUE|VERDADERO|S[IÍ])$/i.test(String(r[12]).trim()) ? 'Sí' : 'No',
+        NOTAS: r[5], ORDEN: ++orden });
+    });
+  });
+  var sh2 = hojaMia_(HOJAS.METAS), cab = cabeceras_(sh2);
+  if (filas.length) sh2.getRange(2, 1, filas.length, cab.length).setValues(filas.map(function (o) { return filaDe_(cab, o); }));
+  return filas.length;
+}
+
+function ultimoDomingo_(y, m) {          // m: 1–12
+  var d = new Date(Date.UTC(y, m, 0, 12));           // último día del mes
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());       // retrocede hasta domingo
+  return d.toISOString().slice(0, 10);
+}
+function periodoSemana_(iso) { var l = lunesDe_(iso); return { desde: l, hasta: sumarDias(l, 6), etiqueta: 'Semana ' + isoAFecha(l) }; }
+function periodoMes_(iso) {
+  iso = isoOk_(iso) || hoyIso_();
+  var y = +iso.slice(0, 4), m = +iso.slice(5, 7), fin = ultimoDomingo_(y, m);
+  if (iso > fin) { m++; if (m > 12) { m = 1; y++; } fin = ultimoDomingo_(y, m); }
+  var py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+  var MES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  return { desde: sumarDias(ultimoDomingo_(py, pm), 1), hasta: fin, mes: m, etiqueta: MES[m - 1] + ' ' + y };
+}
+function metaDe_(meta, mes) {
+  var t = String(meta['META POR MES'] || '').trim();
+  if (t) {
+    var map = {}; t.split(/[,;]+/).forEach(function (p) { var kv = p.split(':'); if (kv.length === 2) map[kv[0].trim()] = parseFloat(kv[1]); });
+    if (map[String(mes)] != null) return map[String(mes)];
+    if (map['*'] != null) return map['*'];
+  }
+  return parseFloat(String(meta.META).replace(',', '.')) || 0;
+}
+function codigosDe_(txt) { return String(txt || '').toUpperCase().split(/[|,;\s]+/).filter(Boolean); }
+
+/** Avance de cada meta en un periodo. */
+function avanceMetas_(ambito, per, cache) {
+  var plan = cache.plan, reg = cache.reg, ajustes = cache.ajustes;
+  var enPer = function (iso) { return iso && iso >= per.desde && iso <= per.hasta; };
+  var hecho = {};
+  reg.forEach(function (r) { var k = celdaIso_(r.FECHA) + '|' + r.ID_PLAN; hecho[k] = r.HECHO === 'Sí' ? 1 : r.HECHO === 'Parcial' ? 0.5 : 0; });
+  var metas = cache.metas.filter(function (m) { return m['ÁMBITO'] === ambito && m.ACTIVA !== 'No'; });
+  return metas.map(function (m) {
+    var cods = codigosDe_(m['CÓDIGOS']), meta = metaDe_(m, per.mes), tipo = String(m.TIPO || 'COUNT').toUpperCase();
+    var filas = plan.filter(function (r) {
+      var iso = celdaIso_(r.FECHA); if (!enPer(iso)) return false;
+      var rc = codigosDe_(r['CÓDIGOS']); return rc.some(function (c) { return cods.indexOf(c) >= 0; });
+    });
+    var calc = function (lista, peso) {
+      if (tipo === 'MIN') return lista.reduce(function (a, r) { return a + (parseFloat(String(r.MIN).replace(',', '.')) || 0) * peso(r); }, 0);
+      if (tipo === 'MIN_GT') return lista.reduce(function (a, r) { return Math.max(a, (parseFloat(String(r.MIN).replace(',', '.')) || 0) * (peso(r) ? 1 : 0)); }, 0);
+      if (tipo === 'SALTOS') return lista.reduce(function (a, r) { return a + (parseFloat(String(r.CANTIDAD).replace(',', '.')) || 0) * peso(r); }, 0);
+      var vistos = {}, n = 0;                           // COUNT: una exposición por fecha + turno
+      lista.forEach(function (r) { var k = celdaIso_(r.FECHA) + '|' + r.TURNO, p = peso(r); if (p && !(vistos[k] >= p)) { n += p - (vistos[k] || 0); vistos[k] = p; } });
+      return n;
+    };
+    var prog = filas.filter(function (r) { return r.ESTADO === 'PROGRAMADO'; });
+    var borr = filas.filter(function (r) { return r.ESTADO === 'BORRADOR'; });
+    var ajuste = ajustes.filter(function (a) { return a.META_ID === m.ID && enPer(celdaIso_(a.FECHA)); })
+      .reduce(function (a, x) { return a + (parseFloat(String(x.CANTIDAD).replace(',', '.')) || 1); }, 0);
+    var vProg = calc(prog, function () { return 1; }) + ajuste;
+    var vReal = calc(prog, function (r) { return hecho[celdaIso_(r.FECHA) + '|' + r.ID] || 0; }) + ajuste;
+    var vBorr = calc(borr, function () { return 1; });
+    var ratio = function (v) { return meta > 0 ? Math.min(1, v / meta) : 1; };
+    return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
+      notas: m.NOTAS, orden: Number(m.ORDEN) || 0, programado: vProg, realizado: vReal, borrador: vBorr, ajuste: ajuste,
+      pProg: ratio(vProg), pReal: ratio(vReal), cubierta: meta <= 0 || vProg >= meta, _fila: m._fila };
+  }).sort(function (a, b) { return a.orden - b.orden; });
+}
+function cacheMetas_() {
+  return { metas: listar_(HOJAS.METAS), plan: listar_(HOJAS.PLAN), reg: listar_(HOJAS.REGISTRO), ajustes: listar_(HOJAS.AJUSTES) };
+}
+function resumenPer_(lista, per, ambito) {
+  var n = lista.length, cub = lista.filter(function (x) { return x.cubierta; }).length;
+  var media = function (k) { return n ? lista.reduce(function (a, x) { return a + x[k]; }, 0) / n : 0; };
+  return { ambito: ambito, desde: per.desde, hasta: per.hasta, etiqueta: per.etiqueta, total: n, cubiertas: cub,
+    pctProg: ambito === 'Semana' ? (n ? cub / n : 0) : media('pProg'), pctReal: media('pReal'), metas: lista };
+}
+/** Semana y mes que contienen la fecha indicada. */
+function metasDe_(iso) {
+  iso = isoOk_(iso) || hoyIso_();
+  var c = cacheMetas_(), ps = periodoSemana_(iso), pm = periodoMes_(iso);
+  return { semana: resumenPer_(avanceMetas_('Semana', ps, c), ps, 'Semana'), mes: resumenPer_(avanceMetas_('Mes', pm, c), pm, 'Mes') };
+}
+
+var CAMPOS_META = ['ÁMBITO', 'PRIORIDAD', 'ESTÍMULO', 'META', 'META POR MES', 'MÁXIMO', 'TIPO', 'UNIDAD', 'CÓDIGOS', 'ACTIVA', 'NOTAS', 'ORDEN'];
+function guardarMeta_(m) {
+  var o = permitidas_(m, CAMPOS_META);
+  if (!o['ESTÍMULO'] || !o['ÁMBITO']) throw new Error('meta_incompleta');
+  if (['Semana', 'Mes'].indexOf(o['ÁMBITO']) < 0) throw new Error('ambito_no_valido');
+  return bloqueo_(function () {
+    var x = m.ID ? listar_(HOJAS.METAS).filter(function (r) { return r.ID === String(m.ID); })[0] : null;
+    if (x) { actualizarFila_(HOJAS.METAS, x._fila, o); return x.ID; }
+    o.ID = nuevoId_(); if (!o.ACTIVA) o.ACTIVA = 'Sí'; if (!o.TIPO) o.TIPO = 'COUNT';
+    if (!o.ORDEN) o.ORDEN = listar_(HOJAS.METAS).length + 1;
+    var sh = hojaMia_(HOJAS.METAS), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+    return o.ID;
+  });
+}
+function borrarMeta_(id) {
+  var x = listar_(HOJAS.METAS).filter(function (r) { return r.ID === String(id); })[0];
+  if (!x) throw new Error('no_encontrado');
+  borrarFila_(HOJAS.METAS, x._fila, { ID: x.ID });
+}
+function ajusteMeta_(b) {
+  var m = listar_(HOJAS.METAS).filter(function (r) { return r.ID === String(b.metaId); })[0];
+  if (!m) throw new Error('no_encontrado');
+  anadirFila_(HOJAS.AJUSTES, { ID: nuevoId_(), FECHA: isoAFecha(celdaIso_(b.fecha) || hoyIso_()), META_ID: m.ID, 'ESTÍMULO': m['ESTÍMULO'],
+    CANTIDAD: String(b.cantidad || 1), NOTA: String(b.nota || '').slice(0, 300), CREADO: ahora_() });
+}
+
+/** Domingo por la noche: guarda la semana (y el mes si es su último domingo) en APP · HISTÓRICO METAS. */
+function cierreSemanal() {
+  var hoy = hoyIso_();
+  if (new Date(hoy + 'T12:00:00Z').getUTCDay() === 1) hoy = sumarDias(hoy, -1);   // si el trigger se va pasada la medianoche, cierra el domingo
+  var r = metasDe_(hoy), out = [];
+  var fila = function (x) {
+    return { PERIODO: x.ambito === 'Semana' ? 'Semana ' + isoAFecha(x.desde) : x.etiqueta, 'ÁMBITO': x.ambito, DESDE: isoAFecha(x.desde), HASTA: isoAFecha(x.hasta),
+      'COBERTURA PROGRAMADA': Math.round(x.pctProg * 1000) / 10 + '%', 'COBERTURA REALIZADA': Math.round(x.pctReal * 1000) / 10 + '%', 'METAS CUBIERTAS': x.cubiertas, 'TOTAL METAS': x.total,
+      DETALLE: x.metas.map(function (m) { return m.estimulo + ': ' + m.realizado + '/' + m.programado + ' de ' + m.meta; }).join(' | '), CERRADO: ahora_() };
+  };
+  if (r.semana.hasta === hoy) out.push(fila(r.semana));
+  if (r.mes.hasta === hoy) out.push(fila(r.mes));
+  var hist = listar_(HOJAS.HISTMETAS);
+  out.forEach(function (o) {                                   // si ya se cerró ese periodo, se actualiza en vez de duplicarlo
+    var x = hist.filter(function (h) { return h.PERIODO === o.PERIODO && h['ÁMBITO'] === o['ÁMBITO']; })[0];
+    if (x) actualizarFila_(HOJAS.HISTMETAS, x._fila, o); else anadirFila_(HOJAS.HISTMETAS, o);
+  });
+  try { analizarCarrera_(); } catch (e) { /* el análisis no debe frenar el cierre */ }
+  Logger.log('OK · Cierre: ' + out.length + ' periodo(s) guardado(s)');
+  return out.length;
+}
+
+// ===================== CARRERA: registro detallado y análisis =====================
+var CAMPOS_CARRERA = ['FECHA', 'ID_PLAN', 'SESIÓN', 'TIPO', 'DISTANCIA (km)', 'TIEMPO', 'RITMO MEDIO (/km)', 'FC MEDIA', 'FC MÁX', 'FC ESTABLE (min)', 'PARCIALES POR KM',
+  'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS'];
+function segundos_(t) {
+  var p = String(t || '').trim().split(':').map(function (x) { return parseFloat(x.replace(',', '.')); });
+  if (!p.length || p.some(isNaN)) return 0;
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 60;
+}
+function mmss_(s) { s = Math.round(s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+function guardarCarrera_(c) {
+  var o = permitidas_(c, CAMPOS_CARRERA);
+  if (!o.FECHA) throw new Error('falta_fecha');
+  var km = parseFloat(String(o['DISTANCIA (km)'] || '').replace(',', '.')), seg = segundos_(o.TIEMPO);
+  if (!o['RITMO MEDIO (/km)'] && km > 0 && seg > 0) o['RITMO MEDIO (/km)'] = mmss_(seg / km);
+  o.REGISTRADO = ahora_();
+  var id = bloqueo_(function () {
+    var x = listar_(HOJAS.CARRERA).filter(function (r) { return r.FECHA === o.FECHA && o.ID_PLAN && r.ID_PLAN === o.ID_PLAN; })[0];
+    if (x) { actualizarFila_(HOJAS.CARRERA, x._fila, o); return x.ID; }
+    o.ID = nuevoId_();
+    var sh = hojaMia_(HOJAS.CARRERA), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+    return o.ID;
+  });
+  try { analizarCarrera_(); } catch (e) { /* no frena el guardado */ }
+  return id;
+}
+
+/** Calcula el análisis de carrera y lo escribe en APP · ANÁLISIS CARRERA (también lo devuelve a la app). */
+function analizarCarrera_() {
+  var filas = listar_(HOJAS.CARRERA).map(function (r) {
+    var km = parseFloat(String(r['DISTANCIA (km)']).replace(',', '.')) || 0, seg = segundos_(r.TIEMPO), fc = parseFloat(r['FC MEDIA']) || 0;
+    var ritmo = segundos_(r['RITMO MEDIO (/km)']) || (km ? seg / km : 0), vel = ritmo ? 1000 / ritmo * 60 : 0;   // m/min
+    return { fecha: celdaIso_(r.FECHA), lunes: lunesDe_(celdaIso_(r.FECHA)), tipo: r.TIPO || 'Otra', sesion: r['SESIÓN'], km: km, seg: seg, ritmo: ritmo, fc: fc,
+      fcmax: parseFloat(r['FC MÁX']) || 0, estable: parseFloat(String(r['FC ESTABLE (min)']).replace(',', '.')) || 0, efic: fc && vel ? vel / fc : 0,
+      cumple: r['PARCIALES CUMPLIDOS'], rpe: parseFloat(r.RPE) || 0, series: r['SERIES (tiempos)'], notas: r.SENSACIONES || r.NOTAS };
+  }).filter(function (x) { return x.fecha; }).sort(function (a, b) { return a.fecha < b.fecha ? -1 : 1; });
+  var esZ2 = function (x) { return /^Z2/i.test(x.tipo); };
+  // semanas
+  var sem = {};
+  filas.forEach(function (x) {
+    var s = sem[x.lunes] = sem[x.lunes] || { lunes: x.lunes, km: 0, min: 0, minZ2: 0, sesiones: 0, calidad: 0, z68: 0, ritZ2: [], fcZ2: [], efZ2: [] };
+    s.km += x.km; s.min += x.seg / 60; s.sesiones++;
+    if (esZ2(x)) { s.minZ2 += x.seg / 60; if (x.ritmo) s.ritZ2.push(x.ritmo); if (x.fc) s.fcZ2.push(x.fc); if (x.efic) s.efZ2.push(x.efic); }
+    if (/Z4|Z5|Test/i.test(x.tipo)) s.calidad++;
+    if (/Z6/i.test(x.tipo)) s.z68++;
+  });
+  var med = function (a) { return a.length ? a.reduce(function (p, c) { return p + c; }, 0) / a.length : 0; };
+  var semanas = Object.keys(sem).sort().map(function (k) {
+    var s = sem[k]; return { lunes: k, km: Math.round(s.km * 10) / 10, min: Math.round(s.min), minZ2: Math.round(s.minZ2), sesiones: s.sesiones, calidad: s.calidad, z68: s.z68,
+      ritmoZ2: med(s.ritZ2) ? mmss_(med(s.ritZ2)) : '', fcZ2: Math.round(med(s.fcZ2)) || '', eficZ2: Math.round(med(s.efZ2) * 1000) / 1000 || '' };
+  });
+  // tendencias
+  var z2 = filas.filter(function (x) { return esZ2(x) && x.efic; });
+  var ult = z2.slice(-3), prev = z2.slice(-6, -3);
+  var tendencia = ult.length && prev.length ? (med(ult.map(function (x) { return x.efic; })) / med(prev.map(function (x) { return x.efic; })) - 1) : null;
+  var cal = filas.filter(function (x) { return /Z4|Z5|Test/i.test(x.tipo); }).slice(-4);
+  var cumplidas = cal.filter(function (x) { return x.cumple === 'Sí'; }).length;
+  var conclusiones = [];
+  if (tendencia != null) conclusiones.push('Eficiencia en Z2 (metros por minuto por latido): ' + (tendencia >= 0 ? '+' : '') + Math.round(tendencia * 1000) / 10 + '% en las 3 últimas Z2 frente a las 3 anteriores' + (tendencia > 0.01 ? ' → la base mejora.' : tendencia < -0.02 ? ' → revisar fatiga, calor o ritmo demasiado alto.' : ' → estable.'));
+  else conclusiones.push('Faltan Z2 con FC media para medir la eficiencia (se necesitan 6).');
+  if (cal.length) conclusiones.push('Calidad: parciales cumplidos en ' + cumplidas + ' de las últimas ' + cal.length + ' sesiones' + (cumplidas === cal.length ? ' → se puede progresar una variable.' : ' → mantener la dosis.'));
+  var u = semanas[semanas.length - 1];
+  if (u) conclusiones.push('Última semana registrada (' + isoAFecha(u.lunes) + '): ' + u.km + ' km · Z2 ' + u.minZ2 + '′ · calidad ' + u.calidad + ' · Z6–Z8 ' + u.z68 + (u.minZ2 < 90 ? ' → por debajo de los 90′ de Z2.' : '.'));
+  var estables = z2.filter(function (x) { return x.estable; }).slice(-5);
+  if (estables.length) conclusiones.push('FC estable en Z2 a los ' + Math.round(med(estables.map(function (x) { return x.estable; }))) + ' min de media (últimas ' + estables.length + ').');
+  var res = { semanas: semanas.slice(-12), z2: z2.slice(-8).map(function (x) { return { fecha: x.fecha, km: x.km, ritmo: mmss_(x.ritmo), fc: x.fc, efic: Math.round(x.efic * 1000) / 1000, estable: x.estable }; }),
+    calidad: cal.map(function (x) { return { fecha: x.fecha, sesion: x.sesion, tipo: x.tipo, series: x.series, cumple: x.cumple, rpe: x.rpe }; }), conclusiones: conclusiones, actualizado: ahora_() };
+  escribirAnalisis_(res);
+  return res;
+}
+function escribirAnalisis_(res) {
+  var ss = miLibro_(), sh = ss.getSheetByName(HOJAS.ANALISIS) || ss.insertSheet(HOJAS.ANALISIS);
+  sh.clear();
+  var filas = [['ANÁLISIS DE CARRERA · actualizado ' + res.actualizado], [''], ['CONCLUSIONES']].concat(res.conclusiones.map(function (c) { return ['· ' + c]; }));
+  filas.push([''], ['POR SEMANA']);
+  var t1 = [['Semana', 'km', 'min totales', 'min Z2', 'sesiones', 'calidad', 'Z6–Z8', 'ritmo Z2', 'FC Z2', 'eficiencia Z2']]
+    .concat(res.semanas.map(function (s) { return [isoAFecha(s.lunes), s.km, s.min, s.minZ2, s.sesiones, s.calidad, s.z68, s.ritmoZ2, s.fcZ2, s.eficZ2]; }));
+  var t2 = [['Z2 · fecha', 'km', 'ritmo', 'FC media', 'eficiencia', 'FC estable (min)']].concat(res.z2.map(function (x) { return [isoAFecha(x.fecha), x.km, x.ritmo, x.fc, x.efic, x.estable || '']; }));
+  var t3 = [['Calidad · fecha', 'sesión', 'tipo', 'series', 'parciales cumplidos', 'RPE']].concat(res.calidad.map(function (x) { return [isoAFecha(x.fecha), x.sesion, x.tipo, x.series, x.cumple, x.rpe || '']; }));
+  var ancho = 10, pad = function (r) { r = r.slice(); while (r.length < ancho) r.push(''); return r; };
+  var todo = filas.map(pad).concat(t1.map(pad), [pad([''])], [pad(['Z2 · EFICIENCIA'])], t2.map(pad), [pad([''])], [pad(['CALIDAD'])], t3.map(pad));
+  sh.getRange(1, 1, todo.length, ancho).setValues(todo);
+  sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
+  sh.setColumnWidth(1, 130);
+  sh.setTabColor('#ff7a1a');
+}
+
 function colLetra_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
 /** Crea o completa las pestañas de la app con su formato. No borra datos. */
@@ -411,7 +691,7 @@ function prepararHojas() {
 function onEdit(e) {
   try {
     var sh = e.range.getSheet(), nombre = sh.getName();
-    if (nombre !== HOJAS.PLAN && nombre !== HOJAS.EVENTOS) return;
+    if ([HOJAS.PLAN, HOJAS.EVENTOS, HOJAS.METAS, HOJAS.AJUSTES, HOJAS.CARRERA].indexOf(nombre) < 0) return;
     var cab = cabeceras_(sh), f0 = e.range.getRow(), n = e.range.getNumRows();
     if (f0 < 2) return;
     var cId = cab.indexOf('ID') + 1;
@@ -608,6 +888,7 @@ function cobertura_() {
   return {
     semana: { desde: (sem[1] || [])[1], hasta: (sem[1] || [])[4], pct: (d[6] || [])[0], resumen: (d[8] || [])[0], porCubrir: iPend >= 0 ? lista(iPend + 1, 0) : [], metas: metas(sem) },
     mes: { periodo: (mes[1] || [])[1], pct: (d[6] || [])[5], resumen: (d[8] || [])[5], porCubrir: iPend >= 0 ? lista(iPend + 1, 5) : [], metas: metas(mes) },
+    metas: metasDe_(hoyIso_()),
     carrera: { intro: car.slice(0, iCab >= 0 ? iCab : 6).map(function (r) { return String(r[0]).trim(); }).filter(Boolean), semanas: carrera }
   };
 }
@@ -620,7 +901,11 @@ function configurar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupSemanal') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('backupSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(30).inTimezone(CONFIG.ZONA).create();
   Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'cierreSemanal') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('cierreSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(45).inTimezone(CONFIG.ZONA).create();
   prepararHojas();
+  Logger.log('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
+  analizarCarrera_();
   var est = estructura_(fabrik_());
   Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
   Logger.log('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { return hojaMia_(HOJAS[k]).getName(); }).join(', '));

@@ -1,6 +1,6 @@
 // Road To Elite · service worker: guarda la "carcasa" de la app para que abra rápido.
 // Nunca guarda datos (las peticiones al Apps Script y a Google van siempre a la red).
-var VERSION = 'rte-v0.3.0';
+var VERSION = 'rte-v0.4.0';
 var CARCASA = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {

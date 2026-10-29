@@ -767,3 +767,26 @@ details.sci>summary{color:var(--accent);font-weight:600}
 .meta-c .pbar{margin-top:6px}
 .meta-t b{font-family:var(--f-board);font-weight:700;letter-spacing:.02em}
 .meta-c>summary,.meta-c>summary b{color:var(--fg)!important}
+
+/* ---- v0.4 web: metas calculadas, carrera y análisis ---- */
+.pbar.dbl{position:relative;height:8px}
+.pbar.dbl i{position:absolute;left:0;top:0;bottom:0}
+.pbar.dbl i.prog{background:color-mix(in srgb,var(--accent) 38%,transparent)}
+.pbar.dbl i.prog.full{background:color-mix(in srgb,var(--rpe-low) 40%,transparent)}
+.pbar.dbl i.real{background:var(--accent)}
+.meta-sub{font-size:12px;color:var(--muted);margin-top:4px}
+.leyenda{display:flex;align-items:center;gap:6px}
+.lg{display:inline-block;width:14px;height:6px;border-radius:9px}
+.lg.prog{background:color-mix(in srgb,var(--accent) 38%,transparent)}
+.lg.real{background:var(--accent);margin-left:8px}
+.run-f{border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin-top:6px}
+.run-f>summary{font-weight:700;cursor:pointer}
+.run-f .exp-body{display:flex;flex-direction:column;gap:6px}
+.vb-v.run{background:var(--surface-2);color:var(--ink,inherit);font-weight:600}
+.ana{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.ana-c{margin:6px 0;font-size:14px;line-height:1.4}
+.tbl-w{overflow-x:auto;max-width:100%}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th,.tbl td{padding:6px 5px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl th{color:var(--muted);font-weight:600}

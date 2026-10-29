@@ -298,10 +298,10 @@
     return { semana: sem.lunes, hoy: sem.hoy, ciclo: fab ? fab.ciclo : cicloPara(S.ciclo || leer('rte-ciclo'), sem.lunes), dias: dias,
       erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: sem.plan || [], borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
       misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
-      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas };
+      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
-  function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); }
+  function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); }
 
   function cargar(semana) {
     S.cargando = true;
@@ -541,9 +541,11 @@
     var r = registroDe(x.iso, idPlanDe(x, b));
     var est = r ? (r.HECHO === 'Sí' ? '<span class="reg-st ok">✔ Hecho</span>' : r.HECHO === 'Parcial' ? '<span class="reg-st part">◐ Parcial</span>' : '<span class="reg-st no">✕ No hecho</span>') +
       (r.RPE ? '<span class="vb-v" style="--c:' + rpeColor(String(r.RPE)) + '">RPE ' + esc(r.RPE) + '</span>' : '') : '<span class="hint">Sin registrar</span>';
-    var dato = esc(JSON.stringify({ iso: x.iso, id: idPlanDe(x, b), bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo }));
+    var dato = esc(JSON.stringify({ iso: x.iso, id: idPlanDe(x, b), bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo, run: esCarrera(b), tipo: tipoCarrera(b.titulo + ' ' + (b.intensidad || '') + ' ' + (b.origen || '')) }));
+    var cr = carreraDe(x.iso, idPlanDe(x, b));
     var off = /NO HACER|PROPUESTA/.test(norm(b.estado));
     var nh = esc(JSON.stringify({ id: idPlanDe(x, b), fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }));
+    if (cr) est += '<span class="vb-v run">🏃 ' + esc(cr['DISTANCIA (km)'] || '') + (cr['DISTANCIA (km)'] ? ' km' : '') + (cr['RITMO MEDIO (/km)'] ? ' · ' + esc(cr['RITMO MEDIO (/km)']) + '/km' : '') + (cr['FC MEDIA'] ? ' · ' + esc(cr['FC MEDIA']) + ' ppm' : '') + '</span>';
     return '<div class="reg-row">' + est + '<span class="grow"></span>' + (off ? '' : '<button type="button" class="btn-ghost sm" data-nohacer="' + nh + '">No hacer</button>') +
       '<button type="button" class="btn-ghost sm" data-reg="' + dato + '">' + (r ? 'Editar' : 'Registrar') + '</button></div>';
   }
@@ -564,9 +566,11 @@
       '<label for="rg-car">Cargas usadas</label><input id="rg-car" value="' + esc(r.CARGAS || '') + '">' +
       '<label for="rg-mol">Molestias</label><input id="rg-mol" value="' + esc(r.MOLESTIAS || '') + '">' +
       '<label for="rg-not">Notas</label><textarea id="rg-not" rows="2">' + esc(r.NOTAS || '') + '</textarea>' +
+      htmlCamposCarrera(carreraDe(ref.iso, ref.id) || {}, !!ref.run, ref.tipo) +
       '<div class="two-btn">' + (r.FECHA ? '<button class="btn" type="button" id="rg-del">Borrar</button>' : '') +
       '<button class="btn btn-primary" type="submit" id="rg-ok">Guardar</button></div></form>');
     $scrim.querySelectorAll('[data-rh]').forEach(function (bt) { bt.onclick = function () { $scrim.querySelectorAll('[data-rh]').forEach(function (y) { y.setAttribute('aria-pressed', String(y === bt)); }); }; });
+    enlazarCamposCarrera();
     $scrim.querySelectorAll('[data-rr]').forEach(function (bt) { bt.onclick = function () { var ya = bt.classList.contains('on'); $scrim.querySelectorAll('[data-rr]').forEach(function (y) { y.classList.remove('on'); }); if (!ya) bt.classList.add('on'); }; });
     var del = document.getElementById('rg-del');
     if (del) del.onclick = function () {
@@ -582,10 +586,88 @@
       var reg = { FECHA: aTxt(ref.iso), ID_PLAN: ref.id, BLOQUE: ref.bloque, HECHO: h ? h.dataset.rh : 'Sí', RPE: rr ? rr.dataset.rr : '', MIN_REAL: val('rg-min'),
         'DATOS (parciales/vatios)': val('rg-dat'), CARGAS: val('rg-car'), 'SUEÑO': val('rg-sue'), MOLESTIAS: val('rg-mol'), NOTAS: val('rg-not') };
       var b = document.getElementById('rg-ok'); b.disabled = true; b.textContent = 'Guardando…';
+      var car = leerCamposCarrera(); car.FECHA = reg.FECHA; car.ID_PLAN = ref.id; car['SESIÓN'] = ref.bloque.replace(/^EXTRA · /, ''); car.RPE = reg.RPE;
       api({ action: 'registrar', registro: reg }).then(ok).then(function (res) {
         S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === reg.FECHA && y.ID_PLAN === reg.ID_PLAN); }).concat([res.registro]);
-        cerrarHoja(); render(); toast('Guardado');
-      }).catch(falloApi(b));
+        return hayDatosCarrera(car) ? guardarCarreraApi(car) : null;
+      }).then(function () { cerrarHoja(); render(); toast(hayDatosCarrera(car) ? 'Guardado · carrera analizada' : 'Guardado'); }).catch(falloApi(b));
+    };
+  }
+
+
+  // ---------- registro de carrera detallado (APP · CARRERA, datos del Garmin) ----------
+  var TIPOS_CARRERA = ['Z2', 'Z2 larga', 'Z4 umbral', 'Z5 VO2max', 'Z6–Z8', 'Test 2 km', 'Test 10 km', 'Recuperación', 'HYROX', 'Otra'];
+  function esCarrera(b) {
+    var t = norm((b.titulo || '') + ' ' + (b.codigos || ''));
+    return norm(b.origen) === 'CARRERA' || (b.extra && /\b(Z2|RODAJE|CARRERA|RUN|UMBRAL|FARTLEK|TEMPO|SERIES|TEST 2|TEST 10|PISTA)\b/.test(t));
+  }
+  function tipoCarrera(txt) {
+    var t = norm(txt || '');
+    if (/TEST 2/.test(t)) return 'Test 2 km'; if (/TEST 10/.test(t)) return 'Test 10 km';
+    if (/Z6|Z7|Z8|RSA|SPRINT/.test(t)) return 'Z6–Z8'; if (/Z5|VO2/.test(t)) return 'Z5 VO2max'; if (/Z4|UMBRAL|TEMPO/.test(t)) return 'Z4 umbral';
+    if (/LARGA|LONG/.test(t)) return 'Z2 larga'; if (/Z2|RODAJE/.test(t)) return 'Z2'; if (/HYROX/.test(t)) return 'HYROX'; if (/RECUP/.test(t)) return 'Recuperación';
+    return '';
+  }
+  function carreraDe(iso, idPlan) {
+    var f = aTxt(iso);
+    return (S.data.carrera || []).filter(function (r) { return (r.FECHA === f || aIso(r.FECHA) === iso) && (idPlan ? r.ID_PLAN === idPlan : !r.ID_PLAN); })[0] || null;
+  }
+  function htmlCamposCarrera(c, abierto, tipoDef) {
+    var sel = function (id, v, l) { return '<select id="' + id + '"><option value=""></option>' + l.map(function (x) { return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>'; };
+    var cum = c['PARCIALES CUMPLIDOS'] || '';
+    return '<details class="run-f"' + (abierto ? ' open' : '') + '><summary>🏃 Datos de carrera (Garmin)</summary><div class="exp-body">' +
+      '<div class="two"><div><label for="ca-t">Tipo</label>' + sel('ca-t', c.TIPO || tipoDef || '', TIPOS_CARRERA) + '</div>' +
+      '<div><label for="ca-km">Distancia (km)</label><input id="ca-km" inputmode="decimal" value="' + esc(c['DISTANCIA (km)'] || '') + '" placeholder="8,2"></div></div>' +
+      '<div class="two"><div><label for="ca-ti">Tiempo</label><input id="ca-ti" value="' + esc(c.TIEMPO || '') + '" placeholder="45:30 o 1:02:10"></div>' +
+      '<div><label for="ca-ri">Ritmo medio /km</label><input id="ca-ri" value="' + esc(c['RITMO MEDIO (/km)'] || '') + '" placeholder="se calcula solo"></div></div>' +
+      '<div class="three"><div><label for="ca-fc">FC media</label><input id="ca-fc" inputmode="numeric" value="' + esc(c['FC MEDIA'] || '') + '"></div>' +
+      '<div><label for="ca-fm">FC máx</label><input id="ca-fm" inputmode="numeric" value="' + esc(c['FC MÁX'] || '') + '"></div>' +
+      '<div><label for="ca-fe">FC estable (min)</label><input id="ca-fe" inputmode="decimal" value="' + esc(c['FC ESTABLE (min)'] || '') + '" title="Minuto en que el pulso se estabiliza"></div></div>' +
+      '<label for="ca-pk">Parciales por km</label><textarea id="ca-pk" rows="2" placeholder="5:32 · 5:30 · 5:28 · 5:29 …">' + esc(c['PARCIALES POR KM'] || '') + '</textarea>' +
+      '<label for="ca-se">Series (tiempos y recuperaciones)</label><textarea id="ca-se" rows="2" placeholder="4×1 km: 4:28 · 4:26 · 4:27 · 4:25 (rec 2′)">' + esc(c['SERIES (tiempos)'] || '') + '</textarea>' +
+      '<label>¿Parciales cumplidos?</label><div class="seg" role="group" id="ca-cu">' + ['Sí', 'Parcial', 'No'].map(function (h) {
+        return '<button type="button" data-cu="' + h + '" aria-pressed="' + (h === cum) + '">' + h + '</button>'; }).join('') + '</div>' +
+      '<div class="three"><div><label for="ca-cad">Cadencia</label><input id="ca-cad" inputmode="numeric" value="' + esc(c.CADENCIA || '') + '"></div>' +
+      '<div><label for="ca-des">Desnivel (m)</label><input id="ca-des" inputmode="numeric" value="' + esc(c['DESNIVEL (m)'] || '') + '"></div>' +
+      '<div><label for="ca-tem">Temp. (°C)</label><input id="ca-tem" inputmode="numeric" value="' + esc(c['TEMPERATURA (°C)'] || '') + '"></div></div>' +
+      '<label for="ca-su">Superficie</label>' + sel('ca-su', c.SUPERFICIE || '', ['Asfalto', 'Pista', 'Tierra', 'Cinta', 'Mixta']) +
+      '<label for="ca-sen">Sensaciones</label><input id="ca-sen" maxlength="300" value="' + esc(c.SENSACIONES || '') + '" placeholder="Piernas, respiración, pulso…">' +
+      '</div></details>';
+  }
+  function enlazarCamposCarrera() {
+    $scrim.querySelectorAll('[data-cu]').forEach(function (bt) { bt.onclick = function () {
+      var ya = bt.getAttribute('aria-pressed') === 'true';
+      $scrim.querySelectorAll('[data-cu]').forEach(function (y) { y.setAttribute('aria-pressed', 'false'); }); if (!ya) bt.setAttribute('aria-pressed', 'true'); }; });
+  }
+  function leerCamposCarrera() {
+    var cu = $scrim.querySelector('[data-cu][aria-pressed="true"]');
+    return { TIPO: val('ca-t'), 'DISTANCIA (km)': val('ca-km').replace('.', ','), TIEMPO: val('ca-ti'), 'RITMO MEDIO (/km)': val('ca-ri'), 'FC MEDIA': val('ca-fc'), 'FC MÁX': val('ca-fm'),
+      'FC ESTABLE (min)': val('ca-fe'), 'PARCIALES POR KM': val('ca-pk'), 'SERIES (tiempos)': val('ca-se'), 'PARCIALES CUMPLIDOS': cu ? cu.dataset.cu : '', CADENCIA: val('ca-cad'),
+      'DESNIVEL (m)': val('ca-des'), 'TEMPERATURA (°C)': val('ca-tem'), SUPERFICIE: val('ca-su'), SENSACIONES: val('ca-sen') };
+  }
+  function hayDatosCarrera(c) { return !!(c['DISTANCIA (km)'] || c.TIEMPO || c['FC MEDIA'] || c['SERIES (tiempos)'] || c['PARCIALES POR KM']); }
+  function guardarCarreraApi(c) {
+    return api({ action: 'carrera', carrera: c }).then(ok).then(function (r) {
+      S.analisis = r.analisis;
+      S.data.carrera = (S.data.carrera || []).filter(function (y) { return !(y.FECHA === c.FECHA && (y.ID_PLAN || '') === (c.ID_PLAN || '')); }).concat([c]);
+      return r;
+    });
+  }
+  /** Carrera suelta (sin bloque del plan), desde Cobertura › Carrera. */
+  function abrirCarrera(ref) {
+    var c = ref.id ? (carreraDe(ref.iso, ref.id) || {}) : {};
+    abrirHoja('<div class="row"><h2>Registrar carrera</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<form id="caf" class="avf"><div class="two"><div><label for="ca-f">Fecha</label><input id="ca-f" type="date" value="' + esc(ref.iso) + '"></div>' +
+      '<div><label for="ca-n">Sesión</label><input id="ca-n" maxlength="120" value="' + esc(c['SESIÓN'] || ref.bloque || '') + '" placeholder="Z2 suave"></div></div>' +
+      htmlCamposCarrera(c, true, '') + '<label>RPE</label><input id="ca-rpe" inputmode="numeric" value="' + esc(c.RPE || '') + '">' +
+      '<button class="btn btn-primary" type="submit" id="ca-ok">Guardar</button></form>');
+    enlazarCamposCarrera();
+    document.getElementById('caf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var o = leerCamposCarrera(); o.FECHA = aTxt(val('ca-f')); o['SESIÓN'] = val('ca-n'); o.ID_PLAN = ref.id || ''; o.RPE = val('ca-rpe');
+      if (!hayDatosCarrera(o)) { toast('Pon al menos distancia, tiempo o FC'); return; }
+      var b = document.getElementById('ca-ok'); b.disabled = true;
+      guardarCarreraApi(o).then(function () { cerrarHoja(); render(); toast('Carrera guardada · análisis actualizado'); }).catch(falloApi(b));
     };
   }
 
@@ -894,67 +976,152 @@
     };
   }
 
-  // ---------- Cobertura en tarjetas (Dashboard, Semana, Mes y carrera del Sheet) ----------
+  // ---------- Cobertura: metas semana/mes (APP · METAS, calculadas desde el plan) y carrera ----------
   function pctNum(t) { var m = String(t || '').match(/(\d+(?:[.,]\d+)?)\s*%/); return m ? Math.min(100, parseFloat(m[1].replace(',', '.'))) : null; }
   function anillo(pct, lbl, sub) {
     var p = pct == null ? 0 : pct, r = 30, c = 2 * Math.PI * r;
     return '<div class="ring"><svg viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="' + r + '" class="ring-bg"/><circle cx="36" cy="36" r="' + r + '" class="ring-fg' + (p >= 100 ? ' full' : '') +
       '" stroke-dasharray="' + (c * p / 100).toFixed(1) + ' ' + c.toFixed(1) + '"/></svg><b>' + (pct == null ? '—' : Math.round(p) + '%') + '</b><span>' + esc(lbl) + '</span>' + (sub ? '<em>' + esc(sub) + '</em>' : '') + '</div>';
   }
-  function progresoMeta(m) {
-    var inc = parseFloat(String(m.incluido).replace(',', '.')) || 0, n = String(m.meta).match(/(\d+(?:[.,]\d+)?)/), meta = n ? parseFloat(n[1].replace(',', '.')) : 1;
-    if (/^>/.test(String(m.meta).trim())) meta = meta + 0.0001;
-    return Math.max(0, Math.min(100, meta ? inc / meta * 100 : 0));
-  }
+  function num1(n) { n = Math.round((Number(n) || 0) * 10) / 10; return String(n).replace('.', ','); }
+  function unidadMeta(m) { return m.tipo === 'MIN' || m.tipo === 'MIN_GT' ? '′' : m.tipo === 'SALTOS' ? ' saltos' : ''; }
   function tarjetasMetas(lista) {
-    if (!lista.length) return '<div class="hint">Sin metas.</div>';
+    if (!lista.length) return '<div class="hint">Sin metas. Crea la primera con «＋ Nueva meta».</div>';
     var grupos = {}, orden = [];
     lista.forEach(function (m) { var k = m.prioridad || 'Otras'; if (!grupos[k]) { grupos[k] = []; orden.push(k); } grupos[k].push(m); });
     return orden.map(function (k) {
       return '<div class="part-lbl">' + esc(k) + '</div>' + grupos[k].map(function (m) {
-        var p = progresoMeta(m);
-        return '<details class="meta-c"><summary><div class="meta-t"><b>' + esc(m.estimulo) + '</b><span class="meta-n' + (p >= 100 ? ' ok' : '') + '">' + esc(m.incluido || '0') + ' / ' + esc(m.meta) + '</span></div>' +
-          '<div class="pbar"><i class="' + (p >= 100 ? 'full' : '') + '" style="width:' + p + '%"></i></div></summary>' +
-          (m.nota ? '<div class="exp-body hint">' + esc(m.nota) + '</div>' : '') + '</details>';
+        var u = unidadMeta(m), pp = Math.round(m.pProg * 100), pr = Math.round(m.pReal * 100);
+        return '<details class="meta-c"><summary><div class="meta-t"><b>' + esc(m.estimulo) + '</b><span class="meta-n' + (m.cubierta ? ' ok' : '') + '">' +
+          num1(m.programado) + ' / ' + num1(m.meta) + u + '</span></div>' +
+          '<div class="pbar dbl" title="Programado ' + pp + '% · hecho ' + pr + '%"><i class="prog' + (pp >= 100 ? ' full' : '') + '" style="width:' + pp + '%"></i><i class="real" style="width:' + pr + '%"></i></div>' +
+          '<div class="meta-sub">' + (m.cubierta ? '✔ Programada' : 'Falta programar ' + num1(Math.max(0, m.meta - m.programado)) + u) + ' · hecho ' + num1(m.realizado) + u +
+            (m.borrador ? ' · ' + num1(m.borrador) + ' en borrador' : '') + '</div></summary>' +
+          '<div class="exp-body">' + (m.notas ? '<div class="hint">' + esc(m.notas) + '</div>' : '') +
+          '<div class="hint">Códigos ' + esc(m.codigos || '—') + ' · tipo ' + esc(m.tipo) + (m.maximo ? ' · máx. ' + esc(m.maximo) : '') + (m.ajuste ? ' · ajustes manuales ' + num1(m.ajuste) : '') + '</div>' +
+          '<div class="evc-acc"><button class="btn-ghost sm" type="button" data-meta-aj="' + esc(m.id) + '">＋ Marcar hecho a mano</button><button class="btn-ghost sm" type="button" data-meta-ed="' + esc(m.id) + '">Editar</button></div></div></details>';
       }).join('');
     }).join('');
+  }
+  function cargarCobertura() {
+    return api({ action: 'cobertura' }).then(ok).then(function (r) { S.cobertura = r.cobertura; if (S.vista === 'cobertura') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
+  }
+  function htmlAnalisis(A) {
+    if (!A) return '<div class="hint">Calculando el análisis…</div>';
+    var h = '<section class="ana"><div class="part-lbl">Conclusiones</div>' + (A.conclusiones || []).map(function (c) { return '<p class="ana-c">' + esc(c) + '</p>'; }).join('') + '</section>';
+    if ((A.semanas || []).length) h += '<div class="part-lbl">Por semana</div><div class="tbl-w"><table class="tbl"><thead><tr><th>Semana</th><th>km</th><th>Z2′</th><th>Cal.</th><th>Z6–8</th><th>Ritmo Z2</th><th>FC Z2</th></tr></thead><tbody>' +
+      A.semanas.slice().reverse().map(function (s) { return '<tr><td>' + fechaCorta(s.lunes) + '</td><td>' + num1(s.km) + '</td><td>' + s.minZ2 + '</td><td>' + s.calidad + '</td><td>' + s.z68 + '</td><td>' + esc(s.ritmoZ2) + '</td><td>' + esc(s.fcZ2) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    if ((A.calidad || []).length) h += '<div class="part-lbl">Últimas sesiones de calidad</div>' + A.calidad.slice().reverse().map(function (x) {
+      return '<div class="run-c"><div class="run-h"><b>' + esc(x.sesion || x.tipo) + '</b><span class="tag">' + esc(x.tipo) + '</span></div><div class="hint">' + fechaCorta(x.fecha) +
+        (x.series ? ' · ' + esc(x.series) : '') + ' · parciales: ' + esc(x.cumple || '—') + (x.rpe ? ' · RPE ' + esc(x.rpe) : '') + '</div></div>'; }).join('');
+    return h + '<div class="hint">Actualizado ' + esc(A.actualizado || '') + ' · también en la pestaña APP · ANÁLISIS CARRERA del Sheet.</div>';
   }
   function renderCobertura() {
     var html = cabeceraVista('Cobertura', 'Menú');
     var C = S.cobertura;
-    if (!C) {
+    if (!C || !C.metas) {
       $app.innerHTML = html + '<div class="hint">Leyendo tu Sheet…</div>';
       document.getElementById('atras').onclick = function () { abrirAjustes(); };
-      api({ action: 'cobertura' }).then(ok).then(function (r) { S.cobertura = r.cobertura; if (S.vista === 'cobertura') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
+      cargarCobertura();
       return;
     }
-    var tab = S.cobTab || 'semana';
-    html += '<div class="rings">' + anillo(pctNum(C.semana.pct), 'Semana', C.semana.resumen) + anillo(pctNum(C.mes.pct), 'Mes', C.mes.resumen) + '</div>';
+    var tab = S.cobTab || 'semana', M = C.metas;
+    html += '<div class="rings">' + anillo(M.semana.pctProg * 100, 'Semana', M.semana.cubiertas + '/' + M.semana.total + ' metas · hecho ' + Math.round(M.semana.pctReal * 100) + '%') +
+      anillo(M.mes.pctProg * 100, cap(M.mes.etiqueta), 'hecho ' + Math.round(M.mes.pctReal * 100) + '%') + '</div>';
     html += '<div class="seg" role="group" aria-label="Vista">' + [['semana', 'Semana'], ['mes', 'Mes'], ['carrera', 'Carrera']].map(function (t) {
       return '<button type="button" data-cob="' + t[0] + '" aria-pressed="' + (tab === t[0]) + '">' + t[1] + '</button>'; }).join('') + '</div>';
     if (tab === 'carrera') {
-      var hoy = S.data.hoy, sems = C.carrera.semanas || [];
-      html += (C.carrera.intro || []).slice(1, 3).map(function (t) { return '<div class="hint">' + esc(t) + '</div>'; }).join('');
-      html += sems.map(function (w, i) {
-        return '<details class="set"' + (i < 2 ? ' open' : '') + '><summary>' + esc(w.titulo.split('·').slice(0, 2).join('·')) + '</summary><div class="set-body">' +
+      html += '<button class="btn btn-primary" type="button" id="car-nueva">＋ Registrar carrera (datos del Garmin)</button>';
+      html += htmlAnalisis(S.analisis);
+      var sems = (C.carrera && C.carrera.semanas) || [];
+      if (sems.length) html += '<div class="part-lbl">Plan de carrera (pestaña carrera)</div>' + sems.map(function (w) {
+        return '<details class="set"><summary>' + esc(w.titulo.split('·').slice(0, 2).join('·')) + '</summary><div class="set-body">' +
           '<div class="hint">' + esc(w.titulo.split('·').slice(2).join('·')) + '</div>' +
           w.sesiones.map(function (x) {
             return '<div class="run-c"><div class="run-h"><b>' + esc(x.sesion) + '</b><span class="tag">' + esc(String(x.zona || '').split('·')[0]) + '</span></div>' +
-              '<div class="run-t">' + esc(x.trabajo) + '</div>' + (x.ritmo ? '<div class="hint">🎯 ' + esc(x.ritmo) + '</div>' : '') +
-              (x.datos ? '<div class="hint">📝 ' + esc(x.datos) + '</div>' : '') + '</div>';
+              '<div class="run-t">' + esc(x.trabajo) + '</div>' + (x.ritmo ? '<div class="hint">🎯 ' + esc(x.ritmo) + '</div>' : '') + '</div>';
           }).join('') + '</div></details>';
       }).join('');
     } else {
-      var B = C[tab];
-      html += '<div class="hint">' + (tab === 'semana' ? esc(B.desde) + ' – ' + esc(B.hasta) : 'Mes de ' + esc(B.periodo)) + '</div>';
-      if ((B.porCubrir || []).length) html += '<section class="por-cubrir"><div class="part-lbl">Por cubrir</div>' + B.porCubrir.map(function (t) { return '<div class="pc-i">' + esc(t) + '</div>'; }).join('') + '</section>';
+      var B = M[tab], falta = B.metas.filter(function (m) { return !m.cubierta; });
+      html += '<div class="hint">' + (tab === 'semana' ? 'Semana' : cap(B.etiqueta)) + ': ' + fechaCorta(B.desde) + ' – ' + fechaCorta(B.hasta) +
+        (tab === 'semana' ? ' · se reinicia el domingo' : ' · se cierra el último domingo del mes') + '</div>';
+      html += '<div class="hint leyenda"><i class="lg prog"></i> programado <i class="lg real"></i> hecho</div>';
+      if (falta.length) html += '<section class="por-cubrir"><div class="part-lbl">Por cubrir</div>' + falta.map(function (m) {
+        return '<div class="pc-i">' + esc(m.estimulo) + ' [' + num1(m.programado) + '/' + num1(m.meta) + unidadMeta(m) + ']</div>'; }).join('') + '</section>';
       html += tarjetasMetas(B.metas || []);
+      html += '<button class="btn" type="button" id="meta-nueva">＋ Nueva meta ' + (tab === 'semana' ? 'semanal' : 'mensual') + '</button>';
     }
     html += '<button class="btn" type="button" id="cob-re">Actualizar</button>';
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
-    document.getElementById('cob-re').onclick = function () { S.cobertura = null; render(); };
+    document.getElementById('cob-re').onclick = function () { S.cobertura = null; S.analisis = null; render(); };
     $app.querySelectorAll('[data-cob]').forEach(function (b) { b.onclick = function () { S.cobTab = b.dataset.cob; render(); }; });
+    var todas = M.semana.metas.concat(M.mes.metas), porId = function (id) { return todas.filter(function (m) { return m.id === id; })[0]; };
+    $app.querySelectorAll('[data-meta-ed]').forEach(function (b) { b.onclick = function () { abrirFormMeta(porId(b.dataset.metaEd)); }; });
+    $app.querySelectorAll('[data-meta-aj]').forEach(function (b) { b.onclick = function () { abrirAjusteMeta(porId(b.dataset.metaAj)); }; });
+    var nm = document.getElementById('meta-nueva'); if (nm) nm.onclick = function () { abrirFormMeta(null, tab === 'semana' ? 'Semana' : 'Mes'); };
+    var nc = document.getElementById('car-nueva'); if (nc) nc.onclick = function () { abrirCarrera({ iso: S.data.hoy, id: '', bloque: '' }); };
+    if (tab === 'carrera' && !S.analisis && !S._pidiendoAn) {
+      S._pidiendoAn = true;
+      api({ action: 'analisis' }).then(ok).then(function (r) { S.analisis = r.analisis; S._pidiendoAn = false; if (S.vista === 'cobertura') render(); }).catch(function (e) { S._pidiendoAn = false; toast(mensajeError(e.message)); });
+    }
+  }
+  /** Crear o editar una meta (APP · METAS). */
+  function abrirFormMeta(m, ambito) {
+    if (m && !S.metasLista) {
+      api({ action: 'metas' }).then(ok).then(function (r) { S.metasLista = r.lista; abrirFormMeta(m, ambito); }).catch(function (e) { toast(mensajeError(e.message)); });
+      return;
+    }
+    var fila = m && (S.metasLista || []).filter(function (r) { return r.ID === m.id; })[0], o = {};
+    if (fila) o = { ID: fila.ID, 'ÁMBITO': fila['ÁMBITO'], PRIORIDAD: fila.PRIORIDAD, 'ESTÍMULO': fila['ESTÍMULO'], META: fila.META, MPM: fila['META POR MES'], MAXIMO: fila['MÁXIMO'], TIPO: fila.TIPO, CODIGOS: fila['CÓDIGOS'], ACTIVA: fila.ACTIVA, NOTAS: fila.NOTAS, ORDEN: fila.ORDEN };
+    if (!o['ÁMBITO']) o['ÁMBITO'] = ambito || 'Semana';
+    var sel = function (v, l) { return l.map(function (x) { return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join(''); };
+    abrirHoja('<div class="row"><h2>' + (o.ID ? 'Editar meta' : 'Nueva meta') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<form id="mtf" class="avf"><label for="mt-e">Estímulo</label><input id="mt-e" required maxlength="160" value="' + esc(o['ESTÍMULO'] || '') + '" placeholder="Ej. HSPU estricto">' +
+      '<div class="two"><div><label for="mt-a">Ámbito</label><select id="mt-a">' + sel(o['ÁMBITO'], ['Semana', 'Mes']) + '</select></div>' +
+      '<div><label for="mt-p">Prioridad / bloque</label><input id="mt-p" maxlength="60" value="' + esc(o.PRIORIDAD || '') + '" placeholder="P1 · Gimnásticos"></div></div>' +
+      '<div class="two"><div><label for="mt-t">Cómo se cuenta</label><select id="mt-t">' + ['COUNT', 'MIN', 'MIN_GT', 'SALTOS'].map(function (x) {
+        return '<option value="' + x + '"' + (x === (o.TIPO || 'COUNT') ? ' selected' : '') + '>' + { COUNT: 'Sesiones', MIN: 'Minutos totales', MIN_GT: 'Sesión de más de X min', SALTOS: 'Cantidad (saltos, reps…)' }[x] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label for="mt-m">Meta</label><input id="mt-m" inputmode="decimal" required value="' + esc(o.META || '') + '"></div></div>' +
+      '<div class="two"><div><label for="mt-x">Máximo (opcional)</label><input id="mt-x" inputmode="decimal" value="' + esc(o.MAXIMO || '') + '"></div>' +
+      '<div><label for="mt-c">Códigos del plan</label><input id="mt-c" maxlength="80" value="' + esc(o.CODIGOS || '') + '" placeholder="W17 o W15|W16"></div></div>' +
+      '<label for="mt-mm">Meta distinta por mes (opcional)</label><input id="mt-mm" maxlength="80" value="' + esc(o.MPM || '') + '" placeholder="11:3, 12:2, 1:1, *:3">' +
+      '<label for="mt-n">Notas / criterio</label><textarea id="mt-n" rows="2">' + esc(o.NOTAS || '') + '</textarea>' +
+      '<div class="two"><div><label for="mt-o">Orden</label><input id="mt-o" inputmode="numeric" value="' + esc(o.ORDEN || '') + '"></div>' +
+      '<div><label for="mt-on">Activa</label><select id="mt-on">' + sel(o.ACTIVA || 'Sí', ['Sí', 'No']) + '</select></div></div>' +
+      '<div class="hint">El avance se calcula solo con los bloques del plan que llevan estos códigos (programado) y con lo que registres como hecho.</div>' +
+      '<div class="two-btn">' + (o.ID ? '<button class="btn" type="button" id="mt-del">Borrar</button>' : '') + '<button class="btn btn-primary" type="submit" id="mt-ok">Guardar</button></div></form>');
+    var fin = function (r) { S.cobertura.metas = r.metas; if (r.lista) S.metasLista = r.lista; cerrarHoja(); render(); };
+    var del = document.getElementById('mt-del');
+    if (del) del.onclick = function () {
+      if (!confirmar(del, '¿Borrar? Toca otra vez')) return;
+      del.disabled = true;
+      api({ action: 'meta_borrar', id: o.ID }).then(ok).then(function (r) { fin(r); toast('Meta borrada'); }).catch(falloApi(del));
+    };
+    document.getElementById('mtf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var b = document.getElementById('mt-ok'); b.disabled = true;
+      var meta = { ID: o.ID || '', 'ÁMBITO': val('mt-a'), PRIORIDAD: val('mt-p'), 'ESTÍMULO': val('mt-e'), META: val('mt-m').replace(',', '.'), 'MÁXIMO': val('mt-x').replace(',', '.'), TIPO: val('mt-t'),
+        'CÓDIGOS': val('mt-c').toUpperCase(), 'META POR MES': val('mt-mm'), NOTAS: val('mt-n'), ORDEN: val('mt-o'), ACTIVA: val('mt-on') };
+      api({ action: 'meta', meta: meta }).then(ok).then(function (r) { fin(r); toast('Meta guardada'); }).catch(falloApi(b));
+    };
+  }
+  /** Marca a mano algo hecho fuera del plan (APP · AJUSTES METAS). */
+  function abrirAjusteMeta(m) {
+    if (!m) return;
+    abrirHoja('<div class="row"><h2>Marcar hecho</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><div class="hint">' + esc(m.estimulo) + '</div>' +
+      '<form id="ajf" class="avf"><div class="two"><div><label for="aj-f">Fecha</label><input id="aj-f" type="date" value="' + S.data.hoy + '"></div>' +
+      '<div><label for="aj-c">Cantidad' + (unidadMeta(m) ? ' (' + unidadMeta(m).trim() + ')' : '') + '</label><input id="aj-c" inputmode="decimal" value="1"></div></div>' +
+      '<label for="aj-n">Nota</label><input id="aj-n" maxlength="300" placeholder="Ej. lo hice en el open gym">' +
+      '<div class="hint">Cuenta como programado y hecho en el periodo de esa fecha. Para restar, pon una cantidad negativa.</div>' +
+      '<button class="btn btn-primary" type="submit" id="aj-ok">Guardar</button></form>');
+    document.getElementById('ajf').onsubmit = function (ev) {
+      ev.preventDefault();
+      var b = document.getElementById('aj-ok'); b.disabled = true;
+      api({ action: 'meta_ajuste', metaId: m.id, fecha: val('aj-f'), cantidad: val('aj-c').replace(',', '.'), nota: val('aj-n') }).then(ok)
+        .then(function (r) { S.cobertura.metas = r.metas; cerrarHoja(); render(); toast('Anotado'); }).catch(falloApi(b));
+    };
   }
 
   // ---------- Calendario de eventos (APP · EVENTOS) ----------
@@ -2140,7 +2307,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.3';
+  var WEB_VERSION = 'web 0.4';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
