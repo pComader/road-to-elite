@@ -1,0 +1,23 @@
+# Secretos y configuración local: nunca al repositorio
+.env
+.env.*
+*.key
+*.pem
+service-account*.json
+firebase-debug.log
+.firebase/
+.clasp.json
+.clasprc.json
+
+# Dependencias y builds
+node_modules/
+dist/
+.cache/
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backups locales
+Backup/
