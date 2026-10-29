@@ -17,10 +17,11 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.5',
+  VERSION: '0.6',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
+  FIREBASE_PROYECTO: 'road-to-elite',
   SHEET_ID: '1q_DbqA4VWLb-1CUuT8ZDGt-yMfiy__YeoT9-4V2IEJ4',      // Road to Elite · Training Coverage (único sitio donde se escribe)
   FABRIK_ID: '1DRBQteuUHesG2gMODigDBTr5LK5PHMsqRIdHpCtT82g',     // FABRIK PROGRAM · SOLO LECTURA
   PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · SOLO LECTURA (copia semanal de vídeos)
@@ -83,6 +84,15 @@ function doPost(e) {
       case 'carrera':    var idCa = guardarCarrera_(body.carrera || {}); return json_({ ok: true, id: idCa, analisis: analizarCarrera_() });
       case 'carrera_lista': return json_({ ok: true, carrera: listar_(HOJAS.CARRERA).slice(-60) });
       case 'analisis':   return json_({ ok: true, analisis: analizarCarrera_() });
+      // --- v0.6: chequeo matinal, bloques y plantillas desde la app, avisos al móvil ---
+      case 'chequeo':    return json_({ ok: true, chequeo: guardarChequeo_(body.chequeo || {}) });
+      case 'chequeos':   return json_({ ok: true, chequeos: listar_(HOJAS.CHEQUEO).slice(-30) });
+      case 'bloque':     var idB = crearBloque_(body.bloque || {}); return json_({ ok: true, id: idB, semana: semanaCompleta_(body.ver) });
+      case 'bloque_borrar': borrarBloque_(body.id); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'plantillas': return json_({ ok: true, plantillas: listar_(HOJAS.PLANTILLAS) });
+      case 'plantilla':  guardarPlantilla_(body.plantilla || {}); return json_({ ok: true, plantillas: listar_(HOJAS.PLANTILLAS) });
+      case 'push_token': guardarTokenPush_(body.token); return json_({ ok: true });
+      case 'push_prueba': return json_({ ok: true, enviados: enviarPush_('Road To Elite', 'Los avisos funcionan en este dispositivo.') });
       case 'pendiente':  var pd = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ID === String(body.id); })[0];
                          if (!pd) throw new Error('no_encontrado');
                          if (['Pendiente', 'Propuesto', 'Reprogramado', 'Descartado'].indexOf(body.estado) < 0) throw new Error('estado_no_valido');
@@ -104,9 +114,17 @@ function verificarUsuario_(idToken) {
   if (!idToken) return { ok: false, error: 'sin_sesion' };
   var cache = CacheService.getScriptCache();
   var clave = 'tok_' + Utilities.base64EncodeWebSafe(
-    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken)).slice(0, 40);
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(idToken).slice(0, 4096))).slice(0, 40);
+  if (cache.get('no' + clave)) return { ok: false, error: 'sesion_caducada' };
   var email = cache.get(clave);
   if (!email) {
+    // Filtro previo SIN coste: si el token ni siquiera dice ser tuyo, de este proyecto y vigente, se rechaza sin consultar a Google.
+    // (No sustituye a la comprobación de Google de abajo, que es la que verifica la firma.)
+    var pre = cargaJwt_(idToken);
+    if (!pre || pre.aud !== CONFIG.FIREBASE_PROYECTO || !(pre.exp * 1000 > Date.now()) || String(pre.email || '').toLowerCase() !== CONFIG.EMAIL_PERMITIDO) {
+      cache.put('no' + clave, '1', 600);
+      return { ok: false, error: pre && pre.email && String(pre.email).toLowerCase() !== CONFIG.EMAIL_PERMITIDO ? 'no_autorizado' : 'sesion_caducada' };
+    }
     var res = UrlFetchApp.fetch(
       'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + CONFIG.FIREBASE_API_KEY,
       { method: 'post', contentType: 'application/json', headers: { Referer: CONFIG.URL_APP }, payload: JSON.stringify({ idToken: idToken }), muteHttpExceptions: true });
@@ -121,6 +139,16 @@ function verificarUsuario_(idToken) {
 }
 
 /** Único libro en el que se puede escribir. Si alguien cambia el ID por error, se para aquí. */
+/** Lee (sin verificar) la parte central de un token JWT. Solo sirve de filtro previo. */
+function cargaJwt_(t) {
+  var p = String(t || '').split('.');
+  if (p.length !== 3 || p[1].length > 3000) return null;
+  try {
+    var s = p[1].replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '=';
+    return JSON.parse(Utilities.newBlob(Utilities.base64Decode(s)).getDataAsString());
+  } catch (e) { return null; }
+}
+
 function miLibro_() {
   var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
   if (ss.getId() !== CONFIG.SHEET_ID) throw new Error('escritura_bloqueada');
@@ -147,8 +175,24 @@ function cabeceras_(sh) {
   return sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(function (h) { return String(h).trim(); });
 }
 
+/**
+ * Lecturas agrupadas: mientras se monta una respuesta (semana, cobertura, metas) cada pestaña se lee UNA sola vez.
+ * Fuera de eso se lee siempre fresca (las escrituras nunca usan una copia vieja).
+ */
+var MEMO = null;
+function conMemo_(fn) {
+  if (MEMO) return fn();
+  MEMO = {};
+  try { return fn(); } finally { MEMO = null; }
+}
 /** Filas de una pestaña de la app como objetos { CABECERA: texto, _fila }. */
 function listar_(nombre) {
+  if (MEMO && MEMO[nombre]) return MEMO[nombre];
+  var filas = listarHoja_(nombre);
+  if (MEMO) MEMO[nombre] = filas;
+  return filas;
+}
+function listarHoja_(nombre) {
   var sh = hojaMia_(nombre), cab = cabeceras_(sh), n = sh.getLastRow();
   if (n < 2) return [];
   return sh.getRange(2, 1, n - 1, cab.length).getDisplayValues().map(function (r, i) {
@@ -226,19 +270,30 @@ function leerConfig_() {
  * semana = lunes 'yyyy-MM-dd' (opcional). Por defecto, la semana actual.
  * Devuelve: lo de Fabrik de esa semana (si existe), las filas de APP · PLAN y lo registrado en APP · REGISTRO.
  */
-function semanaCompleta_(semana) {
-  var lunes = lunesDe_(semana);
-  var domingo = sumarDias(lunes, 6);
+function semanaCompleta_(semana) { return conMemo_(function () { return semanaCompletaSin_(semana); }); }
+/** Lo de Fabrik para una semana, guardado 5 min: Fabrik solo se abre cuando la copia caduca (es lo más lento). */
+function fabrikSemana_(lunes) {
+  var cache = CacheService.getScriptCache(), clave = 'fab2_' + lunes, v = cache.get(clave);
+  if (v) return JSON.parse(v);
   var est = estructura_(fabrik_());
   var fab = est.semanas.filter(function (s) { return s.iso === lunes; })[0] || null;
-  var lista = est.semanas.map(function (s) { return { iso: s.iso, nombre: s.nombre }; });
+  var out = { lista: est.semanas.map(function (s) { return { iso: s.iso, nombre: s.nombre }; }), erratas: est.erratas, fabrik: fab ? semanaBase_(fab, est) : null };
+  try { cache.put(clave, JSON.stringify(out), CONFIG.CACHE_SEG); } catch (e) { /* demasiado grande: se recalcula */ }
+  return out;
+}
+function semanaCompletaSin_(semana) {
+  var lunes = lunesDe_(semana);
+  var domingo = sumarDias(lunes, 6);
+  var F = fabrikSemana_(lunes);
   var enSemana = function (r) { var d = celdaIso_(r.FECHA); return d && d >= lunes && d <= domingo; };
   return {
-    lunes: lunes, hoy: hoyIso_(), semanasFabrik: lista, erratasFabrik: est.erratas,
-    fabrik: fab ? semanaBase_(fab, est) : null,
+    lunes: lunes, hoy: hoyIso_(), semanasFabrik: F.lista, erratasFabrik: F.erratas,
+    fabrik: F.fabrik,
     plan: listar_(HOJAS.PLAN).filter(enSemana).sort(function (x, y) { return (Number(x.ORDEN) || 0) - (Number(y.ORDEN) || 0); }),
     registro: listar_(HOJAS.REGISTRO).filter(enSemana),
     carrera: listar_(HOJAS.CARRERA).filter(enSemana),
+    chequeos: listar_(HOJAS.CHEQUEO).filter(function (r) { var d = celdaIso_(r.FECHA); return d && d >= sumarDias(lunes, -1) && d <= domingo; }),
+    push: pushActivo_(),
     eventos: eventosEntre_(sumarDias(lunes, -35), sumarDias(lunes, 120)),
     conf: filaSemana_(lunes), confSiguiente: filaSemana_(sumarDias(lunes, 7)),
     pendientes: pendientesAbiertos_(), cambios: cambiosAbiertos_(),
@@ -503,7 +558,8 @@ function resumenPer_(lista, per, ambito) {
     pctProg: ambito === 'Semana' ? (n ? cub / n : 0) : media('pProg'), pctReal: media('pReal'), metas: lista };
 }
 /** Semana y mes que contienen la fecha indicada. */
-function metasDe_(iso) {
+function metasDe_(iso) { return conMemo_(function () { return metasDeSin_(iso); }); }
+function metasDeSin_(iso) {
   iso = isoOk_(iso) || hoyIso_();
   var c = cacheMetas_(), ps = periodoSemana_(iso), pm = periodoMes_(iso);
   return { semana: resumenPer_(avanceMetas_('Semana', ps, c), ps, 'Semana'), mes: resumenPer_(avanceMetas_('Mes', pm, c), pm, 'Mes') };
@@ -645,6 +701,160 @@ function escribirAnalisis_(res) {
   sh.setTabColor('#ff7a1a');
 }
 
+// ===================== v0.6: CHEQUEO MATINAL, PLANTILLAS, BLOQUES DESDE LA APP Y AVISOS AL MÓVIL =====================
+ESQUEMA['APP · CHEQUEO'] = {
+  cab: ['FECHA', 'SUEÑO (h)', 'CALIDAD SUEÑO (1-5)', 'VFC (ms)', 'FC REPOSO', 'ENERGÍA (1-5)', 'MOLESTIAS (0-5)', 'ZONA MOLESTIA', 'ESTRÉS (1-5)', 'NOTAS', 'LISTO (0-100)', 'SEMÁFORO', 'RECOMENDACIÓN', 'REGISTRADO'],
+  anchos: [95, 70, 90, 70, 70, 80, 90, 140, 80, 240, 80, 80, 420, 120], fechas: ['FECHA'],
+  listas: { 'SEMÁFORO': ['Verde', 'Ámbar', 'Rojo'] },
+  colores: [['SEMÁFORO', 'Verde', '#e0f5e6'], ['SEMÁFORO', 'Ámbar', '#fff2cc'], ['SEMÁFORO', 'Rojo', '#fbe0e0']]
+};
+ESQUEMA['APP · PLANTILLAS'] = {
+  cab: ['ID', 'NOMBRE', 'ORIGEN', 'TÍTULO', 'CONTENIDO', 'INTENSIDAD', 'MIN', 'CANTIDAD', 'CÓDIGOS', 'POR QUÉ (cursiva)', 'CIENCIA (técnica · fisiología · biología)', 'INTERFERENCIAS', 'CREADA'],
+  anchos: [70, 180, 90, 170, 300, 95, 55, 70, 90, 260, 320, 240, 120], cursiva: 'POR QUÉ (cursiva)', negrita: 'NOMBRE',
+  listas: { ORIGEN: ['EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD'] }
+};
+HOJAS.CHEQUEO = 'APP · CHEQUEO'; HOJAS.PLANTILLAS = 'APP · PLANTILLAS';
+
+/**
+ * Semáforo del día (0–100) con lo que anotas al levantarte.
+ * VFC y FC en reposo se comparan con TU media de los 7 chequeos anteriores (lo que cuenta es la desviación, no el número).
+ */
+function puntuarChequeo_(o, previos) {
+  var n = function (v) { var x = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isFinite(x) ? x : null; };
+  var partes = [], pesos = 0, suma = 0;
+  var add = function (v, peso) { if (v == null) return; suma += Math.max(0, Math.min(1, v)) * peso; pesos += peso; };
+  var h = n(o['SUEÑO (h)']); if (h != null) add((h - 5) / 3, 20);                       // 5 h → 0 · 8 h → 1
+  var cs = n(o['CALIDAD SUEÑO (1-5)']); if (cs != null) add((cs - 1) / 4, 10);
+  var en = n(o['ENERGÍA (1-5)']); if (en != null) add((en - 1) / 4, 20);
+  var mo = n(o['MOLESTIAS (0-5)']); if (mo != null) add(1 - mo / 5, 20);
+  var es = n(o['ESTRÉS (1-5)']); if (es != null) add(1 - (es - 1) / 4, 10);
+  var media = function (k) { var v = previos.map(function (p) { return n(p[k]); }).filter(function (x) { return x != null && x > 0; }); return v.length >= 3 ? v.reduce(function (a, b) { return a + b; }, 0) / v.length : null; };
+  var vfc = n(o['VFC (ms)']), mv = media('VFC (ms)');
+  if (vfc != null && mv) { var dv = vfc / mv - 1; add(0.5 + dv / 0.2, 20); partes.push('VFC ' + (dv >= 0 ? '+' : '') + Math.round(dv * 100) + '% sobre tu media'); }
+  var fc = n(o['FC REPOSO']), mf = media('FC REPOSO');
+  if (fc != null && mf) { var df = fc - mf; add(0.5 - df / 10, 10); partes.push('FC reposo ' + (df >= 0 ? '+' : '') + Math.round(df) + ' ppm'); }
+  var listo = pesos ? Math.round(suma / pesos * 100) : null;
+  var sem = listo == null ? '' : listo >= 72 ? 'Verde' : listo >= 52 ? 'Ámbar' : 'Rojo';
+  if (mo != null && mo >= 4) sem = 'Rojo';                                                // dolor fuerte manda
+  var rec = {
+    Verde: 'Todo según plan. Z6–Z8 y calidad donde están programadas.',
+    'Ámbar': 'Mantén la calidad principal y recorta 20–30% el volumen accesorio. Z6–Z8: solo si el calentamiento sale fino y con la recuperación completa; si no, «No hacer» y pasa a pendientes.',
+    Rojo: 'Hoy nada de Z6–Z8 ni calidad: Z2 muy suave, técnica ligera o movilidad. Usa «Ha surgido algo» y te propongo cómo recolocar la semana.'
+  }[sem] || 'Añade al menos sueño, energía y molestias para calcularlo.';
+  if (mo != null && mo >= 2 && o['ZONA MOLESTIA']) rec += ' Ojo con ' + o['ZONA MOLESTIA'] + ': evita lo que la cargue.';
+  return { listo: listo, semaforo: sem, recomendacion: rec, detalle: partes.join(' · ') };
+}
+var CAMPOS_CHEQUEO = ['FECHA', 'SUEÑO (h)', 'CALIDAD SUEÑO (1-5)', 'VFC (ms)', 'FC REPOSO', 'ENERGÍA (1-5)', 'MOLESTIAS (0-5)', 'ZONA MOLESTIA', 'ESTRÉS (1-5)', 'NOTAS'];
+function guardarChequeo_(c) {
+  var o = permitidas_(c, CAMPOS_CHEQUEO);
+  var iso = celdaIso_(o.FECHA) || hoyIso_(); o.FECHA = isoAFecha(iso);
+  return bloqueo_(function () {
+    var todos = listar_(HOJAS.CHEQUEO);
+    var previos = todos.filter(function (r) { var d = celdaIso_(r.FECHA); return d && d < iso; }).sort(function (a, b) { return celdaIso_(a.FECHA) < celdaIso_(b.FECHA) ? 1 : -1; }).slice(0, 7);
+    var p = puntuarChequeo_(o, previos);
+    o['LISTO (0-100)'] = p.listo == null ? '' : p.listo; o['SEMÁFORO'] = p.semaforo; o['RECOMENDACIÓN'] = p.recomendacion + (p.detalle ? ' (' + p.detalle + ')' : ''); o.REGISTRADO = ahora_();
+    var x = todos.filter(function (r) { return celdaIso_(r.FECHA) === iso; })[0];
+    if (x) actualizarFila_(HOJAS.CHEQUEO, x._fila, o);
+    else { var sh = hojaMia_(HOJAS.CHEQUEO), cab = cabeceras_(sh); sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]); }
+    return o;
+  });
+}
+
+// ---------- plantillas y bloques creados desde la app (entran en BORRADOR: tú los apruebas) ----------
+var CAMPOS_BLOQUE = ['ORIGEN', 'TÍTULO', 'CONTENIDO', 'INTENSIDAD', 'MIN', 'CANTIDAD', 'CÓDIGOS', 'POR QUÉ (cursiva)', 'CIENCIA (técnica · fisiología · biología)', 'INTERFERENCIAS'];
+function crearBloque_(b) {
+  var o = permitidas_(b, CAMPOS_BLOQUE.concat(['TURNO', 'ORDEN']));
+  var iso = celdaIso_(b.fecha);
+  if (!iso || !o['TÍTULO']) throw new Error('faltan_datos');
+  if (['EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD'].indexOf(o.ORIGEN) < 0) o.ORIGEN = 'EXTRA';   // nunca FABRIK desde aquí
+  o.ID = nuevoId_(); o.FECHA = isoAFecha(iso); o['DÍA'] = diaDe_(iso); o.TURNO = o.TURNO === 'AM' ? 'AM' : 'PM';
+  o.ORDEN = o.ORDEN || (o.TURNO === 'AM' ? 5 : 80); o.BLOQUE = o['TÍTULO']; o.ESTADO = 'BORRADOR'; o.ACTUALIZADO = ahora_();
+  anadirFila_(HOJAS.PLAN, o);
+  return o.ID;
+}
+/** Borra un bloque que tú creaste y que aún está en BORRADOR (lo programado no se borra desde la app). */
+function borrarBloque_(id) {
+  var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(id); })[0];
+  if (!x) throw new Error('no_encontrado');
+  if (x.ESTADO !== 'BORRADOR' || x.ORIGEN === 'FABRIK') throw new Error('solo_borrador');
+  borrarFila_(HOJAS.PLAN, x._fila, { ID: x.ID });
+}
+function guardarPlantilla_(p) {
+  var o = permitidas_(p, ['NOMBRE'].concat(CAMPOS_BLOQUE));
+  if (!o.NOMBRE || !o['TÍTULO']) throw new Error('faltan_datos');
+  if (['EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD'].indexOf(o.ORIGEN) < 0) o.ORIGEN = 'EXTRA';
+  o.ID = nuevoId_(); o.CREADA = ahora_();
+  anadirFila_(HOJAS.PLANTILLAS, o);
+  return o.ID;
+}
+
+// ---------- avisos al móvil (Firebase Cloud Messaging) ----------
+/**
+ * Se activa solo si en Propiedades del script existe FCM_CUENTA (el JSON de una cuenta de servicio de Firebase).
+ * Esa clave NUNCA va al repositorio: vive solo en las propiedades de tu Apps Script.
+ */
+function pushActivo_() { return !!PROPS.getProperty('FCM_CUENTA'); }
+function tokensPush_() { try { return JSON.parse(PROPS.getProperty('PUSH_TOKENS') || '[]'); } catch (e) { return []; } }
+function guardarTokenPush_(t) {
+  t = String(t || '').trim();
+  if (!/^[\w\-:]{20,400}$/.test(t)) throw new Error('token_no_valido');
+  var l = tokensPush_().filter(function (x) { return x !== t; }); l.unshift(t);
+  PROPS.setProperty('PUSH_TOKENS', JSON.stringify(l.slice(0, 5)));          // como mucho 5 dispositivos
+}
+function tokenFcm_() {
+  var cache = CacheService.getScriptCache(), t = cache.get('fcm_oauth');
+  if (t) return t;
+  var sa = JSON.parse(PROPS.getProperty('FCM_CUENTA'));
+  var b64 = function (o) { return Utilities.base64EncodeWebSafe(typeof o === 'string' ? o : JSON.stringify(o)).replace(/=+$/, ''); };
+  var ahora = Math.floor(Date.now() / 1000);
+  var cuerpo = b64({ alg: 'RS256', typ: 'JWT' }) + '.' + b64({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: ahora, exp: ahora + 3600 });
+  var firma = Utilities.base64EncodeWebSafe(Utilities.computeRsaSha256Signature(cuerpo, sa.private_key)).replace(/=+$/, '');
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', { method: 'post', payload: { grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: cuerpo + '.' + firma }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('fcm_auth ' + res.getResponseCode());
+  t = JSON.parse(res.getContentText()).access_token;
+  cache.put('fcm_oauth', t, 3000);
+  return t;
+}
+/** Manda un aviso a tus dispositivos. Devuelve cuántos lo recibieron. */
+function enviarPush_(titulo, texto, enlace) {
+  if (!pushActivo_()) return 0;
+  var sa = JSON.parse(PROPS.getProperty('FCM_CUENTA')), tok = tokenFcm_(), ok = 0, vivos = [];
+  tokensPush_().forEach(function (t) {
+    var r = UrlFetchApp.fetch('https://fcm.googleapis.com/v1/projects/' + sa.project_id + '/messages:send', {
+      method: 'post', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true,
+      payload: JSON.stringify({ message: { token: t, data: { titulo: String(titulo).slice(0, 80), texto: String(texto).slice(0, 200), enlace: enlace || CONFIG.URL_APP },
+        webpush: { headers: { Urgency: 'high', TTL: '43200' } } } }) });
+    var c = r.getResponseCode();
+    if (c === 200) { ok++; vivos.push(t); } else if (c !== 404 && c !== 400) vivos.push(t);   // 404/400 = token caducado: se olvida
+  });
+  PROPS.setProperty('PUSH_TOKENS', JSON.stringify(vivos));
+  return ok;
+}
+/** Cada hora: avisa (una sola vez por cosa) de lo que necesita tu decisión. */
+function revisarAvisos() {
+  if (!pushActivo_()) return;
+  var hecho = {}; try { hecho = JSON.parse(PROPS.getProperty('AVISOS_HECHOS') || '{}'); } catch (e) {}
+  var avisar = function (clave, titulo, texto) { if (hecho[clave]) return; if (enviarPush_(titulo, texto)) hecho[clave] = hoyIso_(); };
+  var hoy = hoyIso_(), hora = +Utilities.formatDate(new Date(), CONFIG.ZONA, 'H'), lunesSig = sumarDias(lunesDe_(hoy), 7);
+  conMemo_(function () {
+    var plan = listar_(HOJAS.PLAN);
+    [lunesDe_(hoy), lunesSig].forEach(function (l) {
+      var n = plan.filter(function (r) { var d = celdaIso_(r.FECHA); return r.ESTADO === 'BORRADOR' && d >= l && d <= sumarDias(l, 6); }).length;
+      if (n) avisar('borrador_' + l + '_' + n, 'Plan listo para aprobar', n + ' bloques en borrador para la semana del ' + isoAFecha(l) + '.');
+    });
+    cambiosAbiertos_().filter(function (c) { return c.ESTADO === 'Propuesta lista'; }).forEach(function (c) {
+      avisar('cambio_' + c.ID, 'Propuesta de cambios lista', c.EVENTO + ': revísala y apruébala o recházala.');
+    });
+    var s = filaSemana_(lunesSig);
+    if (new Date(hoy + 'T12:00:00Z').getUTCDay() === 0 && hora >= 20 && !(s && /Confirmada|Programada/.test(s.ESTADO)))
+      avisar('confirmar_' + lunesSig, 'Confirma la semana', 'Mañanas para dobles, descanso y eventos de la semana del ' + isoAFecha(lunesSig) + '.');
+    var chequeoHoy = listar_(HOJAS.CHEQUEO).some(function (r) { return celdaIso_(r.FECHA) === hoy; });
+    if (hora >= 8 && hora < 11 && !chequeoHoy) avisar('chequeo_' + hoy, 'Chequeo de la mañana', '30 segundos: sueño, energía, molestias y VFC para ajustar el día.');
+  });
+  Object.keys(hecho).forEach(function (k) { if (hecho[k] < sumarDias(hoy, -21)) delete hecho[k]; });
+  PROPS.setProperty('AVISOS_HECHOS', JSON.stringify(hecho));
+}
+
 function colLetra_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
 /** Crea o completa las pestañas de la app con su formato. No borra datos. */
@@ -691,7 +901,7 @@ function prepararHojas() {
 function onEdit(e) {
   try {
     var sh = e.range.getSheet(), nombre = sh.getName();
-    if ([HOJAS.PLAN, HOJAS.EVENTOS, HOJAS.METAS, HOJAS.AJUSTES, HOJAS.CARRERA].indexOf(nombre) < 0) return;
+    if ([HOJAS.PLAN, HOJAS.EVENTOS, HOJAS.METAS, HOJAS.AJUSTES, HOJAS.CARRERA, HOJAS.PLANTILLAS].indexOf(nombre) < 0) return;
     var cab = cabeceras_(sh), f0 = e.range.getRow(), n = e.range.getNumRows();
     if (f0 < 2) return;
     var cId = cab.indexOf('ID') + 1;
@@ -862,7 +1072,8 @@ function pendientesAbiertos_() { return listar_(HOJAS.PENDIENTES).filter(functio
 function cambiosAbiertos_() { return listar_(HOJAS.CAMBIOS).filter(function (r) { return r.ESTADO === 'Solicitada' || r.ESTADO === 'Propuesta lista'; }); }
 
 // ===================== COBERTURA EN TARJETAS (lectura de Dashboard, Semana, Mes y carrera) =====================
-function cobertura_() {
+function cobertura_() { return conMemo_(coberturaSin_); }
+function coberturaSin_() {
   var ss = miLibro_();
   var leer = function (nombre, rango) { var sh = ss.getSheetByName(nombre); return sh ? sh.getRange(rango).getDisplayValues() : []; };
   var metas = function (g) {
@@ -902,7 +1113,9 @@ function configurar() {
   ScriptApp.newTrigger('backupSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(30).inTimezone(CONFIG.ZONA).create();
   Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'cierreSemanal') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('cierreSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(45).inTimezone(CONFIG.ZONA).create();
+  ScriptApp.newTrigger('cierreSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(45).inTimezone(CONFIG.ZONA).create();   // antes del correo de las 23:30
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarAvisos') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('revisarAvisos').timeBased().everyHours(1).create();
   prepararHojas();
   Logger.log('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
   analizarCarrera_();
