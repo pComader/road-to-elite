@@ -11,6 +11,6 @@ window.APP_CONFIG = {
   },
   emailPermitido: "pabloserranolopez@gmail.com",
   apiUrl: "https://script.google.com/macros/s/AKfycbzAXPslG5m0E6ZkprL7Y79-lqnLfLtTLsgfas0TamMqDcWA0Ja12Nmk_BIlz_7c5kyC/exec",
-  vapidKey: "",     // clave pública de avisos (Firebase › Cloud Messaging › Web Push). Es pública: puede ir aquí.
+  vapidKey: "BG62Mtf-5B9J0ve2hDaq89kJypyVx2C0pxZe1BcaNBEoKKEy0qNT0zdmiQxvM75UgR8nybEynfgKJaqMnkaEMTU",     // clave pública de avisos (Firebase › Cloud Messaging › Web Push). Es pública: puede ir aquí.
   diasSesion: 14   // sin abrir la app en 14 días → hay que volver a entrar
 };
