@@ -825,3 +825,18 @@ details.sci>summary{color:var(--accent);font-weight:600}
 .gfx-y,.gfx-x{fill:var(--muted);font-size:10px}
 .gfx-y{text-anchor:end}
 .evc-acc a.btn-ghost{text-decoration:none;display:inline-flex;align-items:center}
+
+/* ---- web 0.6: cola, RPE rápido, referencias, avisos de Fabrik y fases ---- */
+.cola-btn{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0}
+.cola-btn.err{border-color:#d9534f;color:#d9534f}
+.cola-btn[hidden]{display:none}
+.rpe-rap{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+.rpe-chip.sm{min-width:24px;height:24px;font-size:11px;padding:0 4px}
+.ref-ant{font-weight:500;color:var(--muted);font-size:12px;margin-left:6px}
+.unpub.warn{border-color:#e0a800;background:color-mix(in srgb,#e0a800 12%,var(--surface))}
+.variant-note.fase .v-tag{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+.pr-row .hint.err{color:#d9534f}
+.pr-row.cola-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.pr-row.cola-row b{flex:1 1 60%}
+.pr-row.cola-row .hint.err{flex-basis:100%}
+.b-state.warn{text-transform:none;letter-spacing:0}

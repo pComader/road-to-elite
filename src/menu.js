@@ -457,20 +457,27 @@
     for (var i = desde; i <= hasta; i++) h += '<button type="button" class="esc-chip' + (String(i) === String(val) ? ' on' : '') + '" data-v="' + i + '" title="' + esc((etiquetas || {})[i] || '') + '">' + i + '</button>';
     return h + '</div>';
   }
+  /** Último chequeo anterior: se muestra como REFERENCIA en gris, nunca se rellena solo (no se inventan mediciones). */
+  function chequeoAnterior(iso) {
+    return (S.data.chequeos || []).filter(function (x) { return aIso(x.FECHA) < iso; }).sort(function (a, b) { return aIso(a.FECHA) < aIso(b.FECHA) ? 1 : -1; })[0] || null;
+  }
+  function refAnt(p, k, suf) { return p && p[k] ? (p._dia + ': ' + p[k] + (suf || '')) : ''; }
   function leerEscala(id) { var b = document.querySelector('#' + id + ' .on'); return b ? b.dataset.v : ''; }
   function abrirChequeo(iso) {
     var c = (S.data.chequeos || []).filter(function (x) { return aIso(x.FECHA) === iso; })[0] || {};
+    var pa = chequeoAnterior(iso); if (pa) pa._dia = aIso(pa.FECHA) === sumarDias(iso, -1) ? 'ayer' : fechaCorta(aIso(pa.FECHA));
+    var lblRef = function (k) { var t = refAnt(pa, k); return t ? ' <span class="ref-ant">' + esc(t) + '</span>' : ''; };
     abrirHoja('<div class="row"><h2>Chequeo · ' + fechaCorta(iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
-      '<form id="chf" class="avf"><div class="two"><div><label for="ch-s">Horas de sueño</label><input id="ch-s" inputmode="decimal" value="' + esc(c['SUEÑO (h)'] || '') + '" placeholder="7,5"></div>' +
-      '<div><label for="ch-v">VFC (ms) · Garmin</label><input id="ch-v" inputmode="numeric" value="' + esc(c['VFC (ms)'] || '') + '" placeholder="62"></div></div>' +
-      '<div class="two"><div><label for="ch-fc">FC en reposo</label><input id="ch-fc" inputmode="numeric" value="' + esc(c['FC REPOSO'] || '') + '" placeholder="48"></div><div></div></div>' +
-      '<label>Calidad del sueño · 1 fatal · 5 perfecto</label>' + chipsEscala('ch-cs', 1, 5, c['CALIDAD SUEÑO (1-5)']) +
-      '<label>Energía · 1 vacío · 5 a tope</label>' + chipsEscala('ch-en', 1, 5, c['ENERGÍA (1-5)']) +
-      '<label>Molestias · 0 nada · 5 dolor que limita</label>' + chipsEscala('ch-mo', 0, 5, c['MOLESTIAS (0-5)']) +
+      '<form id="chf" class="avf"><div class="two"><div><label for="ch-s">Horas de sueño</label><input id="ch-s" inputmode="decimal" value="' + esc(c['SUEÑO (h)'] || '') + '" placeholder="' + esc(refAnt(pa, 'SUEÑO (h)', ' h') || '7,5') + '"></div>' +
+      '<div><label for="ch-v">VFC (ms) · Garmin</label><input id="ch-v" inputmode="numeric" value="' + esc(c['VFC (ms)'] || '') + '" placeholder="' + esc(refAnt(pa, 'VFC (ms)', ' ms') || '62') + '"></div></div>' +
+      '<div class="two"><div><label for="ch-fc">FC en reposo</label><input id="ch-fc" inputmode="numeric" value="' + esc(c['FC REPOSO'] || '') + '" placeholder="' + esc(refAnt(pa, 'FC REPOSO', ' ppm') || '48') + '"></div><div></div></div>' +
+      '<label>Calidad del sueño · 1 fatal · 5 perfecto' + lblRef('CALIDAD SUEÑO (1-5)') + '</label>' + chipsEscala('ch-cs', 1, 5, c['CALIDAD SUEÑO (1-5)']) +
+      '<label>Energía · 1 vacío · 5 a tope' + lblRef('ENERGÍA (1-5)') + '</label>' + chipsEscala('ch-en', 1, 5, c['ENERGÍA (1-5)']) +
+      '<label>Molestias · 0 nada · 5 dolor que limita' + lblRef('MOLESTIAS (0-5)') + '</label>' + chipsEscala('ch-mo', 0, 5, c['MOLESTIAS (0-5)']) +
       '<label for="ch-z">Zona de la molestia</label><input id="ch-z" maxlength="80" value="' + esc(c['ZONA MOLESTIA'] || '') + '" placeholder="Ej. cuello, rodilla izquierda">' +
-      '<label>Estrés · 1 tranquilo · 5 muy alto</label>' + chipsEscala('ch-es', 1, 5, c['ESTRÉS (1-5)']) +
+      '<label>Estrés · 1 tranquilo · 5 muy alto' + lblRef('ESTRÉS (1-5)') + '</label>' + chipsEscala('ch-es', 1, 5, c['ESTRÉS (1-5)']) +
       '<label for="ch-n">Notas</label><input id="ch-n" maxlength="300" value="' + esc(c.NOTAS || '') + '">' +
-      '<div class="hint">La VFC y la FC en reposo se comparan con tu media de los últimos 7 chequeos: lo que cuenta es cuánto te desvías de ti mismo.</div>' +
+      '<div class="hint">En gris, lo del último chequeo como referencia: no se rellena solo. La VFC y la FC en reposo se comparan con tu media de los últimos 7 chequeos (hacen falta 3); lo que falte no cuenta.</div>' +
       '<button class="btn btn-primary" type="submit" id="ch-ok">Guardar y ver el semáforo</button></form>');
     $scrim.querySelectorAll('.esc').forEach(function (g) {
       g.querySelectorAll('.esc-chip').forEach(function (b) { b.onclick = function () { var ya = b.classList.contains('on'); g.querySelectorAll('.esc-chip').forEach(function (y) { y.classList.remove('on'); }); if (!ya) b.classList.add('on'); }; });

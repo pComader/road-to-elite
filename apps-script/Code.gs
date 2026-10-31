@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.6',
+  VERSION: '0.8',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -50,7 +50,25 @@ function doPost(e) {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var user = verificarUsuario_(body.idToken);
     if (!user.ok) return json_(user);
-    var a = body.action;
+    var a = body.action, t0 = Date.now();
+    // Operaciones que pueden llegar desde la cola sin conexión: si ya se procesaron (mismo «op»), no se repiten.
+    var op = /^[\w-]{8,60}$/.test(String(body.op || '')) ? 'op_' + body.op : '', cacheOp = CacheService.getScriptCache();
+    if (op && cacheOp.get(op)) return json_({ ok: true, repetida: true });
+    var res = accion_(a, body, user);
+    if (op && res && res.ok) cacheOp.put(op, '1', 21600);
+    var ms = Date.now() - t0;
+    if (ms > 4000) Logger.log('LENTO · ' + a + ' · ' + ms + ' ms');
+    res._ms = ms;
+    return json_(res);
+  } catch (err) {
+    return json_({ ok: false, error: 'interno', detalle: String(err && err.message || err) });
+  }
+}
+
+/** Cada acción devuelve un objeto; doPost lo envía como JSON. */
+function accion_(a, body, user) {
+  var json_ = function (o) { return o; };   // dentro de las acciones, «json_» solo devuelve el objeto
+  {
     switch (a) {
       case 'inicio':     return json_({ ok: true, email: user.email, config: leerConfig_(), semana: semanaCompleta_(body.semana) });
       case 'semana':     return json_({ ok: true, semana: semanaCompleta_(body.semana) });
@@ -99,8 +117,6 @@ function doPost(e) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
     }
     return json_({ ok: false, error: 'accion_desconocida' });
-  } catch (err) {
-    return json_({ ok: false, error: 'interno', detalle: String(err && err.message || err) });
   }
 }
 
@@ -132,7 +148,7 @@ function verificarUsuario_(idToken) {
     var u = (JSON.parse(res.getContentText()).users || [])[0];
     if (!u || !u.email || u.emailVerified !== true) return { ok: false, error: 'sesion_caducada' };
     email = String(u.email).toLowerCase();
-    cache.put(clave, email, 600);
+    cache.put(clave, email, Math.max(30, Math.min(600, Math.floor(pre.exp - Date.now() / 1000) - 30)));   // nunca más que la vida del token
   }
   if (email !== CONFIG.EMAIL_PERMITIDO) return { ok: false, error: 'no_autorizado' };
   return { ok: true, email: email };
@@ -202,7 +218,20 @@ function listarHoja_(nombre) {
   }).filter(function (o) { return cab.some(function (h) { return String(o[h]).trim(); }); });
 }
 
-function filaDe_(cab, o) { return cab.map(function (h) { return o[h] == null ? '' : o[h]; }); }
+/**
+ * Valor seguro para escribir en el Sheet (configuración es_ES):
+ *  · «46:10» o «5:41» (tiempos y ritmos) se guardan como TEXTO: si no, el Sheet los convierte en horas (46:10:00).
+ *  · Un texto que empieza por «=» o por «+» seguido de letras se guarda como texto (si no, fórmula o #ERROR!).
+ *  · Números, fechas dd/mm/aaaa y negativos (-1) no se tocan.
+ */
+function celdaSegura_(v) {
+  if (typeof v !== 'string' || !v) return v;
+  if (/^\d{1,3}:\d{2}(:\d{2})?$/.test(v)) return "'" + v;
+  if (/^=/.test(v)) return "'" + v;
+  if (/^\+/.test(v) && !/^\+\d+([.,]\d+)?$/.test(v)) return "'" + v;
+  return v;
+}
+function filaDe_(cab, o) { return cab.map(function (h) { return o[h] == null ? '' : celdaSegura_(o[h]); }); }
 
 function anadirFila_(nombre, o) {
   return bloqueo_(function () {
@@ -297,8 +326,57 @@ function semanaCompletaSin_(semana) {
     eventos: eventosEntre_(sumarDias(lunes, -35), sumarDias(lunes, 120)),
     conf: filaSemana_(lunes), confSiguiente: filaSemana_(sumarDias(lunes, 7)),
     pendientes: pendientesAbiertos_(), cambios: cambiosAbiertos_(),
-    metas: metasDe_(lunes)
+    metas: metasDe_(lunes),
+    fabrikCambios: cambiosFabrik_(filaSemana_(lunes), F.fabrik)
   };
+}
+
+// ===================== v0.8 · DETECTOR DE CAMBIOS EN FABRIK (solo lectura) =====================
+/** Huella corta del contenido de cada día de Fabrik (títulos + texto de cada parte). */
+function huellasFabrik_(fab) {
+  var out = {};
+  ((fab && fab.dias) || []).forEach(function (d) {
+    var txt = JSON.stringify((d.bloques || []).map(function (b) { return [b.titulo, (b.partes || []).map(function (p) { return p.texto; })]; }));
+    out[d.nombre] = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, txt)).slice(0, 12);
+  });
+  return out;
+}
+/** Días cuyo contenido de Fabrik ha cambiado desde que se aprobó la semana (o que se subieron después). */
+function cambiosFabrik_(conf, fab) {
+  if (!conf || !conf['HUELLA FABRIK'] || !fab) return [];
+  var antes = {}; try { antes = JSON.parse(conf['HUELLA FABRIK']); } catch (e) { return []; }
+  var ahora = huellasFabrik_(fab);
+  return Object.keys(ahora).filter(function (d) { return antes[d] !== ahora[d]; }).map(function (d) { return { dia: d, nuevo: !antes[d], aprobado: conf['FABRIK LEÍDO'] || '' }; });
+}
+
+// ===================== v0.8 · LOS TESTS COMO EVENTOS (una sola fuente de fechas) =====================
+function migrarTestsAEventos_() {
+  var cfg = leerConfig_(), evs = listar_(HOJAS.EVENTOS), n = 0;
+  [['test_2km', 'Test 2 km'], ['test_10km', 'Test 10 km']].forEach(function (t) {
+    var txt = String(cfg[t[0]] || ''), f = txt.match(/(\d{1,2}\/\d{1,2}\/\d{4})\D+(\d{1,2}\/\d{1,2}\/\d{4})/);
+    if (!f || evs.some(function (e) { return norm(e.EVENTO) === norm(t[1]); })) return;
+    guardarEvento_({ EVENTO: t[1], TIPO: 'Carrera', INICIO: f[1], FIN: f[2], BLOQUEA: 'No bloquea', 'ANTES (días bajar volumen)': '1', 'DESPUÉS (días recuperación)': '1',
+      'CÓMO PROCEDER': 'Semana del test: el día exacto se fija al programar la semana (descansado, sin Z6–Z8 ni pierna pesada el día antes).', ESTADO: 'Decidido', NOTAS: 'TEST · migrado de APP · CONFIG' });
+    n++;
+  });
+  return n;
+}
+
+// ===================== v0.7 · DOMINGO EN CADENA: cierre → vídeos → backup =====================
+/** Un solo disparador hace las tres fases en orden y deja el resultado en APP · CONFIG (clave «ultimo_domingo»). */
+function domingoNoche() {
+  var fases = [['cierre', cierreSemanal], ['vídeos', copiarVideosGabi], ['backup', backupSemanal]], estado = [];
+  fases.forEach(function (f) {
+    try { f[1](); estado.push(f[0] + ' OK ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'HH:mm')); }
+    catch (e) { estado.push(f[0] + ' FALLO (' + String(e && e.message || e).slice(0, 120) + ')'); }
+  });
+  ponerConfig_('ultimo_domingo', hoyTxt_() + ' · ' + estado.join(' · '), 'Resultado de las tareas del domingo (lo lee el informe de las 23:30)');
+  Logger.log('OK · Domingo: ' + estado.join(' · '));
+}
+function ponerConfig_(clave, valor, nota) {
+  var x = listar_(HOJAS.CONFIG).filter(function (r) { return r.CLAVE === clave; })[0];
+  if (x) actualizarFila_(HOJAS.CONFIG, x._fila, { VALOR: valor });
+  else anadirFila_(HOJAS.CONFIG, { CLAVE: clave, VALOR: valor, NOTA: nota || '' });
 }
 
 /** La semana de Fabrik ya construida, con caché de 5 min (Fabrik solo se lee). */
@@ -411,8 +489,8 @@ var ESQUEMA = {
     colores: [['ESTADO', 'Por decidir', '#ffe6d9']]
   },
   'APP · SEMANAS': {
-    cab: ['LUNES', 'ESTADO', 'DOBLES (mañanas libres)', 'DESCANSO', 'EVENTOS DE LA SEMANA', 'DECISIONES', 'NOTAS', 'CONFIRMADA'],
-    anchos: [95, 160, 200, 140, 280, 320, 240, 130], fechas: ['LUNES'],
+    cab: ['LUNES', 'ESTADO', 'DOBLES (mañanas libres)', 'DESCANSO', 'EVENTOS DE LA SEMANA', 'DECISIONES', 'NOTAS', 'CONFIRMADA', 'HUELLA FABRIK', 'FABRIK LEÍDO'],
+    anchos: [95, 160, 200, 140, 280, 320, 240, 130, 200, 120], fechas: ['LUNES'],
     listas: { ESTADO: ['Pendiente de confirmar', 'Confirmada', 'Programada'] },
     colores: [['ESTADO', 'Pendiente', '#ffe6d9'], ['ESTADO', 'Confirmada|Programada', '#e0f5e6']]
   },
@@ -518,8 +596,14 @@ function codigosDe_(txt) { return String(txt || '').toUpperCase().split(/[|,;\s]
 function avanceMetas_(ambito, per, cache) {
   var plan = cache.plan, reg = cache.reg, ajustes = cache.ajustes;
   var enPer = function (iso) { return iso && iso >= per.desde && iso <= per.hasta; };
-  var hecho = {};
-  reg.forEach(function (r) { var k = celdaIso_(r.FECHA) + '|' + r.ID_PLAN; hecho[k] = r.HECHO === 'Sí' ? 1 : r.HECHO === 'Parcial' ? 0.5 : 0; });
+  var hecho = {}, minReal = {};
+  reg.forEach(function (r) {
+    var k = celdaIso_(r.FECHA) + '|' + r.ID_PLAN;
+    hecho[k] = r.HECHO === 'Sí' ? 1 : r.HECHO === 'Parcial' ? 0.5 : 0;
+    var mr = parseFloat(String(r.MIN_REAL || '').replace(',', '.'));
+    if (hecho[k] && mr > 0) minReal[k] = mr;                     // minutos reales apuntados: mandan sobre el «0,5»
+  });
+  var claveR = function (r) { return celdaIso_(r.FECHA) + '|' + r.ID; };
   var metas = cache.metas.filter(function (m) { return m['ÁMBITO'] === ambito && m.ACTIVA !== 'No'; });
   return metas.map(function (m) {
     var cods = codigosDe_(m['CÓDIGOS']), meta = metaDe_(m, per.mes), tipo = String(m.TIPO || 'COUNT').toUpperCase();
@@ -527,9 +611,10 @@ function avanceMetas_(ambito, per, cache) {
       var iso = celdaIso_(r.FECHA); if (!enPer(iso)) return false;
       var rc = codigosDe_(r['CÓDIGOS']); return rc.some(function (c) { return cods.indexOf(c) >= 0; });
     });
-    var calc = function (lista, peso) {
-      if (tipo === 'MIN') return lista.reduce(function (a, r) { return a + (parseFloat(String(r.MIN).replace(',', '.')) || 0) * peso(r); }, 0);
-      if (tipo === 'MIN_GT') return lista.reduce(function (a, r) { return Math.max(a, (parseFloat(String(r.MIN).replace(',', '.')) || 0) * (peso(r) ? 1 : 0)); }, 0);
+    var calc = function (lista, peso, real) {
+      var mins = function (r) { var mr = real && minReal[claveR(r)]; return mr != null ? mr : (parseFloat(String(r.MIN).replace(',', '.')) || 0) * peso(r); };
+      if (tipo === 'MIN') return lista.reduce(function (a, r) { return a + (peso(r) ? mins(r) : 0); }, 0);
+      if (tipo === 'MIN_GT') return lista.reduce(function (a, r) { return Math.max(a, peso(r) ? (real && minReal[claveR(r)] != null ? minReal[claveR(r)] : (parseFloat(String(r.MIN).replace(',', '.')) || 0)) : 0); }, 0);
       if (tipo === 'SALTOS') return lista.reduce(function (a, r) { return a + (parseFloat(String(r.CANTIDAD).replace(',', '.')) || 0) * peso(r); }, 0);
       var vistos = {}, n = 0;                           // COUNT: una exposición por fecha + turno
       lista.forEach(function (r) { var k = celdaIso_(r.FECHA) + '|' + r.TURNO, p = peso(r); if (p && !(vistos[k] >= p)) { n += p - (vistos[k] || 0); vistos[k] = p; } });
@@ -540,7 +625,7 @@ function avanceMetas_(ambito, per, cache) {
     var ajuste = ajustes.filter(function (a) { return a.META_ID === m.ID && enPer(celdaIso_(a.FECHA)); })
       .reduce(function (a, x) { return a + (parseFloat(String(x.CANTIDAD).replace(',', '.')) || 1); }, 0);
     var vProg = calc(prog, function () { return 1; }) + ajuste;
-    var vReal = calc(prog, function (r) { return hecho[celdaIso_(r.FECHA) + '|' + r.ID] || 0; }) + ajuste;
+    var vReal = calc(prog, function (r) { return hecho[claveR(r)] || 0; }, true) + ajuste;
     var vBorr = calc(borr, function () { return 1; });
     var ratio = function (v) { return meta > 0 ? Math.min(1, v / meta) : 1; };
     return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
@@ -618,8 +703,10 @@ function cierreSemanal() {
 var CAMPOS_CARRERA = ['FECHA', 'ID_PLAN', 'SESIÓN', 'TIPO', 'DISTANCIA (km)', 'TIEMPO', 'RITMO MEDIO (/km)', 'FC MEDIA', 'FC MÁX', 'FC ESTABLE (min)', 'PARCIALES POR KM',
   'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS'];
 function segundos_(t) {
-  var p = String(t || '').trim().split(':').map(function (x) { return parseFloat(x.replace(',', '.')); });
+  var p = String(t || '').trim().replace(/^'/, '').split(':').map(function (x) { return parseFloat(x.replace(',', '.')); });
   if (!p.length || p.some(isNaN)) return 0;
+  // «46:10:00» = un «46:10» que el Sheet convirtió en horas (versiones anteriores): son minutos y segundos.
+  if (p.length === 3 && p[2] === 0 && p[0] >= 10) return p[0] * 60 + p[1];
   return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p.length === 2 ? p[0] * 60 + p[1] : p[0] * 60;
 }
 function mmss_(s) { s = Math.round(s); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
@@ -629,10 +716,13 @@ function guardarCarrera_(c) {
   var km = parseFloat(String(o['DISTANCIA (km)'] || '').replace(',', '.')), seg = segundos_(o.TIEMPO);
   if (!o['RITMO MEDIO (/km)'] && km > 0 && seg > 0) o['RITMO MEDIO (/km)'] = mmss_(seg / km);
   o.REGISTRADO = ahora_();
+  var idCliente = /^[\w-]{6,40}$/.test(String(c.ID || '')) ? String(c.ID) : '';   // creado en el móvil: reenvíos sin duplicar
   var id = bloqueo_(function () {
-    var x = listar_(HOJAS.CARRERA).filter(function (r) { return r.FECHA === o.FECHA && o.ID_PLAN && r.ID_PLAN === o.ID_PLAN; })[0];
+    var todas = listar_(HOJAS.CARRERA);
+    var x = (idCliente && todas.filter(function (r) { return r.ID === idCliente; })[0]) ||
+      todas.filter(function (r) { return r.FECHA === o.FECHA && o.ID_PLAN && r.ID_PLAN === o.ID_PLAN; })[0];
     if (x) { actualizarFila_(HOJAS.CARRERA, x._fila, o); return x.ID; }
-    o.ID = nuevoId_();
+    o.ID = idCliente || nuevoId_();
     var sh = hojaMia_(HOJAS.CARRERA), cab = cabeceras_(sh);
     sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
     return o.ID;
@@ -684,7 +774,8 @@ function analizarCarrera_() {
   escribirAnalisis_(res);
   return res;
 }
-function escribirAnalisis_(res) {
+function escribirAnalisis_(res) { return bloqueo_(function () { escribirAnalisisSin_(res); }); }
+function escribirAnalisisSin_(res) {
   var ss = miLibro_(), sh = ss.getSheetByName(HOJAS.ANALISIS) || ss.insertSheet(HOJAS.ANALISIS);
   sh.clear();
   var filas = [['ANÁLISIS DE CARRERA · actualizado ' + res.actualizado], [''], ['CONCLUSIONES']].concat(res.conclusiones.map(function (c) { return ['· ' + c]; }));
@@ -695,7 +786,7 @@ function escribirAnalisis_(res) {
   var t3 = [['Calidad · fecha', 'sesión', 'tipo', 'series', 'parciales cumplidos', 'RPE']].concat(res.calidad.map(function (x) { return [isoAFecha(x.fecha), x.sesion, x.tipo, x.series, x.cumple, x.rpe || '']; }));
   var ancho = 10, pad = function (r) { r = r.slice(); while (r.length < ancho) r.push(''); return r; };
   var todo = filas.map(pad).concat(t1.map(pad), [pad([''])], [pad(['Z2 · EFICIENCIA'])], t2.map(pad), [pad([''])], [pad(['CALIDAD'])], t3.map(pad));
-  sh.getRange(1, 1, todo.length, ancho).setValues(todo);
+  sh.getRange(1, 1, todo.length, ancho).setValues(todo.map(function (r) { return r.map(celdaSegura_); }));
   sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
   sh.setColumnWidth(1, 130);
   sh.setTabColor('#ff7a1a');
@@ -848,6 +939,11 @@ function revisarAvisos() {
     var s = filaSemana_(lunesSig);
     if (new Date(hoy + 'T12:00:00Z').getUTCDay() === 0 && hora >= 20 && !(s && /Confirmada|Programada/.test(s.ESTADO)))
       avisar('confirmar_' + lunesSig, 'Confirma la semana', 'Mañanas para dobles, descanso y eventos de la semana del ' + isoAFecha(lunesSig) + '.');
+    [lunesDe_(hoy), lunesSig].forEach(function (l) {
+      var cf = cambiosFabrik_(filaSemana_(l), fabrikSemana_(l).fabrik).filter(function (c) { return sumarDias(l, DIAS.indexOf(norm(c.dia))) >= hoy; });
+      if (cf.length) avisar('fabrik_' + l + '_' + cf.map(function (c) { return c.dia; }).join('-'), 'Fabrik ha cambiado',
+        'Cambios en ' + cf.map(function (c) { return c.dia.toLowerCase(); }).join(', ') + ' desde que aprobaste la semana. Revisa interferencias con tus extras.');
+    });
     var chequeoHoy = listar_(HOJAS.CHEQUEO).some(function (r) { return celdaIso_(r.FECHA) === hoy; });
     if (hora >= 8 && hora < 11 && !chequeoHoy) avisar('chequeo_' + hoy, 'Chequeo de la mañana', '30 segundos: sueño, energía, molestias y VFC para ajustar el día.');
   });
@@ -924,7 +1020,7 @@ function diaDe_(iso) { return iso ? NOMBRES_DIA[(new Date(iso + 'T12:00:00Z').ge
 /** Actualiza columnas concretas de una fila (solo en este libro). */
 function actualizarFila_(nombre, fila, o) {
   var sh = hojaMia_(nombre), cab = cabeceras_(sh);
-  Object.keys(o).forEach(function (h) { var j = cab.indexOf(h); if (j >= 0) sh.getRange(fila, j + 1).setValue(o[h]); });
+  Object.keys(o).forEach(function (h) { var j = cab.indexOf(h); if (j >= 0) sh.getRange(fila, j + 1).setValue(celdaSegura_(o[h])); });
 }
 
 // ===================== EVENTOS =====================
@@ -992,8 +1088,10 @@ function aprobarPlanSemana_(lunes) {
       var d = celdaIso_(r.FECHA);
       if (d >= lunes && d <= fin && r.ESTADO === 'BORRADOR') { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() }); n++; }
     });
-    var s = filaSemana_(lunes);
-    if (s && s.ESTADO === 'Confirmada') actualizarFila_(HOJAS.SEMANAS, s._fila, { ESTADO: 'Programada' });
+    var s = filaSemana_(lunes), hu = {};
+    try { hu = { 'HUELLA FABRIK': JSON.stringify(huellasFabrik_(fabrikSemana_(lunes).fabrik)), 'FABRIK LEÍDO': ahora_() }; } catch (e) { /* si Fabrik no se puede leer, se aprueba igual */ }
+    if (s) actualizarFila_(HOJAS.SEMANAS, s._fila, Object.assign(s.ESTADO === 'Confirmada' ? { ESTADO: 'Programada' } : {}, hu));
+    else anadirFila_(HOJAS.SEMANAS, Object.assign({ LUNES: isoAFecha(lunes), ESTADO: 'Programada' }, hu));
   });
   return n;
 }
@@ -1107,17 +1205,19 @@ function coberturaSin_() {
 // ===================== INSTALACIÓN =====================
 /** Ejecutar desde el editor tras cada actualización: crea la copia semanal de vídeos (domingo 23:00) y el backup (domingo 23:30, Madrid) y comprueba accesos. */
 function configurar() {
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'copiarVideosGabi') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('copiarVideosGabi').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).inTimezone(CONFIG.ZONA).create();
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'backupSemanal') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('backupSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(30).inTimezone(CONFIG.ZONA).create();
+  // Domingo: una sola tarea en cadena (cierre → vídeos → backup) en vez de tres con horarios cercanos.
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['copiarVideosGabi', 'backupSemanal', 'cierreSemanal', 'domingoNoche'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('domingoNoche').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(15).inTimezone(CONFIG.ZONA).create();   // termina antes del informe de las 23:30
   Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'cierreSemanal') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('cierreSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(45).inTimezone(CONFIG.ZONA).create();   // antes del correo de las 23:30
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarAvisos') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('revisarAvisos').timeBased().everyHours(1).create();
   prepararHojas();
   Logger.log('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
+  Logger.log('OK · Tests pasados a APP · EVENTOS: ' + migrarTestsAEventos_() + ' (0 = ya estaban)');
+  ['objetivo_2km', 'objetivo_10km'].forEach(function (k) {     // «45:00» se había convertido en 45 horas: se guarda como texto
+    var x = listar_(HOJAS.CONFIG).filter(function (r) { return r.CLAVE === k; })[0];
+    if (x && /^\d+:\d{2}:00$/.test(x.VALOR)) actualizarFila_(HOJAS.CONFIG, x._fila, { VALOR: x.VALOR.replace(/:00$/, '') });
+  });
   analizarCarrera_();
   var est = estructura_(fabrik_());
   Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);

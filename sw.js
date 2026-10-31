@@ -1,7 +1,7 @@
 // Road To Elite · service worker.
 // La app se abre al instante desde la copia guardada (también sin internet) y se actualiza en segundo plano.
 // Nunca guarda datos de entrenamiento: las peticiones al Apps Script y a Google van siempre a la red.
-var VERSION = 'rte-e35808fbd3';
+var VERSION = 'rte-ac159ac6de';
 var CARCASA = ['./', 'index.html', 'styles.css', 'app.js', 'm-menu.js', 'm-timer.js', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png',
   'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js', 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js'];
 var AJENOS = /^https:\/\/(www\.gstatic\.com\/firebasejs\/|fonts\.googleapis\.com\/|fonts\.gstatic\.com\/)/;

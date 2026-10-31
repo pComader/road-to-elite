@@ -273,6 +273,7 @@
         b.fabrikDia = fd.nombre;
         infoPlan(b, r);
         if (rd && !rb) { b.porque = b.porque || ''; }
+        if (rb && rb['TÍTULO'] && norm(rb['TÍTULO']).replace(/\W+/g, '') !== norm(b.titulo).replace(/\W+/g, '')) b.refCambio = rb['TÍTULO'];
         d2.bloques.push(b);
         datosDia(d2, fd, rd && !rb ? rd.CONTENIDO : '');
       });
@@ -290,13 +291,21 @@
       var activos = dd.bloques.filter(function (b) { return !/^PROPUESTA$/.test(norm(b.estado)); });
       dd.doble = activos.some(function (b) { return b.turno === 'AM'; }) && activos.some(function (b) { return b.turno === 'PM'; });
       dd.eventos = (sem.eventos || []).filter(function (e) { var i = aIso(e.INICIO), f = aIso(e.FIN) || i; return i && dd.iso >= i && dd.iso <= f; });
+      // Días «antes» (bajar volumen) y «después» (recuperación) de cada evento: solo se señalan, no cambian el plan ni las metas.
+      dd.fases = [];
+      (sem.eventos || []).forEach(function (e) {
+        var i = aIso(e.INICIO), f = aIso(e.FIN) || i, an = +e['ANTES (días bajar volumen)'] || 0, de = +e['DESPUÉS (días recuperación)'] || 0;
+        if (!i) return;
+        if (an && dd.iso < i && dd.iso >= sumarDias(i, -an)) { var n = Math.round((Date.parse(i) - Date.parse(dd.iso)) / 864e5); dd.fases.push({ tipo: 'Bajar volumen', txt: n + (n > 1 ? ' días' : ' día') + ' para ' + e.EVENTO + '. Calidad sí, volumen y fatiga accesoria no.' }); }
+        if (de && dd.iso > f && dd.iso <= sumarDias(f, de)) dd.fases.push({ tipo: 'Recuperación', txt: 'Tras ' + e.EVENTO + ': suave, movilidad y Z2 corta.' });
+      });
     });
     var propuestas = {};
     (sem.plan || []).forEach(function (r) { if (/^PROPUESTA/.test(norm(r.ESTADO)) && r.CAMBIO_ID) (propuestas[r.CAMBIO_ID] = propuestas[r.CAMBIO_ID] || []).push(r); });
     return { semana: sem.lunes, hoy: sem.hoy, ciclo: fab ? fab.ciclo : cicloPara(S.ciclo || leer('rte-ciclo'), sem.lunes), dias: dias,
       erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: sem.plan || [], borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
       misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
-      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push };
+      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [] };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -328,31 +337,79 @@
   }
   function esFalloRed(e) { return !navigator.onLine || /Failed to fetch|NetworkError|Load failed|network|internet/i.test(String(e && e.message || e)); }
   /** Guardar con red si hay; sin red, a la cola (se envía sola al volver la conexión). */
+  function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+  /** Guarda en el navegador; si la memoria está llena, borra copias de semanas antiguas y lo reintenta. */
+  function guardarSeguro(k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) {}
+    var actual = lunesIso(hoyLocal()), sig = sumarDias(actual, 7);
+    (leer('rte-semidx') || []).forEach(function (l) { if (l !== actual && l !== sig) { try { localStorage.removeItem('rte-sem-' + l); } catch (x) {} } });
+    try { localStorage.removeItem('rte-videos'); localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
+  }
+  /**
+   * Guardar con red si hay; sin red, a la cola. Cada operación lleva un «op» único que se conserva en los reintentos:
+   * el servidor no repite una operación que ya procesó (aunque el móvil no recibiera la respuesta).
+   */
   function apiGuardar(cuerpo) {
+    if (!cuerpo.op) cuerpo.op = uid();
     var limpio = JSON.parse(JSON.stringify(cuerpo));
     var aCola = function () {
-      var c = leer('rte-cola') || []; delete limpio.idToken; c.push({ t: Date.now(), cuerpo: limpio }); guardar('rte-cola', c);
+      var c = leer('rte-cola') || []; delete limpio.idToken; c.push({ t: Date.now(), cuerpo: limpio });
+      if (!guardarSeguro('rte-cola', c)) throw new Error('memoria_llena');
+      pintarPendientes();
       return { ok: true, cola: true, registro: limpio.registro, chequeo: limpio.chequeo };
     };
-    if (!navigator.onLine) return Promise.resolve(aCola());
+    if (!navigator.onLine) return Promise.resolve().then(aCola);
     return api(cuerpo).catch(function (e) { if (esFalloRed(e)) return aCola(); throw e; });
   }
+  var ERR_SESION = { sesion_caducada: 1, sin_sesion: 1, no_autorizado: 1 };
+  /**
+   * Envía la cola en orden. Sin red o con la sesión caducada se para y CONSERVA lo pendiente.
+   * Si el servidor rechaza los datos, la operación pasa a «con error» (visible para corregirla o descartarla), nunca se borra en silencio.
+   */
   function vaciarCola() {
     if (S._vaciando || !navigator.onLine || !auth.currentUser || !(leer('rte-cola') || []).length) return;
     S._vaciando = true;
     var n = 0, fallos = 0;
+    var fin = function () {
+      S._vaciando = false; pintarPendientes();
+      if (n || fallos) { toast((n ? n + ' enviado' + (n > 1 ? 's' : '') : '') + (fallos ? (n ? ' · ' : '') + fallos + ' con error: revísalo en «pendientes de enviar»' : '')); if (n) cargar(S.data && S.data.semana); }
+    };
     (function sig() {
       var c = leer('rte-cola') || [];
-      if (!c.length) {
-        S._vaciando = false;
-        if (n) { toast(n + ' guardado' + (n > 1 ? 's' : '') + ' sin conexión ya enviado' + (n > 1 ? 's' : '') + (fallos ? ' (' + fallos + ' con error)' : '')); cargar(S.data && S.data.semana); }
-        return;
-      }
+      if (!c.length) return fin();
       api(JSON.parse(JSON.stringify(c[0].cuerpo))).then(function (r) {
-        if (!r.ok) fallos++;
-        var c2 = leer('rte-cola') || []; c2.shift(); guardar('rte-cola', c2); n++; sig();
-      }).catch(function () { S._vaciando = false; });   // sigue sin red: se reintenta luego
+        if (!r.ok && ERR_SESION[r.error]) return fin();            // se queda en la cola: se envía al volver a entrar
+        var c2 = leer('rte-cola') || [], x = c2.shift();
+        if (r.ok) n++;
+        else { fallos++; var er = leer('rte-cola-err') || []; er.push({ t: x.t, cuerpo: x.cuerpo, error: r.detalle || r.error }); guardarSeguro('rte-cola-err', er); }
+        guardarSeguro('rte-cola', c2); sig();
+      }).catch(function () { fin(); });                             // sigue sin red: se reintenta luego
     })();
+  }
+  function nPendientes() { return (leer('rte-cola') || []).length + (leer('rte-cola-err') || []).length; }
+  function pintarPendientes() { var b = document.getElementById('cola-btn'), n = nPendientes(); if (b) { b.hidden = !n; b.querySelector('b').textContent = n; b.classList.toggle('err', !!(leer('rte-cola-err') || []).length); } }
+  var NOMBRE_OP = { registrar: 'Registro', carrera: 'Carrera', chequeo: 'Chequeo', marca: 'Marca' };
+  function abrirCola() {
+    var c = leer('rte-cola') || [], er = leer('rte-cola-err') || [];
+    var fila = function (x, i, conError) {
+      var b = x.cuerpo, q = b.registro || b.carrera || b.chequeo || b.marca || {};
+      return '<div class="pr-row cola-row"><span>' + horaCorta(x.t) + '</span><b>' + esc(NOMBRE_OP[b.action] || b.action) + ' · ' + esc(q.BLOQUE || q['SESIÓN'] || q.MOVIMIENTO || q.FECHA || '') + '</b>' +
+        (conError ? '<span class="hint err">' + esc(x.error || '') + '</span><span class="grow"></span><button class="btn-ghost sm" type="button" data-cola-re="' + i + '">Reintentar</button><button class="btn-ghost sm" type="button" data-cola-del="' + i + '">Descartar</button>' : '') + '</div>';
+    };
+    abrirHoja('<div class="row"><h2>Pendientes de enviar</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      (c.length ? '<div class="part-lbl">En cola (' + c.length + ')</div><div class="hint">Se envían solos cuando hay conexión y sesión abierta.</div><div class="pr-list">' + c.map(function (x, i) { return fila(x, i, false); }).join('') + '</div>' +
+        '<button class="btn btn-primary" type="button" id="cola-ya">Enviar ahora</button>' : '') +
+      (er.length ? '<div class="part-lbl">Con error (' + er.length + ')</div><div class="hint">El servidor no los aceptó. Reintenta o descártalos; nada se borra solo.</div><div class="pr-list">' + er.map(function (x, i) { return fila(x, i, true); }).join('') + '</div>' : '') +
+      (!c.length && !er.length ? '<div class="hint">Nada pendiente.</div>' : ''));
+    var ya = document.getElementById('cola-ya'); if (ya) ya.onclick = function () { cerrarHoja(); vaciarCola(); };
+    $scrim.querySelectorAll('[data-cola-re],[data-cola-del]').forEach(function (b) {
+      b.onclick = function () {
+        var l = leer('rte-cola-err') || [], i = +(b.dataset.colaRe || b.dataset.colaDel), x = l.splice(i, 1)[0];
+        guardarSeguro('rte-cola-err', l);
+        if (x && b.dataset.colaRe != null) { var c2 = leer('rte-cola') || []; c2.push({ t: x.t, cuerpo: x.cuerpo }); guardarSeguro('rte-cola', c2); vaciarCola(); }
+        cerrarHoja(); pintarPendientes(); if (nPendientes()) abrirCola();
+      };
+    });
   }
   window.addEventListener('online', function () { vaciarCola(); if (S.email) cargar(S.data && S.data.semana); });
   function precargarSiguiente(lunes) {
@@ -460,7 +517,7 @@
       '<span class="lbl">' + esc(lbl) + '</span>' +
       '<button class="icon-btn" id="next" type="button" aria-label="Semana siguiente">›</button>' +
       ((d.semana !== lunesIso(d.hoy) || d.dias[S.dia].iso !== d.hoy) ? '<button class="hoy-btn" id="ir-hoy" type="button">Hoy</button>' : '') +
-      '</div>' + miniAnillo(d) + botonCalc() + '<button class="who" id="perfil" type="button" aria-label="Menú">P</button></header>';
+      '</div>' + '<button class="cola-btn" id="cola-btn" type="button" aria-label="Pendientes de enviar"' + (nPendientes() ? '' : ' hidden') + '>⟳ <b>' + nPendientes() + '</b></button>' + miniAnillo(d) + botonCalc() + '<button class="who" id="perfil" type="button" aria-label="Menú">P</button></header>';
   }
 
   /** Cobertura de la semana en la cabecera: programado (anillo) · toca para ver las metas. */
@@ -480,6 +537,7 @@
     document.getElementById('perfil').onclick = function () { abrirAjustes(); };
     var hoyB = document.getElementById('ir-hoy');
     if (hoyB) hoyB.onclick = function () { var l = lunesIso(d.hoy); if (l === d.semana) { S.dia = diaInicial(); render(); window.scrollTo({ top: 0 }); } else ir(l); };
+    var cb = document.getElementById('cola-btn'); if (cb) { cb.onclick = abrirCola; pintarPendientes(); }
     var mr = document.getElementById('cob-mini');
     if (mr) mr.onclick = function () { S.vista = 'cobertura'; S.cobTab = 'semana'; render(); window.scrollTo({ top: 0 }); };
   }
@@ -527,9 +585,20 @@
   }
 
   // ---------- cuenta atrás a los tests (APP · CONFIG) ----------
+  /** Tests y competiciones próximos: salen de APP · EVENTOS (una sola fuente); si no están ahí, de APP · CONFIG. */
   function htmlCuentaAtras(d) {
-    var c = S.config || {}, out = '';
+    var c = S.config || {}, out = '', vistos = {};
+    (d.eventos || []).filter(function (e) { return /^test\b/i.test(e.EVENTO || '') || /Competición|HYROX/.test(e.TIPO || ''); }).forEach(function (e) {
+      var ini = aIso(e.INICIO), fin = aIso(e.FIN) || ini;
+      if (!ini || fin < d.hoy) return;
+      vistos[norm(e.EVENTO)] = 1;
+      var n = Math.round((Date.parse(ini) - Date.parse(d.hoy)) / 864e5);
+      if (n > 35) return;
+      out += '<div class="countdown"><div class="cd-txt"><span class="lbl">' + esc(/^test/i.test(e.EVENTO) ? 'Test · semana del ' + fechaCorta(ini) : (e.TIPO || 'Evento') + ' · ' + fechaCorta(ini)) + '</span><b>' + esc(e.EVENTO) + '</b></div>' +
+        '<span class="cd">' + (n > 1 ? 'faltan ' + n + ' días' : n === 1 ? 'mañana' : ini === d.hoy || fin !== ini ? 'esta semana' : 'hoy') + '</span></div>';
+    });
     [['test_2km', 'Test 2 km'], ['test_10km', 'Test 10 km']].forEach(function (t) {
+      if (vistos[norm(t[1])]) return;
       var ini = aIso(String(c[t[0]] || '').split(/[–-]\s*\d/)[0]);
       if (!ini || ini < d.hoy) return;
       var n = Math.round((Date.parse(ini) - Date.parse(d.hoy)) / 864e5);
@@ -547,6 +616,9 @@
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
     html += htmlChequeo(d, x);
+    var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
+    if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
+    html += (x.fases || []).map(function (f) { return '<div class="variant-note fase"><span class="v-tag">' + esc(f.tipo) + '</span><span>' + esc(f.txt) + '</span></div>'; }).join('');
     html += (x.eventos || []).map(function (e) {
       return '<button class="notice" type="button" data-evento="' + esc(e.ID) + '"><span class="lbl">' + esc(e.TIPO || 'Evento') + (e.HORA ? ' · ' + esc(e.HORA) : '') + ' · ' + esc(e.BLOQUEA || '') + '</span><b>' + esc(e.EVENTO) + '</b>' +
         (e['CÓMO PROCEDER'] ? '<span class="txt">' + esc(e['CÓMO PROCEDER']) + '</span>' : '<span class="txt">Sin decidir cómo proceder</span>') + '</button>';
@@ -615,6 +687,7 @@
     var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes</div>' :
       est === 'PROPUESTA' ? '<div class="b-state prop">Propuesta de cambio · pendiente de tu aprobación</div>' :
       est === 'PROPUESTA · NO HACER' ? '<div class="b-state prop">Propuesta: no hacer este bloque</div>' : '';
+    if (b.refCambio) tagEst += '<div class="b-state warn">⚠ Este hueco de Fabrik era «' + esc(b.refCambio) + '» cuando se programó: el orden ha cambiado. Revisa el bloque antes de entrenar.</div>';
     var chq = chequeoDe(d, x.iso);
     if (chq && /Ámbar|Rojo/.test(chq['SEMÁFORO']) && (/Z6|CALIDAD|Z4|Z5/.test(norm(b.origen + ' ' + b.titulo + ' ' + (b.codigos || ''))) || /R01|R02|R03|W04/.test(b.codigos || '')))
       tagEst += '<div class="b-state ' + (chq['SEMÁFORO'] === 'Rojo' ? 'no' : 'warn') + '">Semáforo ' + esc(chq['SEMÁFORO'].toLowerCase()) + ' hoy: ' + esc(String(chq['RECOMENDACIÓN'] || '').split('. ')[0]) + '.</div>';
@@ -651,6 +724,10 @@
     if (cr) est += '<span class="vb-v run">🏃 ' + esc(cr['DISTANCIA (km)'] || '') + (cr['DISTANCIA (km)'] ? ' km' : '') + (cr['RITMO MEDIO (/km)'] ? ' · ' + esc(cr['RITMO MEDIO (/km)']) + '/km' : '') + (cr['FC MEDIA'] ? ' · ' + esc(cr['FC MEDIA']) + ' ppm' : '') + '</span>';
     var rapido = !r && !off && x.iso <= d.hoy ? '<button type="button" class="btn-ghost sm ok1" data-hecho="' + dato + '" aria-label="Marcar como hecho tal cual">✔ Hecho</button>' : '';
     if (rapido) est = '';
+    if (r && !r.RPE && r.HECHO !== 'No' && x.iso <= d.hoy && x.iso >= sumarDias(d.hoy, -1)) {
+      var chips = ''; for (var k = 1; k <= 10; k++) chips += '<button type="button" class="rpe-chip sm" style="--c:' + rpeColor(String(k)) + '" data-rpe-rap="' + k + '">' + k + '</button>';
+      est += '<span class="rpe-rap" data-rpe-blq="' + dato + '"><span class="hint">RPE</span>' + chips + '</span>';
+    }
     return '<div class="reg-row">' + est + '<span class="grow"></span>' + (off || r ? '' : '<button type="button" class="btn-ghost sm" data-nohacer="' + nh + '">No hacer</button>') + rapido +
       '<button type="button" class="btn-ghost sm" data-reg="' + dato + '">' + (r ? 'Editar' : 'Registrar') + '</button></div>';
   }
@@ -672,6 +749,12 @@
       '<label for="rg-mol">Molestias</label><input id="rg-mol" value="' + esc(r.MOLESTIAS || '') + '">' +
       '<label for="rg-not">Notas</label><textarea id="rg-not" rows="2">' + esc(r.NOTAS || '') + '</textarea>' +
       htmlCamposCarrera(carreraDe(ref.iso, ref.id) || {}, !!ref.run, ref.tipo) +
+      '<details class="run-f"><summary>🏆 Nueva marca en este bloque</summary><div class="exp-body">' +
+        '<datalist id="rg-movs">' + LEVANTAMIENTOS.map(function (m) { return '<option value="' + esc(m) + '">'; }).join('') + '</datalist>' +
+        '<label for="rg-pm">Movimiento o test</label><input id="rg-pm" list="rg-movs" maxlength="60" placeholder="Ej. SNATCH, Test 2 km">' +
+        '<div class="two"><div><label for="rg-pt">Tipo</label><select id="rg-pt">' + ['1RM', '3RM', '5RM', 'Tiempo', 'Reps', 'Distancia'].map(function (t) { return '<option>' + t + '</option>'; }).join('') + '</select></div>' +
+        '<div><label for="rg-pv">Valor</label><input id="rg-pv" maxlength="20" placeholder="kg · mm:ss · reps"></div></div>' +
+        '<div class="hint">Se añade a tus marcas al guardar y los kilos de la pizarra se recalculan.</div></div></details>' +
       '<div class="two-btn">' + (r.FECHA ? '<button class="btn" type="button" id="rg-del">Borrar</button>' : '') +
       '<button class="btn btn-primary" type="submit" id="rg-ok">Guardar</button></div></form>');
     $scrim.querySelectorAll('[data-rh]').forEach(function (bt) { bt.onclick = function () { $scrim.querySelectorAll('[data-rh]').forEach(function (y) { y.setAttribute('aria-pressed', String(y === bt)); }); }; });
@@ -692,9 +775,18 @@
         'DATOS (parciales/vatios)': val('rg-dat'), CARGAS: val('rg-car'), 'SUEÑO': val('rg-sue'), MOLESTIAS: val('rg-mol'), NOTAS: val('rg-not') };
       var b = document.getElementById('rg-ok'); b.disabled = true; b.textContent = 'Guardando…';
       var car = leerCamposCarrera(); car.FECHA = reg.FECHA; car.ID_PLAN = ref.id; car['SESIÓN'] = ref.bloque.replace(/^EXTRA · /, ''); car.RPE = reg.RPE;
+      var pm = val('rg-pm').toUpperCase(), pv = val('rg-pv'), pt = val('rg-pt');
+      var marca = pm && pv ? { FECHA: reg.FECHA, MOVIMIENTO: pm, TIPO: pt, VALOR: pv.replace(',', '.'), UNIDAD: /RM$/.test(pt) ? 'kg' : { Tiempo: 'min:seg', Reps: 'reps', Distancia: 'm' }[pt], EVENTO: ref.bloque, NOTAS: 'Desde el registro del bloque' } : null;
       apiGuardar({ action: 'registrar', registro: reg }).then(ok).then(function (res) {
         S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === reg.FECHA && y.ID_PLAN === reg.ID_PLAN); }).concat([res.registro]);
         return hayDatosCarrera(car) ? guardarCarreraApi(car) : null;
+      }).then(function () {
+        if (!marca) return null;
+        return apiGuardar({ action: 'marca', marca: marca }).then(ok).then(function (r) {
+          if (r.marcas) { S.marcasFilas = r.marcas; prepararMarcas(r.marcas); }
+          else { S.marcasFilas = (S.marcasFilas || []).concat([marca]); prepararMarcas(S.marcasFilas); }
+          toast('🏆 Marca añadida: ' + pm + ' ' + pv);
+        });
       }).then(function () { cerrarHoja(); render(); toast(!navigator.onLine ? 'Guardado sin conexión: se enviará al volver' : hayDatosCarrera(car) ? 'Guardado · carrera analizada' : 'Guardado'); }).catch(falloApi(b));
     };
   }
@@ -770,6 +862,7 @@
     document.getElementById('caf').onsubmit = function (ev) {
       ev.preventDefault();
       var o = leerCamposCarrera(); o.FECHA = aTxt(val('ca-f')); o['SESIÓN'] = val('ca-n'); o.ID_PLAN = ref.id || ''; o.RPE = val('ca-rpe');
+      o.ID = c.ID || ref.idCarrera || (ref.idCarrera = 'c' + uid());          // mismo ID en cada reintento: no se duplica
       if (!hayDatosCarrera(o)) { toast('Pon al menos distancia, tiempo o FC'); return; }
       var b = document.getElementById('ca-ok'); b.disabled = true;
       guardarCarreraApi(o).then(function () { cerrarHoja(); render(); toast('Carrera guardada · análisis actualizado'); }).catch(falloApi(b));
@@ -955,7 +1048,7 @@
     return { marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
-      evento_incompleto: 'Pon nombre y fecha al evento.', falta_evento: 'Escribe qué ha surgido.', faltan_datos: 'Faltan datos del bloque.', modulo_no_disponible: 'Sin conexión: esta parte aún no se ha descargado.', solo_borrador: 'Solo se pueden quitar bloques en borrador.', token_no_valido: 'No se pudo registrar el dispositivo.', meta_incompleta: 'Pon el estímulo y el ámbito.', falta_fecha: 'Falta la fecha.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');
+      evento_incompleto: 'Pon nombre y fecha al evento.', falta_evento: 'Escribe qué ha surgido.', faltan_datos: 'Faltan datos del bloque.', memoria_llena: 'La memoria del navegador está llena: no se pudo guardar sin conexión.', modulo_no_disponible: 'Sin conexión: esta parte aún no se ha descargado.', solo_borrador: 'Solo se pueden quitar bloques en borrador.', token_no_valido: 'No se pudo registrar el dispositivo.', meta_incompleta: 'Pon el estímulo y el ámbito.', falta_fecha: 'Falta la fecha.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');
   }
   // ---------- marcas: agrupar y formatos (de la app de Gabi) ----------
   function agruparMarcas(lista) {
@@ -1474,6 +1567,16 @@
       }).catch(falloApi(b));
       return;
     }
+    if ((b = t.closest('[data-rpe-rap]'))) {
+      var rq = JSON.parse(b.closest('[data-rpe-blq]').dataset.rpeBlq), prev = registroDe(rq.iso, rq.id) || {};
+      var rg2 = Object.assign({}, prev, { FECHA: aTxt(rq.iso), ID_PLAN: rq.id, BLOQUE: prev.BLOQUE || rq.bloque, HECHO: prev.HECHO || 'Sí', RPE: b.dataset.rpeRap });
+      delete rg2._fila; delete rg2.REGISTRADO;
+      apiGuardar({ action: 'registrar', registro: rg2 }).then(ok).then(function (res) {
+        S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === rg2.FECHA && y.ID_PLAN === rg2.ID_PLAN); }).concat([res.registro || rg2]);
+        render(); toast('RPE ' + rg2.RPE + ' guardado');
+      }).catch(falloApi(null));
+      return;
+    }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
     if ((b = t.closest('[data-nuevo-bloque]'))) { abrirNuevoBloque(b.dataset.nuevoBloque); return; }
     if ((b = t.closest('[data-plantilla]'))) { guardarComoPlantilla(b.dataset.plantilla); return; }
@@ -1559,7 +1662,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.5';
+  var WEB_VERSION = 'web 0.6';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
