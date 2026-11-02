@@ -277,6 +277,14 @@
       return;
     }
     R.ultPint = seg;
+    if (R.mini) {   // «Ver WOD»: el timer sigue corriendo en una barra pequeña abajo
+      el.className = 'reloj mini ' + (p.prep ? 'prep' : p.k) + (R.enPausa ? ' pausado' : '');
+      var rdm = tmRonda(p);
+      el.innerHTML = '<button type="button" class="rl-mini" data-rl="max" aria-label="Volver al timer"><span class="rl-t">' + tmReloj(seg, color) + '</span>' +
+        '<span class="rl-mtxt"><b class="' + color + '">' + esc(p.tit) + '</b><small>' + esc((rdm ? 'Ronda ' + rdm.n + '/' + rdm.de + ' · ' : '') + R.r.titulo) + '</small></span><span class="rl-mgo">Volver ▲</span></button>' +
+        (p.dur ? '<div class="rl-bar ' + color + '"><i style="width:' + (prog * 100) + '%"></i></div>' : '');
+      return;
+    }
     el.className = 'reloj ' + (p.prep ? 'prep' : p.k) + (R.enPausa ? ' pausado' : '');
     var son = !leer('rte-tm-mudo');
     el.innerHTML = '<div class="rl-top"><span class="rl-nom">' + esc((R.r.n ? R.r.n + ' · ' : '') + R.r.titulo) + '</span><span class="rl-der"><span>Tramo ' + R.i + '/' + (R.pasos.length - 1) + '</span>' +
@@ -289,17 +297,53 @@
       (p.sub && !/^(Ronda|Serie) \d+\/\d+$/.test(p.sub) ? '<div class="rl-sub">' + esc(p.sub) + '</div>' : '') +
       (p.est ? '<div class="rl-est">' + esc(p.est) + '</div>' : '') +
       (p.cap ? '<div class="rl-sub">Time cap a los ' + tmFmt(p.cap) + '</div>' : '') +
-      '<div class="rl-sig">' + (sig ? 'Después: ' + esc(sig.tit) + (sig.dur ? ' · ' + tmFmt(sig.dur) : '') : 'Último tramo') + '</div></div>' +
+      '<div class="rl-sig">' + (sig ? 'Después: ' + esc(sig.tit) + (sig.dur ? ' · ' + tmFmt(sig.dur) : '') : 'Último tramo') + '</div></div>' + tmWodHtml(R, p) +
       '<div class="rl-btns">' +
       (p.k === 'tap' ? '<button class="btn btn-primary rl-big" type="button" data-rl="hecho">Hecho ✓</button>' : '') +
       (p.k === 'up' ? '<button class="btn btn-primary rl-big" type="button" data-rl="termine">Terminé</button>' : '') +
       '<div class="rl-row"><button class="btn" type="button" data-rl="pausa">' + (R.enPausa ? 'Seguir' : 'Pausa') + '</button>' +
       '<button class="btn" type="button" data-rl="saltar">Saltar</button>' +
+      '<button class="btn" type="button" data-rl="mini">Ver WOD</button>' +
       '<button class="btn" type="button" data-rl="salir">Salir</button></div></div>';
+  }
+  // ---------- la ronda actual con sus movimientos y kilos; la siguiente, en gris ----------
+  var TM_CAB = /^(METCON|AMRAP|EMOM|E\d+MOM|EVERY|TIME\s*CAP|FOR\s*TIME|REST|DESCANSA|INTO|THEN|ODD|EVEN|\*|SET\s*\d|SETS?\b|RONDAS?\b|VENTANA|PARTNER|SI NO)/;
+  function tmMovimientos(texto) {
+    var out = [], fin = false;
+    String(texto || '').split('\n').forEach(function (raw) {
+      var l = raw.trim(), n = norm(l); if (fin || !l) return;
+      if (/^ADAPTACION|^INT:|^SCL:|^RX:/.test(n)) { fin = true; return; }
+      if (/^\d+\s*(SETS?|ROUNDS?|RONDAS?)\b/.test(n) || /^\d+\s*['"′″]\s*(ON|OFF|REST)/.test(n) || TM_CAB.test(n)) return;
+      if (/^\d/.test(l) || /^(MAX|CAL)/.test(n)) out.push(l); else if (out.length && !/:$/.test(l)) out[out.length - 1] += ' ' + l;
+    });
+    return out;
+  }
+  /** Repeticiones de la ronda k: «4/8/12/16..» o «18/15/12/9» cambian por ronda (con 3 o más valores); «16/14 CAL» es chico/chica: la primera. */
+  function tmLineaRonda(l, k) {
+    return l.replace(/^((?:\d+(?:[.,]\d+)?\s*\/\s*){2,}\d+(?:[.,]\d+)?)(\s*\.\.)?/, function (m, seq, dots) {
+      var v = seq.split('/').map(function (x) { return parseFloat(x.replace(',', '.')); }), n = v.length;
+      if (k <= n) return String(v[k - 1]);
+      return String(dots ? v[n - 1] + (v[n - 1] - v[n - 2]) * (k - n) : v[n - 1]);
+    }).replace(/^(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s+(?=[A-Z])/i, '$1 ');
+  }
+  function tmWodHtml(R, p) {
+    var movs = tmMovimientos(R.r.texto); if (!movs.length) return '';
+    var rd = tmRonda(p), k = rd ? rd.n : 1, de = rd ? rd.de : 1;
+    var x = S.data && S.data.dias.filter(function (y) { return y.iso === R.r.iso; })[0], b = x && x.bloques.filter(function (z) { return String(z.n) === String(R.r.n); })[0];
+    var mk = marcasKilos(), todo = b ? b.partes.map(function (q) { return q.etiqueta + '\n' + q.texto; }).join('\n') : R.r.texto;
+    var ctx = { bloque: b ? movimientoEn(b.titulo, mk) : null, baseBloque: baseDeParte(todo, mk), parte: movimientoEn(R.r.texto, mk) };
+    var fila = function (l) {
+      var kg = cargaLinea(l, ctx), pl = kg ? discosLado(kg) : '';
+      return '<li>' + pizarra(l, ctx) + (kg && !/\d\s*%/.test(l) ? ' <span class="kg">' + (enLb() ? aLb(kg) + ' lb' : String(kg).replace('.', ',') + ' kg') + '</span>' : '') + (pl ? '<small class="rl-disc">🏋 ' + esc(pl) + '</small>' : '') + '</li>';
+    };
+    var varia = movs.some(function (l) { return tmLineaRonda(l, 1) !== tmLineaRonda(l, 2); });
+    var act = movs.map(function (l) { return tmLineaRonda(l, k); }), sigR = (de > k || (varia && !rd)) ? movs.map(function (l) { return tmLineaRonda(l, k + 1); }) : null;
+    return '<div class="rl-wod"><div class="rl-wt">' + (rd ? 'Ronda ' + k + ' de ' + de : 'El WOD') + '</div><ul>' + act.map(fila).join('') + '</ul>' +
+      (sigR ? '<div class="rl-wt gris">Siguiente' + (rd ? ' · ronda ' + (k + 1) : '') + '</div><ul class="gris">' + sigR.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
   }
   function tmCerrar() {
     var R = TM.run; if (R) { clearInterval(R.int); tmWake(false); try { if (R.ac) R.ac.close(); } catch (e) {} }
-    TM.run = null; tmBorrarRun(); tmPipCerrar(); var el = document.getElementById('reloj'); if (el) el.remove(); document.body.classList.remove('con-reloj');
+    TM.run = null; tmBorrarRun(); tmPipCerrar(); var el = document.getElementById('reloj'); if (el) el.remove(); document.body.classList.remove('con-reloj'); document.body.classList.remove('con-reloj-mini');
     if (S.recargarAlCerrar) { S.recargarAlCerrar = false; setTimeout(recargarApp, 50); }
   }
 
@@ -325,6 +369,7 @@
       tmAudio();
       if (a === 'pausa') { tmPausa(); return; }
       if (a === 'burbuja') { tmPipAbrir(); return; }
+      if (a === 'mini' || a === 'max') { R.mini = a === 'mini'; document.body.classList.toggle('con-reloj', !R.mini); document.body.classList.toggle('con-reloj-mini', R.mini); tmPintar(); if (R.mini) window.scrollTo({ top: 0 }); return; }
       if (a === 'saltar' || a === 'hecho') { tmSiguiente(); return; }
       if (a === 'termine') { var seg = tmTranscurrido(); R.i = R.pasos.length; tmFinal(seg); return; }
       if (a === 'resultado') {

@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.9',
+  VERSION: '0.9.2',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -117,6 +117,10 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'extras_previa': return json_({ ok: true, previa: generarExtras_(body.lunes, { simular: true }) });
+      case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
+                         ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
+                         return json_({ ok: true, config: leerConfig_() });
       case 'generar_extras': var rg = generarExtras_(body.lunes); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -710,7 +714,7 @@ function cierreSemanal() {
       'COBERTURA PROGRAMADA': Math.round(x.pctProg * 1000) / 10 + '%', 'COBERTURA REALIZADA': Math.round(x.pctReal * 1000) / 10 + '%', 'METAS CUBIERTAS': x.cubiertas, 'TOTAL METAS': x.total,
       DETALLE: x.metas.map(function (m) { return m.estimulo + ': ' + m.realizado + '/' + m.programado + ' de ' + m.meta; }).join(' | '), CERRADO: ahora_() };
   };
-  if (r.semana.hasta === hoy) out.push(fila(r.semana));
+  if (r.semana.hasta === hoy) { out.push(fila(r.semana)); try { escribirBalance_(r.semana.desde, 'Cierre'); } catch (e) { Logger.log('Balance: ' + e); } }
   if (r.mes.hasta === hoy) out.push(fila(r.mes));
   var hist = listar_(HOJAS.HISTMETAS);
   out.forEach(function (o) {                                   // si ya se cerró ese periodo, se actualiza en vez de duplicarlo
@@ -1705,7 +1709,16 @@ function parsearVideosFila(fila) {
 // =====================================================================================================
 HOJAS.ESTIMULOS = 'APP · ESTÍMULOS'; HOJAS.REFUERZOS = 'APP · REFUERZOS'; HOJAS.NOTAS = 'APP · NOTAS BLOQUE'; HOJAS.WODS = 'APP · WODS';
 CONFIG.REELS_ID = '1M5t34kRDWRoGakKYlRV_MxK_0Q4u8KGhXISUGh-sB00';   // «Reels de datos — @pabloserlop» · SOLO LECTURA
-ESQUEMA['APP · PLAN'].cab.push('GENERADO', 'PENDIENTE_ID'); ESQUEMA['APP · PLAN'].anchos.push(120, 80);
+ESQUEMA['APP · PLAN'].cab.push('GENERADO', 'PENDIENTE_ID', 'REFUERZO_ID'); ESQUEMA['APP · PLAN'].anchos.push(120, 80, 80);
+ESQUEMA['APP · PLAN'].listas.ESTADO.push('SIN HUECO');
+ESQUEMA['APP · SEMANAS'].cab.push('BALANCE ESTÍMULOS'); ESQUEMA['APP · SEMANAS'].anchos.push(520);
+/** Añade una columna al final si falta (para no tener que volver a ejecutar «configurar» tras cada versión). */
+function asegurarColumna_(nombre, col) {
+  var sh = hojaMia_(nombre), cab = cabeceras_(sh);
+  if (cab.indexOf(col) >= 0) return;
+  if (sh.getMaxColumns() <= cab.length) sh.insertColumnsAfter(sh.getMaxColumns(), 1);
+  sh.getRange(1, cab.length + 1).setValue(col).setBackground('#121212').setFontColor('#ffffff').setFontWeight('bold');
+}
 ESQUEMA['APP · EVENTOS'].cab.push('GCAL_ID', 'ORIGEN CAL'); ESQUEMA['APP · EVENTOS'].anchos.push(160, 90);
 ESQUEMA['APP · ESTÍMULOS'] = {
   cab: ['CÓDIGO', 'NOMBRE', 'DETECTAR (regex)', 'ORIGEN', 'TURNO', 'MIN', 'INTENSIDAD', 'CONTENIDO', 'POR QUÉ (cursiva)', 'CIENCIA (técnica · fisiología · biología)', 'INTERFERENCIAS', 'CARGA', 'EVITAR', 'DATOS A REGISTRAR', 'ACTIVO'],
@@ -1918,7 +1931,7 @@ function interferenciasFabrik_(lunes) {
 
 // ---------- 4 · Motor de colocación: «posición óptima» de un bloque ----------
 /** Contexto de la semana: cargas por día y turno, minutos, sesiones duras, dobles y descansos. */
-function contextoSemana_(lunes, excluirId) {
+function contextoSemana_(lunes, excluirId, excluirFn) {
   var conf = filaSemana_(lunes) || {}, dob = String(conf['DOBLES (mañanas libres)'] || ''), des = String(conf.DESCANSO || '');
   var CORTO = ['LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB', 'DOM'];
   var dias = [];
@@ -1930,7 +1943,8 @@ function contextoSemana_(lunes, excluirId) {
   var F = fabrikSemana_(lunes).fabrik;
   (F ? F.dias : []).forEach(function (fd) { var d = porIso[fd.iso]; if (d) { d.rpe = parseInt(String(fd.rpe || '').replace(/\D/g, ''), 10) || 0; d.fabrikRpe = fd.rpe; } });
   listar_(HOJAS.PLAN).forEach(function (r) {
-    var d = porIso[celdaIso_(r.FECHA)]; if (!d || r.ID === excluirId || /NO HACER|SUSTITUIDO|^PROPUESTA$/.test(r.ESTADO)) return;
+    var d = porIso[celdaIso_(r.FECHA)]; if (!d || r.ID === excluirId || /NO HACER|SUSTITUIDO|SIN HUECO|^PROPUESTA$/.test(r.ESTADO) || (excluirFn && excluirFn(r))) return;
+    if (norm(r.ORIGEN) !== 'FABRIK') d.fijos = (d.fijos || []).concat(codigosDe_(r['CÓDIGOS']));
     var t = norm(r.TURNO) === 'AM' ? 'AM' : 'PM', min = parseFloat(String(r.MIN).replace(',', '.')) || (norm(r.ORIGEN) === 'FABRIK' ? 20 : 10);
     if (norm(r.ORIGEN) === 'FABRIK') d.fabrik = true;
     d.cargas[t] = d.cargas[t].concat(cargasDe_(r['TÍTULO'] + '\n' + r.CONTENIDO, r.INTENSIDAD || d.fabrikRpe));
@@ -1945,18 +1959,21 @@ function contextoSemana_(lunes, excluirId) {
       if (de && d.iso > f0 && d.iso <= sumarDias(f0, de)) d.despues = true;
     });
   });
-  return { lunes: lunes, dias: dias, conf: conf };
+  return { lunes: lunes, dias: dias, conf: conf, modoAM: enduranceManana_() };
 }
 /** Puntúa colocar un bloque (cand = {codigos, carga[], evitar[], min, turno, duro}) en cada hueco. Menor = mejor. */
-function puntuarHuecos_(cand, ctx) {
-  var out = [];
+function puntuarHuecos_(cand, ctx, todo) {
+  var out = [], libre = cand.codigos.some(function (c) { return LIBRES_TURNO.test(c); });
+  var enduAM = ctx.modoAM && cand.codigos.some(function (c) { return /^W0[123]$/.test(c); }) && !cand.codigos.some(function (c) { return /^(R01|W04)$/.test(c); });
   ctx.dias.forEach(function (d, i) {
     ['AM', 'PM'].forEach(function (t) {
       var motivos = [], p = 0, malos = [];
-      if (d.descanso) return;
-      if (t === 'AM' && !d.am) return;
-      if (t === 'PM' && d.bloqPM) return;
-      if (cand.turno && cand.turno !== 'AM|PM' && cand.turno.indexOf(t) < 0) { p += 3; malos.push('prefiere ' + cand.turno); }
+      // todo = true: se puntúa también lo no disponible (para enseñarte qué pasa donde TÚ lo pones)
+      if (d.descanso) { if (!todo) return; p += 8; malos.push('es tu día de descanso'); }
+      if (t === 'AM' && !d.am) { if (!todo) return; p += 6; malos.push('esa mañana no la tienes libre'); }
+      if (t === 'PM' && d.bloqPM) { if (!todo) return; p += 8; malos.push('la tarde está bloqueada por un evento'); }
+      if (enduAM && t === 'PM') { if (!todo) return; p += 6; malos.push('«Endurance de mañana» activo: la Z2 debería ir por la mañana'); }
+      if (!libre && cand.turno && cand.turno !== 'AM|PM' && cand.turno.indexOf(t) < 0) { p += 3; malos.push('prefiere ' + cand.turno); }
       var hoy = d.cargas.AM.concat(d.cargas.PM), ant = i ? ctx.dias[i - 1].cargas.AM.concat(ctx.dias[i - 1].cargas.PM) : [], sig = i < 6 ? ctx.dias[i + 1].cargas.AM.concat(ctx.dias[i + 1].cargas.PM) : [];
       (cand.evitar || []).forEach(function (e) {
         if (hoy.indexOf(e) >= 0) { p += 4; malos.push('ese día Fabrik ya carga ' + e.toLowerCase()); }
@@ -2003,38 +2020,78 @@ function posicionOptima_(b) {
   var r = b.id ? listar_(HOJAS.PLAN).filter(function (x) { return x.ID === String(b.id); })[0] : null;
   r = Object.assign({}, r || {}, b.campos || {});
   if (!r['TÍTULO'] && !r['CÓDIGOS']) throw new Error('faltan_datos');
-  var ctx = contextoSemana_(lunes, b.id), lista = puntuarHuecos_(candidatoDe_(r, cat), ctx);
-  var actual = r.FECHA ? lista.filter(function (h) { return h.iso === celdaIso_(r.FECHA) && h.turno === (norm(r.TURNO) === 'AM' ? 'AM' : 'PM'); })[0] : null;
-  return { mejores: lista.slice(0, 3), actual: actual || null };
+  var ctx = contextoSemana_(lunes, b.id), cand = candidatoDe_(r, cat), lista = puntuarHuecos_(cand, ctx);
+  var actual = r.FECHA && r.ESTADO !== 'SIN HUECO' ? puntuarHuecos_(cand, ctx, true).filter(function (h) { return h.iso === celdaIso_(r.FECHA) && h.turno === (norm(r.TURNO) === 'AM' ? 'AM' : 'PM'); })[0] : null;
+  return { mejores: lista.slice(0, 3), actual: actual || null, libre: cand.codigos.some(function (c) { return LIBRES_TURNO.test(c); }), modoAM: ctx.modoAM };
 }
 
 // ---------- 5 · Generar los extras de la semana («Cargar extras») ----------
 var PRIO_ORDEN = function (p) { var m = String(p || '').match(/P(\d)/); return m ? +m[1] : 7; };
 function weeksLeft_(lunes, per) { return Math.max(1, Math.round((Date.parse(per.hasta) - Date.parse(lunes)) / 864e5 / 7 + 0.5)); }
-function generarExtras_(lunes) {
+/**
+ * «Cargar extras». Con opts.simular = true no escribe nada: devuelve el resumen para el aviso previo.
+ * Prioridad: carrera (tests mandan) → refuerzos de la semana → pendientes → metas semanales → mensuales (17–27 % del total del mes).
+ * «Endurance de mañana» (APP · CONFIG › endurance_manana = Sí): Z2 carrera/erg SOLO en mañanas libres; el domingo es el comodín;
+ * si no cabe, queda «SIN HUECO» para que tú elijas día/turno o lo pases a pendientes. Endurance ≤35′ → se le añade 10–15′ de calidad.
+ * Los bloques que mueves o editas a mano quedan con candado (GENERADO = «manual …»): rehacer no los toca.
+ */
+function enduranceManana_() { return /^(S[IÍ]|TRUE|1|ON)$/i.test(String(leerConfig_().endurance_manana || '').trim()); }
+var LIBRES_TURNO = /^(R01|W04|W13|M49|M36|M37)$/;   // Z6–Z8, calidad en series, RMU y cuerda: AM o PM, donde tú quieras
+function generarExtras_(lunes, opts) {
+  opts = opts || {};
+  var sim = !!opts.simular;
   lunes = lunesDe_(lunes);
   var conf = filaSemana_(lunes);
   if (!conf || !/Confirmada|Programada/.test(conf.ESTADO)) throw new Error('semana_sin_confirmar');
-  if (!listar_(HOJAS.PLAN).some(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6); })) cargarFabrikSemana_(lunes);
-  var cat = catalogo_(), fin = sumarDias(lunes, 6), sello = 'auto ' + ahora_();
-  // 5.1 · fuera los borradores automáticos anteriores (se regeneran); lo tuyo y lo aprobado no se toca
-  bloqueo_(function () {
+  if (!sim && !listar_(HOJAS.PLAN).some(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6); })) cargarFabrikSemana_(lunes);
+  var cat = catalogo_(), fin = sumarDias(lunes, 6), sello = 'auto ' + ahora_(), modoAM = enduranceManana_();
+  var esAuto = function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && /^(BORRADOR|SIN HUECO)$/.test(r.ESTADO) && /^auto/.test(r.GENERADO || ''); };
+  // 6.1 · fuera los borradores automáticos anteriores (se regeneran); lo bloqueado con candado, lo tuyo y lo aprobado no se toca
+  var refsLiberar = {}, pendLiberar = {};
+  if (!sim) bloqueo_(function () {
     var sh = hojaMia_(HOJAS.PLAN), filas = [];
-    listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA); if (d >= lunes && d <= fin && r.ESTADO === 'BORRADOR' && /^auto/.test(r.GENERADO || '')) filas.push(r._fila); });
+    listar_(HOJAS.PLAN).forEach(function (r) { if (esAuto(r)) { filas.push(r._fila); if (r.REFUERZO_ID) refsLiberar[r.REFUERZO_ID] = 1; if (r.PENDIENTE_ID) pendLiberar[r.PENDIENTE_ID] = 1; } });
     filas.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
+    MEMO = null;
+    listar_(HOJAS.REFUERZOS).forEach(function (r) { if (refsLiberar[r.ID] && r.ESTADO === 'Programado') actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Pendiente' }); });
+    listar_(HOJAS.PENDIENTES).forEach(function (r) { if (pendLiberar[r.ID] && r.ESTADO === 'Propuesto') actualizarFila_(HOJAS.PENDIENTES, r._fila, { ESTADO: 'Pendiente', 'SEMANA DESTINO': '' }); });
   });
   MEMO = null;
-  var ctx = contextoSemana_(lunes), nuevos = [], log = [], anadidos = {};
-  var anadir = function (o, cand) {
-    var h = puntuarHuecos_(cand, ctx)[0];
-    if (!h) { log.push('Sin hueco para ' + o['TÍTULO']); return false; }
+  var ctx = contextoSemana_(lunes, null, sim ? esAuto : null), nuevos = [], sinHueco = [], log = [], anadidos = {};
+  var domingo = ctx.dias[6];
+  var esEndurance = function (cand) { return cand.codigos.some(function (c) { return /^W0[123]$/.test(c); }) && !cand.codigos.some(function (c) { return /^(R01|W04)$/.test(c); }); };
+  var colocar = function (o, cand, h) {
     var d = ctx.dias.filter(function (x) { return x.iso === h.iso; })[0];
     o.ID = nuevoId_(); o.FECHA = isoAFecha(h.iso); o['DÍA'] = h.dia; o.TURNO = h.turno; o.ORDEN = h.turno === 'AM' ? 10 + d.min.AM / 10 : 80 + d.min.PM / 10;
     o.ESTADO = 'BORRADOR'; o.GENERADO = sello; o.ACTUALIZADO = ahora_(); o.BLOQUE = o['TÍTULO'];
     o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], 'Va el ' + h.dia.toLowerCase() + ' ' + h.turno + ': ' + (h.motivos.join('; ') || 'mejor hueco disponible') + (h.choques.length ? ' (a vigilar: ' + h.choques.join('; ') + ')' : '') + '.'].filter(Boolean).join(' ');
     d.min[h.turno] += cand.min || 10; d.nExtra[h.turno]++; d.cargas[h.turno] = d.cargas[h.turno].concat(cand.carga || []); d.codigos = d.codigos.concat(cand.codigos); if (cand.duro) d.duro = true;
+    if (h.turno === 'AM' && esEndurance(cand)) d.enduranceAM = (d.enduranceAM || 0) + (cand.min || 0);
     cand.codigos.forEach(function (c) { anadidos[c] = (anadidos[c] || 0) + 1; });
-    nuevos.push(o); return true;
+    nuevos.push(o); return h;
+  };
+  var anadir = function (o, cand) {
+    var endu = modoAM && esEndurance(cand);
+    if (endu) cand.turno = 'AM';
+    var lista = puntuarHuecos_(cand, ctx).filter(function (h) { return !endu || h.turno === 'AM'; });
+    // Domingo comodín (solo endurance suave, solo si esa mañana está vacía)
+    if (endu && !lista.length && domingo.descanso && !domingo.min.AM && !domingo.cargas.PM.length) {
+      domingo.descanso = false; domingo.am = true;
+      lista = puntuarHuecos_(cand, ctx).filter(function (h) { return h.iso === domingo.iso && h.turno === 'AM'; });
+      domingo.descanso = true; domingo.am = false;
+      if (lista[0]) lista[0].motivos.unshift('domingo como comodín: no quedaba ninguna mañana libre');
+    }
+    var h = lista[0];
+    if (!h) {
+      sinHueco.push(o['TÍTULO']);
+      if (endu) { o.ID = nuevoId_(); o.FECHA = isoAFecha(lunes); o['DÍA'] = ''; o.TURNO = 'AM'; o.ORDEN = 0; o.ESTADO = 'SIN HUECO'; o.GENERADO = sello; o.ACTUALIZADO = ahora_(); o.BLOQUE = o['TÍTULO'];
+        o['POR QUÉ (cursiva)'] = 'No cabe en ninguna mañana libre (Endurance de mañana activo) y el domingo ya tiene actividad: elige tú día y turno o pásalo a pendientes.'; nuevos.push(o); }
+      else log.push('Sin hueco para ' + o['TÍTULO']);
+      return false;
+    }
+    colocar(o, cand, h);
+    if (modoAM && endu && (cand.min || 0) <= 35) huecoCalidad.push({ iso: h.iso, titulo: o['TÍTULO'] });
+    return true;
   };
   var deCatalogo = function (c, extra) {
     var e = cat[c] || {};
@@ -2042,62 +2099,118 @@ function generarExtras_(lunes) {
       MIN: e.MIN || 10, 'CÓDIGOS': c, 'POR QUÉ (cursiva)': e['POR QUÉ (cursiva)'] || '', 'CIENCIA (técnica · fisiología · biología)': e['CIENCIA (técnica · fisiología · biología)'] || '', INTERFERENCIAS: e.INTERFERENCIAS || '' }, extra || {});
   };
   var candDe = function (o) { return candidatoDe_(o, cat); };
-  // 5.2 · carrera de la semana (pestaña «carrera») adaptada con el histórico; los tests sustituyen la calidad
+  var huecoCalidad = [];
+  // 6.2 · carrera de la semana (pestaña «carrera») adaptada con el histórico; los tests sustituyen la calidad
   var ordenC = function (s) { var c = s['CÓDIGOS']; return /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
-  carreraSemana_(lunes).sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) { var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO; anadir(s, c); });
-  // 5.3 · refuerzos que pediste para esta semana (primero)
+  var yaCarrera = function (c) { return ctx.dias.some(function (d) { return d.codigos.indexOf(c) >= 0 && d.fijos && d.fijos.indexOf(c) >= 0; }); };
+  carreraSemana_(lunes).sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
+    if (codigosDe_(s['CÓDIGOS']).every(yaCarrera)) return;                          // ya lo tienes con candado
+    var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO; anadir(s, c);
+  });
+  // 6.3 · cola de prioridad del resto: refuerzos → pendientes → semanales → mensuales
+  var cola = [];
   var refs = listar_(HOJAS.REFUERZOS).filter(function (r) { return celdaIso_(r.SEMANA) === lunes && r.ESTADO === 'Pendiente'; });
   refs.forEach(function (r) {
     var c = r['CÓDIGO'] || codigoDeTexto_(r.TEXTO, cat);
     var o = c ? deCatalogo(c, { 'POR QUÉ (cursiva)': 'Refuerzo que pediste: «' + r.TEXTO + '». ' + ((cat[c] || {})['POR QUÉ (cursiva)'] || '') })
       : { ORIGEN: 'EXTRA', 'TÍTULO': 'Refuerzo · ' + r.TEXTO, CONTENIDO: r.TEXTO + (r.NOTAS ? '\n' + r.NOTAS : '') + '\n\n10–15′ de calidad, sin fallo. Ajusta la dosis en la app.', MIN: 12, 'CÓDIGOS': '', 'POR QUÉ (cursiva)': 'Refuerzo que pediste para esta semana.' };
-    o.REFUERZO_ID = r.ID;
-    if (anadir(o, candDe(o))) actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Programado', 'CÓDIGO': c || '' });
+    o.REFUERZO_ID = r.ID; o._prio = 'refuerzo';
+    cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Programado', 'CÓDIGO': c || '' }); } });
   });
-  // 5.4 · pendientes: se proponen (borrador) y no cuentan hasta que se hagan
-  pendientesAbiertos_().filter(function (p) { return p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes; }).slice(0, 4).forEach(function (p) {
+  pendientesAbiertos_().filter(function (p) { return p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes; }).forEach(function (p) {
     var orig = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {};
     var o = { ORIGEN: orig.ORIGEN && norm(orig.ORIGEN) !== 'FABRIK' ? orig.ORIGEN : 'EXTRA', 'TÍTULO': 'Pendiente · ' + (p.BLOQUE || orig['TÍTULO'] || ''), CONTENIDO: orig.CONTENIDO || '', MIN: orig.MIN || 15,
-      'CÓDIGOS': orig['CÓDIGOS'] || '', INTENSIDAD: orig.INTENSIDAD || '', 'POR QUÉ (cursiva)': 'Recolocado desde el ' + p['FECHA ORIGINAL'] + (p.MOTIVO ? ' (' + p.MOTIVO + ')' : '') + '. Solo cuenta cuando lo hagas.', PENDIENTE_ID: p.ID };
-    if (anadir(o, candDe(o))) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Propuesto', 'SEMANA DESTINO': isoAFecha(lunes) });
+      'CÓDIGOS': orig['CÓDIGOS'] || '', INTENSIDAD: orig.INTENSIDAD || '', 'POR QUÉ (cursiva)': 'Recolocado desde el ' + p['FECHA ORIGINAL'] + (p.MOTIVO ? ' (' + p.MOTIVO + ')' : '') + '. Solo cuenta cuando lo hagas.', PENDIENTE_ID: p.ID, _prio: 'pendiente' };
+    cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Propuesto', 'SEMANA DESTINO': isoAFecha(lunes) }); } });
   });
-  // 5.5 · metas semanales que Fabrik no cubre
   var cub = function (c) { return ctx.dias.reduce(function (a, d) { return a + d.codigos.filter(function (x) { return x === c; }).length; }, 0); };
+  var enCola = function (c) { return cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf(c) >= 0; }).length; };
   var metas = listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
   metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
-    var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) - cods.reduce(function (a, c) { return a + cub(c); }, 0);
+    var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) - cods.reduce(function (a, c) { return a + cub(c) + enCola(c); }, 0);
     var c = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
-    for (var k = 0; k < falta && c; k++) { var o = deCatalogo(c); anadir(o, candDe(o)); }
+    for (var k = 0; k < falta && c; k++) { var o = deCatalogo(c); o._prio = 'semana'; cola.push({ o: o }); }
   });
-  // 5.6 · metas mensuales: la semana debe llevar entre el 17 % y el 27 % del total del mes
   var per = periodoMes_(lunes), mensuales = metas.filter(function (m) { return m['ÁMBITO'] === 'Mes' && String(m.TIPO || 'COUNT') === 'COUNT' && !/^R0/.test(m['CÓDIGOS']); });
   var total = mensuales.reduce(function (a, m) { return a + metaDe_(m, per.mes); }, 0);
   var hechoMes = avanceMetas_('Mes', per, cacheMetas_());
-  var objetivo = Math.round(total * 0.22), minimo = Math.ceil(total * 0.17), maximo = Math.floor(total * 0.27);
+  var objetivo = Math.round(total * 0.22), minimo = Math.ceil(total * 0.17), maximo = Math.floor(total * 0.27), tope = Math.max(minimo, Math.min(objetivo, maximo));
+  var mensDe = function (c) { return mensuales.filter(function (m) { return codigosDe_(m['CÓDIGOS']).indexOf(c) >= 0; })[0]; };
   var enSemana = mensuales.reduce(function (a, m) { return a + Math.min(metaDe_(m, per.mes), codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + cub(c); }, 0)); }, 0);
-  var pend = mensuales.map(function (m) {
+  var colaMes = mensuales.map(function (m) {
     var av = hechoMes.filter(function (x) { return x.id === m.ID; })[0] || { programado: 0 }, meta = metaDe_(m, per.mes);
-    var resta = Math.max(0, meta - av.programado - codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + (anadidos[c] || 0); }, 0));
-    var refuerzo = refs.some(function (r) { return codigosDe_(m['CÓDIGOS']).indexOf(r['CÓDIGO'] || codigoDeTexto_(r.TEXTO, cat)) >= 0; });
-    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) + (refuerzo ? 2 : 0) - PRIO_ORDEN(m.PRIORIDAD) * 0.05 };
+    var resta = Math.max(0, meta - av.programado - codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + enCola(c); }, 0));
+    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.05 };
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
-  var puestos = 0;
-  for (var i = 0; i < pend.length && enSemana + puestos < Math.max(minimo, Math.min(objetivo, maximo)); i++) {
-    var c = codigosDe_(pend[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
+  var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
+  for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
+    var c = codigosDe_(colaMes[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
     if (!c) continue;
-    var o = deCatalogo(c); if (anadir(o, candDe(o))) { puestos++; pend[i].resta--; if (pend[i].resta > 0 && pend[i].urg > 1) i--; }
+    var o = deCatalogo(c); o._prio = 'mes'; cola.push({ o: o }); mesEnCola++;
+    colaMes[i].resta--; if (colaMes[i].resta > 0 && colaMes[i].urg > 1) i--;
   }
-  // 5.7 · escribir
+  // 6.4 · endurance corta (≤35′) por la mañana: se le suma 10–15′ de calidad, lo que más falte (orden de la cola)
+  huecoCalidad.forEach(function (hq) {
+    for (var k = 0; k < cola.length; k++) {
+      var x = cola[k], cand = candDe(x.o);
+      if ((cand.min || 10) > 15 || cand.duro || esEndurance(cand)) continue;
+      var h = puntuarHuecos_(cand, ctx).filter(function (y) { return y.iso === hq.iso && y.turno === 'AM'; })[0];
+      if (!h) {   // la mañana es del endurance: se fuerza el hueco aunque la mañana no esté marcada como libre (ej. domingo comodín)
+        var d = ctx.dias.filter(function (y) { return y.iso === hq.iso; })[0];
+        h = { iso: hq.iso, dia: diaDe_(hq.iso), turno: 'AM', motivos: [], choques: [] };
+        if (!d) continue;
+      }
+      h.motivos = ['tras «' + hq.titulo + '» (≤35′): se aprovecha la mañana con 10–15′ de calidad'].concat(h.motivos || []);
+      x.o.MIN = Math.min(15, +x.o.MIN || 12);
+      colocar(x.o, cand, h); if (x.al) x.al(); cola.splice(k, 1); break;
+    }
+  });
+  // 6.5 · el resto de la cola, por prioridad
+  cola.forEach(function (x) { if (anadir(x.o, candDe(x.o)) && x.al) x.al(); });
+  // 6.6 · escribir (o devolver la simulación)
+  var mensualesSemana = enSemana + nuevos.filter(function (o) { return o.ESTADO !== 'SIN HUECO' && codigosDe_(o['CÓDIGOS']).some(mensDe); }).length;
+  var pct = total ? Math.round(mensualesSemana / total * 100) : 0;
+  var colocados = nuevos.filter(function (o) { return o.ESTADO !== 'SIN HUECO'; });
+  var resumen = colocados.length + ' bloques en borrador · mensuales ' + mensualesSemana + '/' + total + ' (' + pct + ' %, objetivo 17–27 %)' +
+    (sinHueco.length ? ' · sin hueco: ' + sinHueco.join(', ') : '') + (log.length ? ' · ' + log.join(' · ') : '');
+  var previa = { modoAM: modoAM, mananas: ctx.dias.filter(function (d) { return d.am && !d.descanso; }).map(function (d) { return diaDe_(d.iso); }),
+    endurance: colocados.filter(function (o) { return esEndurance(candDe(o)); }).map(function (o) { return o['TÍTULO'] + ' → ' + o['DÍA'] + ' ' + o.TURNO; }),
+    refuerzos: refs.map(function (r) { return r.TEXTO; }), pendientes: cola.length >= 0 ? nuevos.filter(function (o) { return o.PENDIENTE_ID; }).map(function (o) { return o['TÍTULO']; }) : [],
+    sinHueco: sinHueco, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
+  if (sim) return previa;
+  nuevos.forEach(function (o) { delete o._prio; });
+  asegurarColumna_(HOJAS.PLAN, 'REFUERZO_ID'); asegurarColumna_(HOJAS.SEMANAS, 'BALANCE ESTÍMULOS');
   if (nuevos.length) bloqueo_(function () {
     var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
     sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, nuevos.length, cab.length).setValues(nuevos.map(function (o) { return filaDe_(cab, o); }));
   });
   MEMO = null;
   interferenciasFabrik_(lunes);
-  var pct = total ? Math.round((enSemana + puestos) / total * 100) : 0;
-  var resumen = nuevos.length + ' bloques en borrador · mensuales ' + (enSemana + puestos) + '/' + total + ' (' + pct + ' %, objetivo 17–27 %)' + (log.length ? ' · ' + log.join(' · ') : '');
   ponerConfig_('extras_' + lunes, ahora_() + ' · ' + resumen, 'Último «Cargar extras» de esa semana');
-  return { creados: nuevos.length, pctMes: pct, resumen: resumen };
+  try { escribirBalance_(lunes, 'Plan'); } catch (e) { Logger.log('Balance: ' + e); }
+  return { creados: colocados.length, sinHueco: sinHueco, pctMes: pct, resumen: resumen };
+}
+/** Balance de estímulos de la semana en APP · SEMANAS (al cargar extras y al cerrar la semana). */
+function escribirBalance_(lunes, momento) {
+  MEMO = null;
+  var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
+  var reg = listar_(HOJAS.REGISTRO).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
+  var hecho = {}; reg.forEach(function (r) { hecho[r.ID_PLAN] = r.HECHO; });
+  var cods = function (l) { var o = {}; l.forEach(function (r) { codigosDe_(r['CÓDIGOS']).forEach(function (c) { o[c] = (o[c] || 0) + 1; }); }); return Object.keys(o).sort().map(function (c) { return c + (o[c] > 1 ? '×' + o[c] : ''); }).join(' '); };
+  var vivos = plan.filter(function (r) { return /PROGRAMADO|BORRADOR/.test(r.ESTADO); });
+  var fab = vivos.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), ext = vivos.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK'; });
+  var sin = plan.filter(function (r) { return r.ESTADO === 'SIN HUECO'; }), nh = plan.filter(function (r) { return r.ESTADO === 'NO HACER'; });
+  var m = metasDe_(lunes), sem = m.semana, mes = m.mes;
+  var txt = momento + ' ' + ahora_() + ' · Fabrik: ' + (cods(fab) || '—') + ' · Extras: ' + (cods(ext) || '—') +
+    (sin.length ? ' · Sin hueco: ' + sin.map(function (r) { return r['TÍTULO']; }).join(', ') : '') +
+    (nh.length ? ' · No hacer → pendientes: ' + nh.map(function (r) { return r['TÍTULO']; }).join(', ') : '') +
+    ' · Semana: ' + sem.cubiertas + '/' + sem.total + ' metas' + (sem.metas.filter(function (x) { return !x.cubierta; }).length ? ' (faltan: ' + sem.metas.filter(function (x) { return !x.cubierta; }).map(function (x) { return x.estimulo; }).join(', ') + ')' : '') +
+    ' · Mes ' + mes.etiqueta + ': ' + Math.round(mes.pctProg * 100) + ' % programado, ' + Math.round(mes.pctReal * 100) + ' % hecho' +
+    (momento === 'Cierre' ? ' · Hechos ' + reg.filter(function (r) { return r.HECHO === 'Sí'; }).length + '/' + vivos.filter(function (r) { return r.ESTADO === 'PROGRAMADO'; }).length + ' bloques' : '');
+  asegurarColumna_(HOJAS.SEMANAS, 'BALANCE ESTÍMULOS');
+  var x = filaSemana_(lunes);
+  if (x) actualizarFila_(HOJAS.SEMANAS, x._fila, { 'BALANCE ESTÍMULOS': txt.slice(0, 4500) });
+  return txt;
 }
 function codigoDeTexto_(txt, cat) {
   var t = norm(txt);
@@ -2180,6 +2293,8 @@ function editarBloque_(b) {
   if (o.FECHA) { var iso = celdaIso_(o.FECHA); if (!iso) throw new Error('fecha_no_valida'); o.FECHA = isoAFecha(iso); o['DÍA'] = diaDe_(iso); }
   if (o.TURNO) o.TURNO = o.TURNO === 'AM' ? 'AM' : 'PM';
   if (o['TÍTULO']) o.BLOQUE = o['TÍTULO'];
+  if (x.ESTADO === 'SIN HUECO' && o.FECHA) o.ESTADO = 'BORRADOR';
+  if (norm(x.ORIGEN) !== 'FABRIK') o.GENERADO = 'manual ' + ahora_() + ' (candado)';   // lo que tocas a mano no lo vuelve a mover «Rehacer extras»
   o.ACTUALIZADO = ahora_();
   bloqueo_(function () { actualizarFila_(HOJAS.PLAN, x._fila, o); });
   return x.ID;
@@ -2188,7 +2303,9 @@ function editarBloque_(b) {
 function quitarBloque_(b) {
   var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(b.id || ''); })[0];
   if (!x) throw new Error('no_encontrado');
-  if (x.ESTADO === 'BORRADOR' && norm(x.ORIGEN) !== 'FABRIK') {
+  if (/^(BORRADOR|SIN HUECO)$/.test(x.ESTADO) && norm(x.ORIGEN) !== 'FABRIK') {
+    if (b.pendiente && !x.PENDIENTE_ID) anadirPendiente_(x, b.motivo || (x.ESTADO === 'SIN HUECO' ? 'Sin hueco en la semana' : 'Quitado desde la hoja de la semana'));
+    if (x.REFUERZO_ID) { var rz = listar_(HOJAS.REFUERZOS).filter(function (r) { return r.ID === x.REFUERZO_ID; })[0]; if (rz) actualizarFila_(HOJAS.REFUERZOS, rz._fila, { ESTADO: b.pendiente ? 'Pendiente' : 'Descartado' }); }
     if (x.PENDIENTE_ID) { var p = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ID === x.PENDIENTE_ID; })[0]; if (p) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Pendiente', 'SEMANA DESTINO': '' }); }
     return borrarFila_(HOJAS.PLAN, x._fila, { ID: x.ID });
   }
@@ -2341,6 +2458,7 @@ function menuExtrasSiguiente() { SpreadsheetApp.getActive().toast(generarExtras_
 /** Lo nuevo que acompaña a la semana en cada respuesta. */
 function extrasSemana_(lunes, base) {
   var out = { refuerzos: [], notasBloque: [], grabacion: {}, avisosVistos: String(leerConfig_().avisos_vistos || '').split(',').filter(Boolean),
+    enduranceManana: enduranceManana_(),
     eventosPorAprobar: listar_(HOJAS.EVENTOS).filter(function (r) { return r.ESTADO === 'Pendiente de aprobar'; }),
     fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '' };
   try { out.refuerzos = refuerzosDe_(lunes); out.refuerzosSig = refuerzosDe_(sumarDias(lunes, 7)); } catch (e) {}

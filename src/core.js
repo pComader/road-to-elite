@@ -156,8 +156,30 @@
       var vals = nums.replace(/%/g, '').split('/').map(function (x) { return parseFloat(x.replace(',', '.')); });
       if (vals.some(function (x) { return !(x > 0 && x <= 150); })) return todo;
       var kg = vals.map(function (x) { return Math.round(rm * x / 100 * 2) / 2; });
-      return todo + '<span class="kg" title="' + esc(cap(mov)) + ' ' + rm + ' kg">' + kg.join('/') + ' kg</span>';
+      return todo + '<span class="kg" title="' + esc(cap(mov)) + ' ' + rm + ' kg">' + (enLb() ? kg.map(aLb).join('/') + ' lb' : kg.join('/') + ' kg') + '</span>';
     });
+  }
+  // ---------- unidades (kg / lb) y discos por lado ----------
+  function enLb() { return leer('rte-unidad') === 'lb'; }
+  function aLb(kg) { return Math.round(kg * 2.20462 / 5) * 5; }
+  /** Discos por lado para una carga en kg (barra 20 kg) o en lb (barra 45 lb). */
+  function discosLado(kg) {
+    if (!(kg > 0)) return '';
+    var lb = enLb(), total = lb ? aLb(kg) : kg, barra = lb ? 45 : 20, discos = lb ? [45, 35, 25, 10, 5, 2.5] : [25, 20, 15, 10, 5, 2.5, 1.25];
+    var lado = (total - barra) / 2; if (lado <= 0) return 'solo barra (' + barra + ')';
+    var out = [];
+    discos.forEach(function (d) { while (lado >= d - 0.001) { out.push(d); lado -= d; } });
+    return out.map(function (x) { return String(x).replace('.', ','); }).join(' + ') + ' por lado' + (lado > 0.01 ? ' (+' + String(Math.round(lado * 100) / 100).replace('.', ',') + ')' : '');
+  }
+  /** Carga de barra de una línea: % de tus RM o la carga escrita «(42,5/30)» (la primera es la tuya). */
+  function cargaLinea(l, ctx) {
+    var n = norm(l), marcas = marcasKilos();
+    if (/\b(DB|DBS|KB|KBS|DUMBBELL|KETTLEBELL|SANDBAG|WALL ?BALL|MED ?BALL|SLAM)\b/.test(n)) return null;
+    var pc = n.match(/(\d+(?:[.,]\d+)?)\s*%/);
+    if (pc) { var mov = baseLinea(l, ctx || {}, marcas), rm = mov && marcas[mov]; return rm ? Math.round(rm * parseFloat(pc[1].replace(',', '.')) / 100 * 2) / 2 : null; }
+    if (!/SNATCH|CLEAN|JERK|THRUSTER|DEADLIFT|SQUAT|PRESS|LUNGE|OVERHEAD|ROW\b/.test(n)) return null;
+    var w = n.match(/\((\d+(?:[.,]\d+)?)\s*\/\s*\d+(?:[.,]\d+)?\)/);
+    return w ? parseFloat(w[1].replace(',', '.')) : null;
   }
   function pizarra(texto, ctx) {
     var marcas = marcasKilos(), c = {};
@@ -246,7 +268,7 @@
     return b;
   }
   function construirDatos(sem) {
-    var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO'; });
+    var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO' && norm(r.ESTADO) !== 'SIN HUECO'; });
     if (fab) { fab.dias.forEach(function (fd) { porNombre[fd.nombre] = fd; }); S.ciclo = fab.ciclo; guardar('rte-ciclo', fab.ciclo); }
     var dias = DIAS7.map(function (nom, i) { return { nombre: nom, iso: sumarDias(sem.lunes, i), foco: [], bloques: [], rpe: null, notasDia: [] }; });
     var porIso = {}; dias.forEach(function (x) { porIso[x.iso] = x; });
@@ -307,7 +329,8 @@
       misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
       pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
       refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
-      fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], extrasTxt: sem.extras || '', rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
+      fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], enduranceManana: !!sem.enduranceManana,
+      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -944,6 +967,10 @@
     (d.porAprobar || []).forEach(function (e) {
       h += '<div class="draft-banner"><span>📅 Nuevo en tu Google Calendar: <b>' + esc(e.EVENTO) + '</b> · ' + esc(e.INICIO) + (e.HORA ? ' ' + esc(e.HORA) : '') + '. ¿Lo añado a la app?</span>' +
         '<button class="btn sm" type="button" data-ev-apr="0" data-id="' + esc(e.ID) + '">Ignorar</button><button class="btn btn-primary sm" type="button" data-ev-apr="1" data-id="' + esc(e.ID) + '">Añadir</button></div>';
+    });
+    (d.sinHueco || []).forEach(function (r) {
+      h += '<div class="draft-banner"><span>⚠ <b>' + esc(r['TÍTULO']) + '</b> no cabe en ninguna mañana libre. Elige tú día y turno, o déjalo en pendientes.</span>' +
+        '<button class="btn btn-primary sm" type="button" data-sin-hueco="' + esc(r.ID) + '">Colocar</button></div>';
     });
     var confOk = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
     if (d.hayFabrik && !d.fabrikCargado && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik de esta semana sin cargar en tu plan</span><button class="btn sm" type="button" data-cargar-fabrik>Cargar Fabrik</button></div>';
@@ -1603,7 +1630,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1662,10 +1689,10 @@
       api({ action: 'cargar_fabrik', lunes: b.dataset.cargarFabrik || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.carga.ok ? r.carga.cargados + ' bloques de Fabrik en tu plan' : r.carga.motivo); }).catch(falloApi(b));
       return;
     }
-    if ((b = t.closest('[data-cargar-extras]'))) {
-      b.disabled = true; b.textContent = 'Programando…';
-      api({ action: 'generar_extras', lunes: b.dataset.cargarExtras || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); S.vista = 'hoja'; render(); toast(r.extras.resumen); })
-        .catch(function (er) { b.disabled = false; b.textContent = 'Cargar extras'; toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
+    if ((b = t.closest('[data-cargar-extras]'))) { abrirPreviaExtras(b.dataset.cargarExtras || S.data.semana, b); return; }
+    if ((b = t.closest('[data-sin-hueco]'))) {
+      var rsh = (S.data.sinHueco || []).filter(function (r) { return r.ID === b.dataset.sinHueco; })[0];
+      if (rsh) abrirEditarBloque({ extra: true, id: rsh.ID, titulo: rsh['TÍTULO'], estado: 'SIN HUECO', origen: rsh.ORIGEN, turno: 'AM', orden: 10 }, { iso: S.data.hoy > S.data.semana ? S.data.hoy : S.data.semana, nombre: '' });
       return;
     }
     if ((b = t.closest('[data-guardar-wod]'))) { abrirGuardarWod(JSON.parse(b.dataset.guardarWod)); return; }
