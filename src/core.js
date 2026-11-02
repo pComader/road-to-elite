@@ -305,7 +305,9 @@
     return { semana: sem.lunes, hoy: sem.hoy, ciclo: fab ? fab.ciclo : cicloPara(S.ciclo || leer('rte-ciclo'), sem.lunes), dias: dias,
       erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: sem.plan || [], borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
       misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
-      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [] };
+      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
+      refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
+      fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], extrasTxt: sem.extras || '', rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -503,6 +505,7 @@
     if (S.vista === 'cobertura') return renderCobertura();
     if (S.vista === 'calendario') return renderCalendario();
     if (S.vista === 'propuesta') return renderPropuesta();
+    if (S.vista === 'hoja') return renderHoja();
     TM.reg = [];
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
@@ -593,12 +596,12 @@
       if (!ini || fin < d.hoy) return;
       vistos[norm(e.EVENTO)] = 1;
       var n = Math.round((Date.parse(ini) - Date.parse(d.hoy)) / 864e5);
-      if (n > 35) return;
-      out += '<div class="countdown"><div class="cd-txt"><span class="lbl">' + esc(/^test/i.test(e.EVENTO) ? 'Test · semana del ' + fechaCorta(ini) : (e.TIPO || 'Evento') + ' · ' + fechaCorta(ini)) + '</span><b>' + esc(e.EVENTO) + '</b></div>' +
+      if (n > 35 || (d.avisosVistos || []).indexOf(e.ID) >= 0) return;
+      out += '<div class="countdown"><button class="cd-x" type="button" data-visto="' + esc(e.ID) + '" aria-label="Visto: dejar solo en el calendario y en Avisos">✓</button><div class="cd-txt"><span class="lbl">' + esc(/^test/i.test(e.EVENTO) ? 'Test · semana del ' + fechaCorta(ini) : (e.TIPO || 'Evento') + ' · ' + fechaCorta(ini)) + '</span><b>' + esc(e.EVENTO) + '</b></div>' +
         '<span class="cd">' + (n > 1 ? 'faltan ' + n + ' días' : n === 1 ? 'mañana' : ini === d.hoy || fin !== ini ? 'esta semana' : 'hoy') + '</span></div>';
     });
     [['test_2km', 'Test 2 km'], ['test_10km', 'Test 10 km']].forEach(function (t) {
-      if (vistos[norm(t[1])]) return;
+      if (vistos[norm(t[1])] || (d.avisosVistos || []).length) return;
       var ini = aIso(String(c[t[0]] || '').split(/[–-]\s*\d/)[0]);
       if (!ini || ini < d.hoy) return;
       var n = Math.round((Date.parse(ini) - Date.parse(d.hoy)) / 864e5);
@@ -611,7 +614,7 @@
 
   function dia(d, x) {
     var html = '<div class="day-title"><h1>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</h1>' +
-      (x.rpe ? '<div class="rpe-pill" style="--c:' + rpeColor(x.rpe) + '"><b>' + esc(x.rpe) + '</b><span>' + (x.rpe === 'Z2' ? 'Recovery' : 'RPE del día') + '</span></div>' :
+      (x.rpe ? '<div class="rpe-pill" style="--c:' + rpeColor(x.rpe) + '"><b>' + esc(x.rpe) + '</b><span>' + (x.rpe === 'Z2' ? 'Recovery' : /≈/.test(x.rpe) ? 'RPE estimado' : 'RPE del metcon') + '</span></div>' :
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
@@ -676,12 +679,14 @@
     }
     if (b.nota) notas += '<div class="prose">' + prosa(b.nota) + '</div>';
 
+    var gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
+    var cam = gr && gr.reels && gr.reels.length ? '<span class="b-cam" title="Encaja en un reel">📷</span>' : '';
     var cab = b.extra ?
-      '<div class="b-head"><span class="b-num ex">+</span><span class="b-title">' + esc(b.titulo) + '</span>' +
+      '<div class="b-head"><span class="b-num ex">+</span><span class="b-title">' + esc(b.titulo) + '</span>' + cam +
         (b.intensidad ? '<span class="b-rpe" style="--c:' + claseIntensidad(b.intensidad) + '">' + esc(b.intensidad.replace(/[🟢🔵🟠🔴]\s*/gu, '') || '●') + '</span>' : '') + '</div>' +
         '<div class="b-tags"><span class="tag ex">EXTRA</span>' + (b.min ? '<span class="tag">⏱ ' + esc(b.min) + '′</span>' : '') +
         (b.codigos ? '<span class="tag">' + esc(b.codigos) + '</span>' : '') + (norm(b.estado) === 'BORRADOR' ? '<span class="tag draft">Borrador</span>' : '') + '</div>' :
-      '<div class="b-head"><span class="b-num">' + (b.n || '•') + '</span><span class="b-title">' + esc(b.titulo) + '</span>' +
+      '<div class="b-head"><span class="b-num">' + (b.n || '•') + '</span><span class="b-title">' + esc(b.titulo) + '</span>' + cam +
         (b.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(b.rpe) + '">RPE ' + esc(b.rpe) + '</span>' : '') + '</div>';
 
     var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes</div>' :
@@ -691,6 +696,10 @@
     var chq = chequeoDe(d, x.iso);
     if (chq && /Ámbar|Rojo/.test(chq['SEMÁFORO']) && (/Z6|CALIDAD|Z4|Z5/.test(norm(b.origen + ' ' + b.titulo + ' ' + (b.codigos || ''))) || /R01|R02|R03|W04/.test(b.codigos || '')))
       tagEst += '<div class="b-state ' + (chq['SEMÁFORO'] === 'Rojo' ? 'no' : 'warn') + '">Semáforo ' + esc(chq['SEMÁFORO'].toLowerCase()) + ' hoy: ' + esc(String(chq['RECOMENDACIÓN'] || '').split('. ')[0]) + '.</div>';
+    var grab = gr ? '<details class="grab"><summary>📷 Grabación' + (gr.reels.length ? ' · ' + esc(gr.reels.map(function (r) { return r.idea; }).join(' · ')) : ' · story') + '</summary><div class="exp-body">' +
+      gr.reels.map(function (r) { return '<div class="grab-i"><b>📷 Reel · ' + esc(r.idea) + '</b>' + (r.formato ? '<span class="hint">' + esc(r.formato) + '</span>' : '') + (r.hook ? '<span class="hint">Hook: ' + esc(r.hook) + '</span>' : '') + '<span>Ángulo: ' + esc(r.angulo) + '</span></div>'; }).join('') +
+      (gr.story ? '<div class="grab-i"><b>' + esc(gr.story.tipo) + '</b><span>Ángulo: ' + esc(gr.story.angulo) + '</span><span>' + esc(gr.story.materiales) + '</span></div>' : '') + '</div></details>' : '';
+    var accMet = esMetcon(b) && !b.extra ? '<div class="b-acc"><button type="button" class="btn-ghost sm" data-guardar-wod="' + esc(JSON.stringify({ iso: x.iso, n: b.n })) + '">☆ Guardar WOD</button></div>' : '';
     var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
       '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : '';
     var sci = (b.porque || b.ciencia || b.interf) ? '<details class="sci"><summary>Por qué aquí · ciencia · interferencias</summary><div class="exp-body">' +
@@ -703,9 +712,60 @@
       (adapt.length ? '<details><summary>Adaptaciones</summary><div class="exp-body">' + adapt.map(parte).join('') + '</div></details>' : '') +
       (notas ? '<details><summary class="coach-sum">Notas del coach</summary><div class="exp-body">' + notas + '</div></details>' : '') +
       (b.variantes || []).map(function (v) { return htmlVariante(v, parte); }).join('') +
-      accExtra + filaRegistro(d, x, b) +
+      grab + htmlRendimiento(d, x, b) + accMet + accExtra + filaRegistro(d, x, b) +
       '</article>';
   }
+
+  // ---------- rendimiento y mejora: mis notas + recomendación (editable, con «Restaurar») ----------
+  function notaBloqueDe(d, iso, id) { return (d.notasBloque || []).filter(function (n) { return aIso(n.FECHA) === iso && n.ID_PLAN === id; })[0] || null; }
+  function htmlRendimiento(d, x, b) {
+    if (/NO HACER/.test(norm(b.estado))) return '';
+    var id = idPlanDe(x, b), n = notaBloqueDe(d, x.iso, id), auto = recomendar(b, x), rec = n && n['RECOMENDACIÓN'] ? n['RECOMENDACIÓN'] : auto;
+    var ref = esc(JSON.stringify({ iso: x.iso, id: id, bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo }));
+    return '<details class="rend"><summary>Rendimiento y mejora' + (n && n['MIS NOTAS'] ? ' · <span class="hint">con notas</span>' : '') + '</summary><div class="exp-body">' +
+      '<label>Mis notas</label><textarea class="inp" rows="3" data-rend-notas placeholder="Cargas, sensaciones, qué mejorar la próxima vez…">' + esc(n ? n['MIS NOTAS'] : '') + '</textarea>' +
+      '<label>En qué centrarte y cómo afrontarlo' + (n && n['RECOMENDACIÓN'] ? ' <span class="tag">editada</span>' : '') + '</label><textarea class="inp" rows="6" data-rend-rec>' + esc(rec) + '</textarea>' +
+      '<div class="b-acc"><button type="button" class="btn-ghost sm" data-rend-restaurar="' + ref + '"' + (n && n['RECOMENDACIÓN'] ? '' : ' hidden') + '>↺ Restaurar recomendación</button>' +
+      '<button type="button" class="btn sm" data-rend-guardar="' + ref + '">Guardar</button></div></div></details>';
+  }
+  var GIMN = /T2B|TOES TO|C2B|CHEST TO BAR|PULL[- ]?UPS?|HSPU|MUSCLE UP|BMU|RMU|DIPS?\b|K2E|V-UPS/, CARGA_M = /THRUSTER|WALL BALL|CLEAN|SNATCH|DEADLIFT|LUNGE|DEVIL|OVERHEAD SQUAT|OHS|DB /;
+  function partir(n, gimn) {
+    if (n < 10) return 'unbroken';
+    if (gimn) { var a = Math.ceil(n * 0.4), b2 = Math.ceil((n - a) / 2); return a + '+' + b2 + '+' + (n - a - b2) + ' (para antes del fallo, 3–5″ de descanso)'; }
+    var h = Math.ceil(n / 2); return n <= 15 ? 'unbroken o ' + h + '+' + (n - h) : h + '+' + (n - h) + ' (descanso de 3 respiraciones)';
+  }
+  /** Recomendación automática del bloque: foco + cómo partir series y repartir el ritmo. Siempre editable. */
+  function recomendar(b, x) {
+    var txt = b.partes.map(function (p) { return p.texto; }).join('\n'), T = norm(txt), out = [];
+    var obj = b.wod && (b.wod.objetivo || b.wod.notas), foco = obj ? String(obj).split(/\n|\. /)[0] : String(b.nota || '').split(/\n\n|\. /)[0];
+    if (esMetcon(b)) {
+      var cap = T.match(/TIME\s*CAP\s*(\d+)/), sets = T.match(/(\d+)\s*SETS/), am = T.match(/AMRAP\s*(\d+)\s*'/g), ev = T.match(/EVERY\s*(\d+)\s*'\s*X\s*(\d+)/), on = T.match(/(\d+)\s*'\s*ON\s*X\s*(\d+)\s*'\s*OFF/);
+      if (ev) out.push('Formato: cada ' + ev[1] + '′ × ' + ev[2] + '. Acaba cada ronda con 30–45″ de margen; si en la 1ª te sobran menos de 20″, parte antes las series largas.');
+      else if (on) out.push('Formato: ' + on[1] + '′ de trabajo / ' + on[2] + '′ de descanso. Ritmo del 85–90 % en cada ventana: puedes apretar más que en un AMRAP continuo porque descansas.');
+      else if (am && am.length > 1) out.push('Doble AMRAP: sal al 80–85 % en el primero y guarda un punto para el segundo; la diferencia de rondas entre ambos no debería pasar de 1.');
+      else if (am) out.push('AMRAP: ritmo constante desde el minuto 1 (que la última ronda salga casi igual que la primera). Transiciones de menos de 5″.');
+      else if (cap && sets) { var pr = Math.floor(+cap[1] * 60 / +sets[1]); out.push('Time cap ' + cap[1] + '′ con ' + sets[1] + ' sets: ~' + Math.floor(pr / 60) + '′' + ('0' + pr % 60).slice(-2) + '″ por set como mucho, contando transiciones. Si el primer set pasa de ahí, parte antes.'); }
+      else if (cap) out.push('Time cap ' + cap[1] + '′: reparte el esfuerzo para no quedarte sin terminar; mejor un ritmo que puedas mantener que salir a tope.');
+      txt.split('\n').forEach(function (l) {
+        var m = norm(l).match(/^\s*(\d+)(?:\/(\d+))?\s+(?:M\s+)?([A-Z].{2,40})/); if (!m || /SETS|ROUNDS|RONDAS|REST|CAL|M\b/.test(m[3].slice(0, 5))) return;
+        var n = +m[1], mov = m[3].trim(), gimn = GIMN.test(mov);
+        if (/UNBROKEN/.test(mov)) { out.push(mov.replace(/\s*UNBROKEN/, '') + ': pide unbroken; si no salen, baja reps antes que romper.'); return; }
+        if (/BURPEE/.test(mov)) { out.push(n + ' burpees: ritmo fijo (1 cada 4–5″), sin parar.'); return; }
+        if (/DOUBLE UNDER|\bDU\b/.test(mov) && n >= 30) { out.push(n + ' DU: unbroken si las dominas; si no, ' + Math.ceil(n / 2) + '+' + Math.floor(n / 2) + '.'); return; }
+        if ((gimn || CARGA_M.test(mov)) && n >= 10) out.push(n + ' ' + cap1(mov) + ': ' + partir(n, gimn) + '.');
+      });
+      if (/ROW|SKI|BIKE|CALORIES|CAL\b/.test(T)) out.push('Ergos: entra a un ritmo que te deje hablar con frases cortas; recupera ahí, no en la barra.');
+      out.push('Respira antes de cada levantamiento y prioriza la técnica en la barra cuando suban las pulsaciones.');
+    } else if (/SNATCH|CLEAN|JERK/.test(norm(b.titulo))) {
+      out.push('Máxima intención de velocidad en cada repetición; recepción alta, estable y sólida.', 'Respeta los %: si una repetición sale lenta o te desplazas, repite la carga en vez de subir.', 'Entre series: 1 repetición visualizada del gesto y respiración nasal para bajar pulsaciones.');
+    } else if (/SQUAT|DEADLIFT|PRESS|STRENG|FUERZA/.test(norm(b.titulo))) {
+      out.push('Cada repetición con la misma trayectoria y bracing; intención de velocidad en la subida.', 'Deja el RIR que pide el bloque: la última repetición debe salir limpia.');
+    } else if (/CARRERA|Z6|Z2|Z4|Z5/.test(norm((b.origen || '') + ' ' + b.titulo))) {
+      out.push('Manda la referencia del plan (ritmo/FC/RPE), no las sensaciones del primer minuto.', 'Apunta al acabar los datos que pide el bloque: sirven para ajustar la semana siguiente.');
+    } else out.push('Calidad antes que cantidad: para 1–2 repeticiones antes del fallo (RIR 2).');
+    return (foco ? 'Foco: ' + foco.replace(/\s+/g, ' ').trim() + '\n' : '') + out.map(function (o) { return '• ' + o; }).join('\n');
+  }
+  function cap1(s) { s = String(s || '').toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); }
 
   // ---------- registro de lo realizado (APP · REGISTRO) ----------
   function idPlanDe(x, b) { return b.extra ? b.id : (b.idPlan || 'F-' + (b.fabrikDia || x.nombre) + '-' + b.n); }
@@ -881,7 +941,14 @@
     (d.cambios || []).filter(function (c) { return c.ESTADO === 'Solicitada'; }).forEach(function (c) {
       h += '<div class="unpub">Reestructuración solicitada: ' + esc(c.EVENTO) + ' · pídeme «reestructura» en el chat</div>';
     });
-    if (d.borrador) h += '<div class="draft-banner"><span>Plan de la semana en borrador</span><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button></div>';
+    (d.porAprobar || []).forEach(function (e) {
+      h += '<div class="draft-banner"><span>📅 Nuevo en tu Google Calendar: <b>' + esc(e.EVENTO) + '</b> · ' + esc(e.INICIO) + (e.HORA ? ' ' + esc(e.HORA) : '') + '. ¿Lo añado a la app?</span>' +
+        '<button class="btn sm" type="button" data-ev-apr="0" data-id="' + esc(e.ID) + '">Ignorar</button><button class="btn btn-primary sm" type="button" data-ev-apr="1" data-id="' + esc(e.ID) + '">Añadir</button></div>';
+    });
+    var confOk = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
+    if (d.hayFabrik && !d.fabrikCargado && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik de esta semana sin cargar en tu plan</span><button class="btn sm" type="button" data-cargar-fabrik>Cargar Fabrik</button></div>';
+    else if (d.fabrikCargado && confOk && !d.extrasTxt && !d.borrador && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik cargado · faltan los extras, la carrera y los refuerzos</span><button class="btn btn-primary sm" type="button" data-cargar-extras>Cargar extras</button></div>';
+    if (d.borrador) h += '<div class="draft-banner"><span>Plan de la semana en borrador</span><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button></div>';
     var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
     if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Confirma la semana del ' + fechaCorta(sig) + '</b><span>Mañanas para doble, descansos y eventos. Sin esto no se programa.</span></button>';
     if (d.conf && /^Pendiente/.test(d.conf.ESTADO || '')) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Esta semana está sin confirmar</b><span>Confírmala para poder programarla.</span></button>';
@@ -1535,7 +1602,8 @@
   var abrirAjustes = perezoso('menu', 'abrirAjustes'), renderAjustes = perezoso('menu', 'renderAjustes'), renderCobertura = perezoso('menu', 'renderCobertura'),
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
-    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla');
+    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
+    renderHoja = perezoso('menu', 'renderHoja'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1578,6 +1646,31 @@
       return;
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
+    if ((b = t.closest('[data-visto]'))) {
+      b.disabled = true;
+      api({ action: 'aviso_visto', id: b.dataset.visto }).then(ok).then(function () { S.data.avisosVistos = (S.data.avisosVistos || []).concat([b.dataset.visto]); render(); toast('Visto · queda en el calendario y en Menú › Avisos'); }).catch(falloApi(b));
+      return;
+    }
+    if ((b = t.closest('[data-ev-apr]'))) {
+      b.disabled = true; var si = b.dataset.evApr === '1';
+      api({ action: 'evento_aprobar', id: b.dataset.id, aprobar: si, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(si ? 'Añadido · decide en el calendario si bloquea algo' : 'Ignorado: no volverá a proponerse'); }).catch(falloApi(b));
+      return;
+    }
+    if (t.closest('[data-ir-hoja]')) { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); return; }
+    if ((b = t.closest('[data-cargar-fabrik]'))) {
+      b.disabled = true; b.textContent = 'Cargando…';
+      api({ action: 'cargar_fabrik', lunes: b.dataset.cargarFabrik || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.carga.ok ? r.carga.cargados + ' bloques de Fabrik en tu plan' : r.carga.motivo); }).catch(falloApi(b));
+      return;
+    }
+    if ((b = t.closest('[data-cargar-extras]'))) {
+      b.disabled = true; b.textContent = 'Programando…';
+      api({ action: 'generar_extras', lunes: b.dataset.cargarExtras || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); S.vista = 'hoja'; render(); toast(r.extras.resumen); })
+        .catch(function (er) { b.disabled = false; b.textContent = 'Cargar extras'; toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
+      return;
+    }
+    if ((b = t.closest('[data-guardar-wod]'))) { abrirGuardarWod(JSON.parse(b.dataset.guardarWod)); return; }
+    if ((b = t.closest('[data-rend-guardar]'))) { guardarRendimiento(b, false); return; }
+    if ((b = t.closest('[data-rend-restaurar]'))) { guardarRendimiento(b, true); return; }
     if ((b = t.closest('[data-nuevo-bloque]'))) { abrirNuevoBloque(b.dataset.nuevoBloque); return; }
     if ((b = t.closest('[data-plantilla]'))) { guardarComoPlantilla(b.dataset.plantilla); return; }
     if ((b = t.closest('[data-borrar-bloque]'))) {
@@ -1662,7 +1755,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.6';
+  var WEB_VERSION = 'web 0.7';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

@@ -840,3 +840,34 @@ details.sci>summary{color:var(--accent);font-weight:600}
 .pr-row.cola-row b{flex:1 1 60%}
 .pr-row.cola-row .hint.err{flex-basis:100%}
 .b-state.warn{text-transform:none;letter-spacing:0}
+
+/* ===== v0.7 · hoja de la semana, posición óptima, grabación, rendimiento, avisos vistos ===== */
+.countdown{position:relative}
+.cd-x{flex:none;order:3;width:30px;height:30px;border-radius:50%;border:1px solid currentColor;background:transparent;color:var(--rpe-high);font-weight:800;cursor:pointer}
+.b-cam{font-size:15px;margin-left:2px}
+.grab .grab-i,.pos-act,.pos-op{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin:6px 0}
+.grab .grab-i span{font-size:14px}
+.rend textarea{width:100%;box-sizing:border-box;font:inherit;font-size:14px}
+.rend label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 4px}
+.hoja-acc{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.h-dia{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:10px 12px;margin:8px 0}
+.h-dia.hoy{border-color:var(--accent)}
+.h-cab{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.h-cab b{flex:1}
+.h-turno{display:flex;flex-direction:column;gap:4px;margin:4px 0}
+.h-t{font-size:12px;color:var(--muted);font-weight:700}
+.h-b{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:8px;width:100%;border:1px solid var(--line);border-radius:10px;padding:7px 9px;flex-wrap:wrap}
+.h-b.ex{border-left:3px solid var(--accent)}
+.h-b.draft{border-style:dashed}
+.h-b.off{opacity:.5;text-decoration:line-through}
+.h-n{font-weight:800;min-width:16px;color:var(--accent)}
+.h-ti{flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px}
+.h-ref{margin:14px 0}
+.ref-f{display:flex;gap:8px;margin-top:6px}
+.ref-f .inp{flex:1;min-width:0}
+.pos .part-lbl{margin-top:8px}
+.pos-act.ok{border-color:var(--ok,#3fb950)}
+.pos-act.warn{border-color:var(--rpe-mid)}
+.pos-op{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:2px;width:100%;border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin:6px 0;position:relative}
+.pos-op .go{position:absolute;right:10px;top:8px;color:var(--accent);font-weight:700;font-size:13px}
+.pos-op b{padding-right:48px}

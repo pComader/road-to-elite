@@ -23,10 +23,13 @@
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Cobertura y carrera<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-calendario"><span class="set-ico">▦</span>Calendario de eventos<span class="go">›</span></button>';
     var pend = (d.pendientes || []);
     html += seccion('s-pend', 'Pendientes', htmlPendientes(pend), pend.length ? String(pend.length) : '', '↺');
+    html += seccion('s-avisos', 'Avisos de tests y competiciones', htmlAvisosEventos(d), '', '⏱');
     html += seccion('s-marcas', 'Mis marcas', htmlMarcas(d), '', '◆');
+    html += seccion('s-wods', 'WODs de referencia y guardados', '<div id="wods-body"><div class="hint">Cargando…</div></div>', '', '★');
     html += seccion('s-semana', 'Esta semana', htmlResumenSemana(d), hechos ? hechos + ' registrados' : '', '✓');
     html += seccion('s-desc', '% Descuentos', '<div id="desc-body"><div class="hint">Cargando…</div></div>', '', '%');
     html += seccion('s-webs', 'Mis webs', '<div id="webs-body"><div class="hint">Cargando…</div></div>', '', '↗');
@@ -43,6 +46,9 @@
     document.getElementById('logout').onclick = function () { S.vista = null; salir(); };
     document.getElementById('ir-cobertura').onclick = function () { S.vista = 'cobertura'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
+    document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
+    if (S._abrir === 's-wods') cargarWods();
     document.getElementById('s-desc').addEventListener('toggle', function () { if (this.open) cargarDescuentos(); });
     document.getElementById('s-webs').addEventListener('toggle', function () { if (this.open) cargarWebs(); });
     var q = document.getElementById('vid-q'); q.oninput = function () { pintarVideos(q.value); }; pintarVideos('');
@@ -310,7 +316,7 @@
   }
   function renderCalendario() {
     var d = S.data, hoy = d.hoy, mes = S.calMes || hoy.slice(0, 7), y = +mes.slice(0, 4), m = +mes.slice(5, 7);
-    var evs = (S.eventos || d.eventos || []).map(function (e) { e._i = aIso(e.INICIO); e._f = aIso(e.FIN) || e._i; return e; }).filter(function (e) { return e._i; });
+    var evs = (S.eventos || d.eventos || []).filter(function (e) { return e.ESTADO !== 'Ignorado' && e.ESTADO !== 'Pendiente de aprobar'; }).map(function (e) { e._i = aIso(e.INICIO); e._f = aIso(e.FIN) || e._i; return e; }).filter(function (e) { return e._i; });
     var primero = new Date(Date.UTC(y, m - 1, 1)), dow = (primero.getUTCDay() + 6) % 7, ndias = new Date(Date.UTC(y, m, 0)).getUTCDate();
     var celdas = '';
     for (var k = 0; k < dow; k++) celdas += '<span class="cal-d vacio"></span>';
@@ -606,4 +612,188 @@
     var km = (A.semanas || []).map(function (s) { return { x: fechaCorta(s.lunes), y: Number(s.km) }; });
     return graficaLinea(z2, { titulo: 'Eficiencia en Z2 · metros/min por latido (sube = mejor base)', vacio: 'La gráfica de eficiencia aparece con 2 rodajes Z2 con FC media.', fmt: function (v) { return String(Math.round(v * 1000) / 1000).replace('.', ','); } }) +
       graficaLinea(km, { titulo: 'Kilómetros por semana', vacio: 'La gráfica de volumen aparece con 2 semanas registradas.', fmt: function (v) { return String(Math.round(v)); } });
+  }
+
+  // =====================================================================
+  //  v0.7 · HOJA DE LA SEMANA (bloques editables + posición óptima), REFUERZOS, WODS, AVISOS, RENDIMIENTO
+  // =====================================================================
+  var EST_CORTO = { BORRADOR: 'borrador', PROGRAMADO: '', 'NO HACER': 'no hacer', PROPUESTA: 'propuesta', 'PROPUESTA · NO HACER': 'propuesta' };
+  function filaPlanDe(b) { return (S.data.plan || []).filter(function (r) { return r.ID === (b.extra ? b.id : b.idPlan); })[0] || null; }
+  function renderHoja() {
+    var d = S.data, sig = sumarDias(d.semana, 7), conf = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
+    var html = cabeceraVista('Hoja de la semana', 'Semana') +
+      '<section class="me" style="display:block"><b>Semana del ' + fechaCorta(d.semana) + '</b><div class="hint">' + esc(d.conf ? d.conf.ESTADO + (d.conf['DOBLES (mañanas libres)'] ? ' · dobles: ' + d.conf['DOBLES (mañanas libres)'] : '') + (d.conf.DESCANSO ? ' · descanso: ' + d.conf.DESCANSO : '') : 'Sin confirmar') + '</div>' +
+      (d.extrasTxt ? '<div class="hint">Extras: ' + esc(d.extrasTxt) + '</div>' : '') + '</section>';
+    html += '<div class="hoja-acc">' + (!d.fabrikCargado ? '<button class="btn sm" type="button" data-cargar-fabrik="' + d.semana + '">Cargar Fabrik</button>' : '') +
+      (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '↻ Rehacer extras' : 'Cargar extras') + '</button>' : '<button class="btn sm" type="button" data-confirmar="' + d.semana + '">Confirmar semana</button>') +
+      (d.borrador ? '<button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button>' : '') +
+      '<button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>';
+    html += d.dias.map(function (x, i) {
+      var t = function (tu) {
+        var bl = x.bloques.filter(function (b) { return b.turno === tu; });
+        if (!bl.length) return '';
+        return '<div class="h-turno"><span class="h-t">' + (tu === 'AM' ? '☀️ AM' : '🌙 PM') + '</span>' + bl.map(function (b) {
+          var est = norm(b.estado), gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
+          var edit = b.extra || b.idPlan ? ' data-h-ed="' + i + '|' + esc(b.extra ? b.id : b.idPlan) + '"' : '';
+          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (est === 'NO HACER' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
+            '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + esc(b.titulo) + '</span>' + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
+            (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(String(b.codigos).split('|')[0]) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
+        }).join('') + '</div>';
+      };
+      return '<section class="h-dia' + (x.iso === d.hoy ? ' hoy' : '') + '"><div class="h-cab"><b>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</b>' + (x.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(x.rpe) + '">RPE ' + esc(x.rpe) + '</span>' : '') +
+        '<button type="button" class="btn-ghost sm" data-nuevo-bloque="' + x.iso + '">＋</button></div>' + (x.bloques.length ? t('AM') + t('PM') : '<div class="hint">Descanso</div>') + '</section>';
+    }).join('');
+    html += htmlRefuerzos(d, d.semana, d.refuerzos, 'Esta semana') + htmlRefuerzos(d, sig, d.refuerzosSig, 'Semana que viene (' + fechaCorta(sig) + ')');
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = volverSemana;
+    document.getElementById('h-claude').onclick = function () { abrirPedirClaude(d.semana); };
+    $app.querySelectorAll('[data-h-ed]').forEach(function (b) { b.onclick = function () { var p = b.dataset.hEd.split('|'), x = d.dias[+p[0]]; abrirEditarBloque(x.bloques.filter(function (y) { return (y.extra ? y.id : y.idPlan) === p[1]; })[0], x); }; });
+    $app.querySelectorAll('[data-ref-add]').forEach(function (f) {
+      f.onsubmit = function (ev) {
+        ev.preventDefault(); var inp = f.querySelector('input'), b = f.querySelector('button'); if (!inp.value.trim()) return; b.disabled = true;
+        api({ action: 'refuerzo', lunes: f.dataset.refAdd, texto: inp.value.trim(), ver: d.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Refuerzo anotado: se prioriza al cargar los extras'); }).catch(falloApi(b));
+      };
+    });
+    $app.querySelectorAll('[data-ref-del]').forEach(function (b) {
+      b.onclick = function () { if (!confirmar(b, '¿Quitar?')) return; b.disabled = true; api({ action: 'refuerzo_borrar', id: b.dataset.refDel, ver: d.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); }).catch(falloApi(b)); };
+    });
+  }
+  function htmlRefuerzos(d, lunes, lista, titulo) {
+    return '<section class="h-ref"><div class="part-lbl">A reforzar · ' + esc(titulo) + '</div><div class="hint">Ejercicios, bloques o consignas («pistols», «refuerzo OH»…). Se priorizan al cargar los extras y suman a sus estímulos mensuales.</div>' +
+      (lista || []).map(function (r) { return '<div class="pr-row"><b>' + esc(r.TEXTO) + '</b><span class="hint">' + esc((r['CÓDIGO'] ? r['CÓDIGO'] + ' · ' : '') + r.ESTADO) + '</span><button type="button" class="x" data-ref-del="' + esc(r.ID) + '" aria-label="Quitar">×</button></div>'; }).join('') +
+      '<form class="ref-f" data-ref-add="' + lunes + '"><input class="inp" maxlength="200" placeholder="Ej. pistols · refuerzo OH · core antirrotación"><button class="btn sm" type="submit">Añadir</button></form></section>';
+  }
+  /** Editar un bloque: día, turno, orden y (si es tuyo) contenido. Al cambiar día o turno se calcula la posición óptima. */
+  function abrirEditarBloque(b, x) {
+    if (!b) return;
+    var r = filaPlanDe(b) || {}, fab = !b.extra, idb = b.extra ? b.id : b.idPlan;
+    var sel = function (id, v, l) { return '<select id="' + id + '">' + l.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select>'; };
+    abrirHoja('<div class="row"><h2>' + esc(b.titulo) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="hint">' + (fab ? 'Bloque de Fabrik: puedes moverlo de día o turno; su contenido no se toca.' : 'Bloque ' + esc(b.origen || 'EXTRA') + ' · ' + esc(b.estado || '')) + '</div>' +
+      '<form id="ebf" class="avf"><div class="three"><div><label for="eb-f">Día</label><input id="eb-f" type="date" value="' + x.iso + '" min="' + S.data.semana + '" max="' + sumarDias(S.data.semana, 6) + '"></div>' +
+      '<div><label for="eb-t">Turno</label>' + sel('eb-t', b.turno, ['AM', 'PM']) + '</div><div><label for="eb-o">Orden</label><input id="eb-o" inputmode="decimal" value="' + esc(r.ORDEN || b.orden || '') + '"></div></div>' +
+      '<div id="eb-pos" class="pos"><div class="hint">Calculando la posición óptima…</div></div>' +
+      (fab ? '' : '<label for="eb-ti">Título</label><input id="eb-ti" maxlength="120" value="' + esc(r['TÍTULO'] || b.titulo) + '">' +
+        '<label for="eb-co">Contenido</label><textarea id="eb-co" rows="5">' + esc(r.CONTENIDO || '') + '</textarea>' +
+        '<div class="three"><div><label for="eb-mi">Min</label><input id="eb-mi" inputmode="numeric" value="' + esc(r.MIN || '') + '"></div><div><label for="eb-in">Intensidad</label><input id="eb-in" value="' + esc(r.INTENSIDAD || '') + '"></div>' +
+        '<div><label for="eb-cd">Códigos</label><input id="eb-cd" value="' + esc(r['CÓDIGOS'] || '') + '"></div></div>') +
+      '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' +
+      '<div class="two-btn">' + (fab ? '' : '<button class="btn" type="button" id="eb-q">' + (norm(b.estado) === 'BORRADOR' ? 'Quitar borrador' : 'No hacer') + '</button>') +
+      '<button class="btn" type="button" id="eb-pd">No hacer · a pendientes</button></div></form>');
+    var pedir = function () {
+      var el = document.getElementById('eb-pos'); if (!el) return;
+      el.innerHTML = '<div class="hint">Calculando la posición óptima…</div>';
+      var campos = { FECHA: aTxt(val('eb-f')), TURNO: val('eb-t') };
+      if (!fab) { campos['CÓDIGOS'] = val('eb-cd'); campos['TÍTULO'] = val('eb-ti'); campos.CONTENIDO = val('eb-co'); campos.MIN = val('eb-mi'); }
+      api({ action: 'posicion', id: idb, lunes: S.data.semana, campos: campos }).then(ok).then(function (res) {
+        var P = res.posicion, a = P.actual, m = P.mejores[0], esOpt = a && m && a.iso === m.iso && a.turno === m.turno;
+        el.innerHTML = (a ? '<div class="pos-act ' + (esOpt ? 'ok' : a.choques.length ? 'warn' : '') + '"><b>' + (esOpt ? '✔ Es la posición óptima' : 'Donde lo has puesto') + '</b>' +
+          (a.choques.length ? '<span>⚠ ' + esc(a.choques.join(' · ')) + '</span>' : '<span>' + esc(a.motivos.join(' · ')) + '</span>') + '</div>' : '<div class="pos-act warn"><b>Ese hueco no está disponible</b><span>Descanso, mañana no libre o bloqueado por un evento.</span></div>') +
+          (esOpt ? '' : '<div class="part-lbl">Mejores huecos (interferencias, fatiga acumulada y volumen)</div>' + P.mejores.map(function (h) {
+            return '<button type="button" class="pos-op" data-usar="' + h.iso + '|' + h.turno + '"><b>' + esc(h.dia) + ' ' + diaMes(h.iso) + ' · ' + h.turno + '</b><span>' + esc(h.choques.length ? '⚠ ' + h.choques.join(' · ') : h.motivos.join(' · ')) + '</span><span class="go">Usar</span></button>';
+          }).join(''));
+        el.querySelectorAll('[data-usar]').forEach(function (u) { u.onclick = function () { var p = u.dataset.usar.split('|'); document.getElementById('eb-f').value = p[0]; document.getElementById('eb-t').value = p[1]; pedir(); }; });
+      }).catch(function (e) { el.innerHTML = '<div class="hint">' + esc(mensajeError(e.message)) + '</div>'; });
+    };
+    document.getElementById('eb-f').onchange = pedir; document.getElementById('eb-t').onchange = pedir;
+    pedir();
+    var fin = function (r2, msg) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast(msg); };
+    document.getElementById('ebf').onsubmit = function (ev) {
+      ev.preventDefault(); var bt = document.getElementById('eb-ok'); bt.disabled = true;
+      var c = { FECHA: aTxt(val('eb-f')), TURNO: val('eb-t'), ORDEN: val('eb-o') };
+      if (!fab) { c['TÍTULO'] = val('eb-ti'); c.CONTENIDO = val('eb-co'); c.MIN = val('eb-mi'); c.INTENSIDAD = val('eb-in'); c['CÓDIGOS'] = val('eb-cd').toUpperCase(); }
+      api({ action: 'bloque_editar', id: idb, campos: c, ver: S.data.semana }).then(ok).then(function (r2) { fin(r2, 'Bloque actualizado'); }).catch(falloApi(bt));
+    };
+    var q = document.getElementById('eb-q');
+    if (q) q.onclick = function () { if (!confirmar(q, '¿Seguro? Toca otra vez')) return; q.disabled = true; api({ action: 'bloque_quitar', id: idb, ver: S.data.semana }).then(ok).then(function (r2) { fin(r2, 'Hecho'); }).catch(falloApi(q)); };
+    document.getElementById('eb-pd').onclick = function () { cerrarHoja(); abrirNoHacer({ id: idb, fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }); };
+  }
+  function abrirPedirClaude(lunes) {
+    abrirHoja('<div class="row"><h2>Pedir a Claude</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="hint">Queda una solicitud en APP · CAMBIOS. Claude la revisa y te deja una propuesta para aprobar; hasta entonces sigue la automática.</div>' +
+      '<form id="pcf" class="avf"><label for="pc-n">¿Qué no te convence?</label><textarea id="pc-n" rows="4" placeholder="Ej. el martes va demasiado cargado de hombro; quiero la Z2 larga el domingo"></textarea>' +
+      '<button class="btn btn-primary" type="submit" id="pc-ok">Enviar</button></form>');
+    document.getElementById('pcf').onsubmit = function (ev) {
+      ev.preventDefault(); var b = document.getElementById('pc-ok'); b.disabled = true;
+      api({ action: 'pedir_claude', lunes: lunes, notas: val('pc-n'), ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); cerrarHoja(); render(); toast('Solicitud enviada a Claude'); }).catch(falloApi(b));
+    };
+  }
+  // ---------- rendimiento y mejora: guardar / restaurar ----------
+  function guardarRendimiento(btn, restaurar) {
+    var ref = JSON.parse(btn.dataset.rendGuardar || btn.dataset.rendRestaurar), box = btn.closest('.rend');
+    var notas = box.querySelector('[data-rend-notas]').value.trim(), recEl = box.querySelector('[data-rend-rec]');
+    var auto = null;
+    S.data.dias.forEach(function (x) { if (x.iso === ref.iso) x.bloques.forEach(function (b) { if (idPlanDe(x, b) === ref.id) auto = recomendar(b, x); }); });
+    var rec = restaurar ? '' : (recEl.value.trim() === String(auto || '').trim() ? '' : recEl.value.trim());
+    btn.disabled = true;
+    api({ action: 'nota_bloque', nota: { FECHA: aTxt(ref.iso), ID_PLAN: ref.id, BLOQUE: ref.bloque, 'MIS NOTAS': notas, 'RECOMENDACIÓN': rec } }).then(ok).then(function (r) {
+      S.data.notasBloque = (S.data.notasBloque || []).filter(function (n) { return !(aIso(n.FECHA) === ref.iso && n.ID_PLAN === ref.id); }).concat([r.nota]);
+      render(); toast(restaurar ? 'Recomendación restaurada' : 'Guardado');
+    }).catch(falloApi(btn));
+  }
+  // ---------- avisos de tests y competiciones (también los vistos) ----------
+  function htmlAvisosEventos(d) {
+    var l = (d.eventos || []).filter(function (e) { return (/^test\b/i.test(e.EVENTO || '') || /Competición|HYROX/.test(e.TIPO || '')) && (aIso(e.FIN) || aIso(e.INICIO)) >= d.hoy; })
+      .sort(function (a, b) { return aIso(a.INICIO) < aIso(b.INICIO) ? -1 : 1; });
+    if (!l.length) return '<div class="hint">No hay tests ni competiciones próximos.</div>';
+    return '<div class="pr-list">' + l.map(function (e) {
+      var n = Math.round((Date.parse(aIso(e.INICIO)) - Date.parse(d.hoy)) / 864e5), visto = (d.avisosVistos || []).indexOf(e.ID) >= 0;
+      return '<button type="button" class="pr-row" data-evento="' + esc(e.ID) + '"><b>' + esc(e.EVENTO) + '</b><span class="hint">' + fechaCorta(aIso(e.INICIO)) + ' · ' + (n > 0 ? 'faltan ' + n + ' días' : 'esta semana') + (visto ? ' · visto' : '') + '</span></button>';
+    }).join('') + '</div><div class="hint">Al marcar un aviso como visto (✓) deja de salir arriba del día y queda aquí y en el calendario.</div>';
+  }
+  // ---------- WODs guardados y de referencia (resultados en APP · MARCAS) ----------
+  function cargarWods() { api({ action: 'wods' }).then(ok).then(function (r) { S.wods = r.wods; pintarWods(); }).catch(function () { var el = document.getElementById('wods-body'); if (el) el.innerHTML = '<div class="err">No se pudieron cargar.</div>'; }); }
+  function resultadosWod(w) { return (S.misMarcas || []).filter(function (m) { return m.raw && S.marcasFilas && (S.marcasFilas.filter(function (f) { return f._fila === m.fila; })[0] || {}).EVENTO === 'WOD:' + w.ID; }); }
+  function pintarWods() {
+    var el = document.getElementById('wods-body'); if (!el) return;
+    var ref = (S.wods || []).filter(function (w) { return w.TIPO === 'Referencia'; }), gua = (S.wods || []).filter(function (w) { return w.TIPO !== 'Referencia'; });
+    var fila = function (w) { var rs = resultadosWod(w); return '<button type="button" class="pr-row" data-wod="' + esc(w.ID) + '"><b>' + esc(w.NOMBRE) + '</b><span class="hint">' + (rs.length ? rs.length + ' resultado' + (rs.length > 1 ? 's' : '') + ' · último ' + esc(fmtMarca(rs[0])) : (w['FECHA ORIGEN'] ? 'del ' + esc(w['FECHA ORIGEN']) : '')) + '</span></button>'; };
+    el.innerHTML = '<div class="part-lbl">De referencia</div>' + (ref.length ? '<div class="pr-list">' + ref.map(fila).join('') + '</div>' : '<div class="hint">Ninguno aún. Guarda un metcon con «☆ Guardar WOD» o añádelo a mano.</div>') +
+      '<div class="part-lbl">Guardados para hacer</div>' + (gua.length ? '<div class="pr-list">' + gua.map(fila).join('') + '</div>' : '<div class="hint">Ninguno.</div>') +
+      '<button class="btn" type="button" id="wod-nuevo">＋ Metcon a mano</button>';
+    el.querySelectorAll('[data-wod]').forEach(function (b) { b.onclick = function () { abrirWod((S.wods || []).filter(function (w) { return w.ID === b.dataset.wod; })[0]); }; });
+    document.getElementById('wod-nuevo').onclick = function () { abrirFormWod({ TIPO: 'Referencia' }); };
+  }
+  /** Ventana flotante del WOD: el metcon, sus resultados y añadir uno nuevo. */
+  function abrirWod(w) {
+    if (!w) return;
+    var rs = resultadosWod(w), tipoR = w.RESULTADO || 'Tiempo', tipoM = { 'Rondas + reps': 'Reps', Metros: 'Distancia' }[tipoR] || tipoR;
+    abrirHoja('<div class="row"><h2>' + esc(w.NOMBRE) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="tag">' + esc(w.TIPO) + (w['FECHA ORIGEN'] ? ' · ' + esc(w['FECHA ORIGEN']) : '') + '</div><div class="board">' + pizarra(w.CONTENIDO || '', {}) + '</div>' + (w.NOTAS ? '<p class="hint">' + esc(w.NOTAS) + '</p>' : '') +
+      '<div class="part-lbl">Progresión</div>' + (rs.length ? '<div class="pr-hist">' + sparkline(rs) + rs.map(function (x) { return '<div class="pr-row"><span>' + (x.fecha ? fechaCorta(x.fecha) : '—') + '</span><b>' + esc(fmtMarca(x)) + '</b>' + (x.notas ? '<span class="hint">' + esc(x.notas) + '</span>' : '') + '</div>'; }).join('') + '</div>' : '<div class="hint">Sin resultados aún.</div>') +
+      '<form id="wrf" class="avf"><div class="two"><div><label for="wr-v">Resultado (' + esc(tipoR) + ')</label>' + (tipoM === 'Tiempo' ? campoTiempo('wr-t', '') : '<input id="wr-v" required inputmode="decimal" placeholder="' + (tipoR === 'Rondas + reps' ? 'Ej. 7.12 (7 rondas + 12)' : '') + '">') + '</div>' +
+      '<div><label for="wr-f">Fecha</label><input id="wr-f" type="date" value="' + S.data.hoy + '" max="' + S.data.hoy + '"></div></div><input id="wr-n" maxlength="200" placeholder="Notas: RX/escalado, cargas, cómo partiste…">' +
+      '<button class="btn btn-primary" type="submit" id="wr-ok">Añadir resultado</button></form>' +
+      '<div class="two-btn">' + (w.TIPO !== 'Referencia' ? '<button class="btn" type="button" id="w-ref">Pasar a referencia</button>' : '') + '<button class="btn" type="button" id="w-ed">Editar</button></div>');
+    if (tipoM === 'Tiempo') enlazarTiempo('wr-t');
+    document.getElementById('wrf').onsubmit = function (ev) {
+      ev.preventDefault(); var b = document.getElementById('wr-ok'); var v = tipoM === 'Tiempo' ? leerTiempo('wr-t') : val('wr-v'); if (!v) return; b.disabled = true;
+      api({ action: 'marca', marca: { FECHA: aTxt(val('wr-f')), MOVIMIENTO: 'WOD · ' + w.NOMBRE, TIPO: tipoM, VALOR: v, UNIDAD: TIPO_UNIDAD[tipoM] || '', EVENTO: 'WOD:' + w.ID, NOTAS: val('wr-n') } })
+        .then(ok).then(function (r) { S.marcasFilas = r.marcas; prepararMarcas(r.marcas); abrirWod(w); pintarWods(); toast('Resultado guardado'); }).catch(falloApi(b));
+    };
+    var rf = document.getElementById('w-ref'); if (rf) rf.onclick = function () { rf.disabled = true; api({ action: 'wod', wod: Object.assign({}, w, { TIPO: 'Referencia' }) }).then(ok).then(function (r) { S.wods = r.wods; cerrarHoja(); pintarWods(); toast('Ahora es WOD de referencia'); }).catch(falloApi(rf)); };
+    document.getElementById('w-ed').onclick = function () { abrirFormWod(w); };
+  }
+  function abrirFormWod(w) {
+    var sel = function (id, v, l) { return '<select id="' + id + '">' + l.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select>'; };
+    abrirHoja('<div class="row"><h2>' + (w.ID ? 'Editar WOD' : 'Nuevo metcon') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<form id="wf" class="avf"><label for="w-n">Nombre</label><input id="w-n" required maxlength="80" value="' + esc(w.NOMBRE || '') + '" placeholder="Ej. FRAN, BADAJOZ 1, TEST 20′">' +
+      '<div class="two"><div><label for="w-t">Tipo</label>' + sel('w-t', w.TIPO || 'Referencia', ['Referencia', 'Guardado']) + '</div><div><label for="w-r">Resultado en</label>' + sel('w-r', w.RESULTADO || 'Tiempo', ['Tiempo', 'Rondas + reps', 'Reps', 'Kilos', 'Calorías', 'Metros']) + '</div></div>' +
+      '<label for="w-c">Metcon</label><textarea id="w-c" rows="7" required>' + esc(w.CONTENIDO || '') + '</textarea><label for="w-no">Notas</label><input id="w-no" maxlength="300" value="' + esc(w.NOTAS || '') + '">' +
+      '<button class="btn btn-primary" type="submit" id="w-ok">Guardar</button>' + (w.ID ? '<button class="btn" type="button" id="w-del">Borrar</button>' : '') + '</form>');
+    document.getElementById('wf').onsubmit = function (ev) {
+      ev.preventDefault(); var b = document.getElementById('w-ok'); b.disabled = true;
+      api({ action: 'wod', wod: { ID: w.ID || '', NOMBRE: val('w-n'), TIPO: val('w-t'), RESULTADO: val('w-r'), CONTENIDO: val('w-c'), NOTAS: val('w-no'), 'FECHA ORIGEN': w['FECHA ORIGEN'] || '' } })
+        .then(ok).then(function (r) { S.wods = r.wods; cerrarHoja(); pintarWods(); toast('WOD guardado'); }).catch(falloApi(b));
+    };
+    var del = document.getElementById('w-del');
+    if (del) del.onclick = function () { if (!confirmar(del, '¿Borrar? Toca otra vez')) return; del.disabled = true; api({ action: 'wod_borrar', id: w.ID }).then(ok).then(function (r) { S.wods = r.wods; cerrarHoja(); pintarWods(); toast('Borrado'); }).catch(falloApi(del)); };
+  }
+  /** Desde un bloque de metcon: guardarlo para hacerlo en el futuro o como WOD de referencia. */
+  function abrirGuardarWod(ref) {
+    var x = S.data.dias.filter(function (y) { return y.iso === ref.iso; })[0], b = x && x.bloques.filter(function (y) { return String(y.n) === String(ref.n); })[0];
+    if (!b) return;
+    var txt = b.partes.filter(function (p) { return p.tipo !== 'prep'; }).map(function (p) { return (p.etiqueta ? p.etiqueta + '\n' : '') + p.texto; }).join('\n\n');
+    var T = norm(txt), res = /AMRAP/.test(T) ? 'Rondas + reps' : /EVERY|EMOM/.test(T) ? 'Reps' : 'Tiempo';
+    abrirFormWod({ NOMBRE: 'FABRIK ' + NOMBRE_DIA[x.nombre].toUpperCase() + ' ' + aTxt(x.iso).slice(0, 5), TIPO: 'Referencia', RESULTADO: res, CONTENIDO: txt, 'FECHA ORIGEN': aTxt(x.iso), NOTAS: b.wod && b.wod.objetivo ? 'Objetivo: ' + b.wod.objetivo : '' });
   }
