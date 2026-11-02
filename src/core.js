@@ -82,8 +82,13 @@
     [/(?<!DB |KB |DUAL DB )SNATCH/, 'SNATCH'],
     [/(?<!DB |KB |DUAL DB )CLEAN/, 'CLEAN']
   ];
+  /** Fabrik en español o en inglés: los nombres de los levantamientos se pasan al inglés para calcular los kilos. */
+  var ES_LEV = [[/ARRANCADA DE POTENCIA|ARRANCADA POWER/g, 'POWER SNATCH'], [/CARGADA DE POTENCIA|CARGADA POWER/g, 'POWER CLEAN'], [/ARRANCADA/g, 'SNATCH'], [/CARGADA/g, 'CLEAN'],
+    [/ENVION (PARTIDO|EN TIJERA)|JERK PARTIDO/g, 'SPLIT JERK'], [/ENVION/g, 'JERK'], [/SENTADILLA TRASERA/g, 'BACK SQUAT'], [/SENTADILLA (FRONTAL|DELANTERA)/g, 'FRONT SQUAT'],
+    [/SENTADILLA (POR )?ENCIMA DE LA CABEZA|SENTADILLA OVERHEAD/g, 'OVERHEAD SQUAT'], [/PESO MUERTO/g, 'DEADLIFT'], [/PRESS (DE )?BANCA/g, 'BENCH PRESS'], [/MANCUERNAS?/g, 'DB'], [/PESAS RUSAS?|KETTLEBELLS?/g, 'KB']];
+  function enIngles(t) { var n = norm(t); ES_LEV.forEach(function (x) { n = n.replace(x[0], x[1]); }); return n; }
   function levantamiento(texto) {
-    var n = norm(texto);
+    var n = enIngles(texto);
     for (var i = 0; i < RE_LEV.length; i++) if (RE_LEV[i][0].test(n)) return RE_LEV[i][1];
     return null;
   }
@@ -119,7 +124,7 @@
   /** El movimiento que aparece en un texto (o null): marcas propias (la más larga primero), derivados, abreviaturas y los básicos. */
   function movimientoEn(texto, marcas) {
     marcas = marcas || marcasKilos();
-    var n = norm(texto).replace(/\s+/g, ' ');
+    var n = enIngles(texto).replace(/\s+/g, ' ');
     var propias = Object.keys(marcas).filter(function (k) { return LEVANTAMIENTOS.indexOf(k) < 0; }).sort(function (a, b) { return b.length - a.length; });
     var d = n.match(RE_DERIVADO);
     if (d) return d[1].replace(/\s+/g, ' ');
@@ -192,9 +197,22 @@
   }
 
   // ---------- servidor ----------
+  var CARGAS = 0;
+  function barraCarga(d) {
+    CARGAS = Math.max(0, CARGAS + d);
+    var el = document.getElementById('carga');
+    if (!el) { el = document.createElement('div'); el.id = 'carga'; el.innerHTML = '<i></i>'; el.setAttribute('role', 'progressbar'); el.setAttribute('aria-label', 'Guardando'); document.body.appendChild(el); }
+    el.classList.toggle('on', CARGAS > 0);
+  }
   function api(cuerpo, reintento) {
     var u = auth.currentUser;
     if (!u) return Promise.reject(new Error('sin_sesion'));
+    var mostrar = !reintento && !/^(semana|inicio|marcas|videos|eventos|plantillas|wods|metas|cobertura|analisis|carrera_lista|chequeos|descuentos|webs)$/.test(cuerpo.action);
+    if (mostrar) barraCarga(1);
+    var fin = function (x) { if (mostrar) barraCarga(-1); return x; }, mal = function (e) { if (mostrar) barraCarga(-1); throw e; };
+    return apiSin(cuerpo, reintento, u).then(fin, mal);
+  }
+  function apiSin(cuerpo, reintento, u) {
     return u.getIdToken(!!reintento).then(function (tok) {
       cuerpo.idToken = tok;
       return fetch(CFG.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(cuerpo) });
@@ -667,7 +685,7 @@
   }
 
   function esMetcon(b) {
-    return /METCON|\bWOD\b/.test(norm(b.titulo)) || b.partes.some(function (p) { return /^\s*METCON\s*:/.test(norm(p.texto)); });
+    return /METCON|\bWOD\b|ACONDICIONAMIENTO|CONDITIONING/.test(norm(b.titulo)) || b.partes.some(function (p) { return /^\s*METCON\s*:/.test(norm(p.texto)); });
   }
 
   function claseIntensidad(t) {
@@ -975,7 +993,9 @@
     var confOk = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
     if (d.hayFabrik && !d.fabrikCargado && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik de esta semana sin cargar en tu plan</span><button class="btn sm" type="button" data-cargar-fabrik>Cargar Fabrik</button></div>';
     else if (d.fabrikCargado && confOk && !d.extrasTxt && !d.borrador && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik cargado · faltan los extras, la carrera y los refuerzos</span><button class="btn btn-primary sm" type="button" data-cargar-extras>Cargar extras</button></div>';
-    if (d.borrador) h += '<div class="draft-banner"><span>Plan de la semana en borrador</span><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button></div>';
+    var hayPlan = (d.plan || []).some(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && /PROGRAMADO|BORRADOR/.test(norm(r.ESTADO)); });
+    if (d.borrador) h += '<div class="draft-banner"><span>' + (hayPlan && (d.plan || []).some(function (r) { return norm(r.ESTADO) === 'PROGRAMADO' && norm(r.ORIGEN) !== 'FABRIK'; }) ? 'Hay cambios sin aprobar' : 'Plan de la semana pendiente de aprobar') + '</span><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar</button></div>';
+    else if (hayPlan) h += '<div class="ok-banner"><span>✓ Plan aprobado</span><button class="btn-ghost sm" type="button" data-ir-hoja>Revisar</button></div>';
     var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
     if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Confirma la semana del ' + fechaCorta(sig) + '</b><span>Mañanas para doble, descansos y eventos. Sin esto no se programa.</span></button>';
     if (d.conf && /^Pendiente/.test(d.conf.ESTADO || '')) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Esta semana está sin confirmar</b><span>Confírmala para poder programarla.</span></button>';
@@ -1110,6 +1130,19 @@
     }
     return '<details class="variant extra"><summary><span class="v-tag">' + esc(nombreVersion(e.nombre)) + '</span><span class="v-sum">Bloque extra: ' +
       esc(b.titulo) + '</span></summary><div class="exp-body">' + b.partes.map(parte).join('') + '</div></details>';
+  }
+
+  /** Aprobar el plan: ventana con barra de progreso y «¡Listo!» al terminar. */
+  function aprobarPlan() {
+    var nb = (S.data.plan || []).filter(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }).length;
+    abrirHoja('<div class="aprob"><h2>Aprobar plan</h2><p class="hint">' + nb + ' bloque' + (nb === 1 ? '' : 's') + ' pasan a programados.</p>' +
+      '<div class="pbar"><i></i></div><p class="aprob-t" id="ap-t">Guardando…</p></div>');
+    var el = document.getElementById('ap-t'), bar = $scrim.querySelector('.pbar');
+    api({ action: 'plan_aprobar', lunes: S.data.semana }).then(ok).then(function (r) {
+      aplicarSemana(r.semana); render();
+      if (bar) bar.classList.add('fin');
+      $scrim.querySelector('.aprob').innerHTML = '<div class="aprob-ok">✓</div><h2>¡Listo!</h2><p class="hint">' + r.aprobados + ' bloques programados. Si cambias algo, te pediré aprobarlo otra vez.</p><button class="btn btn-primary" type="button" data-close>Cerrar</button>';
+    }).catch(function (e) { if (el) el.textContent = 'No se pudo aprobar: ' + mensajeError(e.message); if (bar) bar.classList.add('error'); });
   }
 
   // ---------- aviso breve en pantalla ----------
@@ -1731,12 +1764,7 @@
       }).catch(falloApi(b));
       return;
     }
-    if ((b = t.closest('[data-aprobar-plan]'))) {
-      if (!confirmar(b, '¿Aprobar? Toca otra vez')) return;
-      b.disabled = true;
-      api({ action: 'plan_aprobar', lunes: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.aprobados + ' bloques programados'); }).catch(falloApi(b));
-      return;
-    }
+    if ((b = t.closest('[data-aprobar-plan]'))) { aprobarPlan(); return; }
     if (t.closest('[data-ver-pend]')) { abrirAjustes('s-pend'); return; }
     if ((b = t.closest('[data-pend]'))) {
       if (!confirmar(b, '¿Seguro?')) return;

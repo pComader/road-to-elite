@@ -682,13 +682,14 @@
     abrirHoja('<div class="row"><h2>' + esc(b.titulo) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
       '<div class="hint">' + (fab ? 'Bloque de Fabrik: puedes moverlo de día o turno; su contenido no se toca.' : norm(b.estado) === 'SIN HUECO' ? 'No cabía en ninguna mañana libre. Elige día y turno (te digo qué choca) o pásalo a pendientes.' : 'Bloque ' + esc(b.origen || 'EXTRA') + ' · ' + esc(b.estado || '') + ' · al guardar queda con 🔒 candado: «Rehacer extras» no lo moverá.') + '</div>' +
       '<form id="ebf" class="avf"><div class="three"><div><label for="eb-f">Día</label><input id="eb-f" type="date" value="' + x.iso + '" min="' + S.data.semana + '" max="' + sumarDias(S.data.semana, 6) + '"></div>' +
-      '<div><label for="eb-t">Turno</label>' + sel('eb-t', b.turno, ['AM', 'PM']) + '</div><div><label for="eb-o">Orden</label><input id="eb-o" inputmode="decimal" value="' + esc(r.ORDEN || b.orden || '') + '"></div></div>' +
+      '<div><label for="eb-t">Turno</label>' + sel('eb-t', b.turno, ['AM', 'PM']) + '</div><div></div></div>' +
+      '<label for="eb-pos-s">Posición dentro de la sesión</label><select id="eb-pos-s"></select><input type="hidden" id="eb-o" value="' + esc(r.ORDEN || b.orden || '') + '">' +
       '<div id="eb-pos" class="pos"><div class="hint">Calculando la posición óptima…</div></div>' +
       (fab ? '' : '<label for="eb-ti">Título</label><input id="eb-ti" maxlength="120" value="' + esc(r['TÍTULO'] || b.titulo) + '">' +
         '<label for="eb-co">Contenido</label><textarea id="eb-co" rows="5">' + esc(r.CONTENIDO || '') + '</textarea>' +
         '<div class="three"><div><label for="eb-mi">Min</label><input id="eb-mi" inputmode="numeric" value="' + esc(r.MIN || '') + '"></div><div><label for="eb-in">Intensidad</label><input id="eb-in" value="' + esc(r.INTENSIDAD || '') + '"></div>' +
         '<div><label for="eb-cd">Códigos</label><input id="eb-cd" value="' + esc(r['CÓDIGOS'] || '') + '"></div></div>') +
-      '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' +
+      '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' + (/^PROGRAMADO$/.test(norm(b.estado)) || (!b.extra && !b.estado) ? '<div class="hint">Al guardar, el cambio queda pendiente de tu aprobación.</div>' : '') +
       '<div class="two-btn">' + (fab || norm(b.estado) === 'SIN HUECO' ? '' : '<button class="btn" type="button" id="eb-q">' + (norm(b.estado) === 'BORRADOR' ? 'Quitar borrador' : 'No hacer') + '</button>') +
       '<button class="btn" type="button" id="eb-pd">' + (norm(b.estado) === 'SIN HUECO' ? 'Dejar en pendientes' : 'No hacer · a pendientes') + '</button></div></form>');
     var pedir = function () {
@@ -704,10 +705,25 @@
           (esOpt ? '' : '<div class="part-lbl">Mejores huecos (interferencias, fatiga acumulada y volumen)</div>' + P.mejores.map(function (h) {
             return '<button type="button" class="pos-op" data-usar="' + h.iso + '|' + h.turno + '"><b>' + esc(h.dia) + ' ' + diaMes(h.iso) + ' · ' + h.turno + '</b><span>' + esc(h.choques.length ? '⚠ ' + h.choques.join(' · ') : h.motivos.join(' · ')) + '</span><span class="go">Usar</span></button>';
           }).join(''));
-        el.querySelectorAll('[data-usar]').forEach(function (u) { u.onclick = function () { var p = u.dataset.usar.split('|'); document.getElementById('eb-f').value = p[0]; document.getElementById('eb-t').value = p[1]; pedir(); }; });
+        el.querySelectorAll('[data-usar]').forEach(function (u) { u.onclick = function () { var p = u.dataset.usar.split('|'); document.getElementById('eb-f').value = p[0]; document.getElementById('eb-t').value = p[1]; opciones(); pedir(); }; });
       }).catch(function (e) { el.innerHTML = '<div class="hint">' + esc(mensajeError(e.message)) + '</div>'; });
     };
-    document.getElementById('eb-f').onchange = pedir; document.getElementById('eb-t').onchange = pedir;
+    /** «Orden» = en qué lugar de la sesión de ese día y turno va el bloque (antes o después de cada bloque). */
+    var opciones = function () {
+      var iso = val('eb-f'), tu = val('eb-t'), dd = S.data.dias.filter(function (y) { return y.iso === iso; })[0];
+      var otros = (dd ? dd.bloques : []).filter(function (y) { return y.turno === tu && y !== b && (y.extra ? y.id : y.idPlan) !== idb; }).sort(function (p1, p2) { return p1.orden - p2.orden; });
+      var ops = [{ t: 'Al principio', o: otros.length ? otros[0].orden - 1 : 10 }];
+      otros.forEach(function (y, k) { var sig = otros[k + 1]; ops.push({ t: 'Después de ' + (y.extra ? '+ ' : y.n + ' · ') + y.titulo, o: sig ? (y.orden + sig.orden) / 2 : y.orden + 1 }); });
+      var actual = Number(String(val('eb-o')).replace(',', '.')), elegido = 0;
+      ops.forEach(function (op, k) { if (k && actual > otros[k - 1].orden) elegido = k; });
+      if (iso !== x.iso || tu !== b.turno) elegido = ops.length - 1;   // al cambiar de día o turno, va al final de esa sesión
+      var se = document.getElementById('eb-pos-s');
+      se.innerHTML = ops.map(function (op, k) { return '<option value="' + op.o + '"' + (k === elegido ? ' selected' : '') + '>' + esc(op.t) + '</option>'; }).join('');
+      se.onchange = function () { document.getElementById('eb-o').value = se.value; };
+      if (iso !== x.iso || tu !== b.turno) document.getElementById('eb-o').value = se.value;
+    };
+    opciones();
+    document.getElementById('eb-f').onchange = function () { opciones(); pedir(); }; document.getElementById('eb-t').onchange = function () { opciones(); pedir(); };
     pedir();
     var fin = function (r2, msg) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast(msg); };
     document.getElementById('ebf').onsubmit = function (ev) {
