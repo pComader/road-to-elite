@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.10',
+  VERSION: '0.10.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1636,7 +1636,7 @@ function parsearBloques(texto) {
     var mP = l.match(/^\s*([A-Z](?:\.\d)?)\)\s*([A-ZÁÉÍÓÚÑa-z].*)$/);
     if (mP) {
       var et = mP[1] + ' · ' + mP[2].trim();
-      var t = /RANGO|MOVILIDAD|MOBILITY|ACTIVACI|ACTIVATION|WARM|CALENTAMIENTO|LOADING PROGRESSION|PROGRESION DE CARGAS|APROXIMACI/.test(norm(mP[2])) ? 'prep' : 'main';
+      var t = RE_PREP_.test(norm(mP[2])) ? 'prep' : 'main';
       nuevaParte(et, t); return;
     }
     if (/^\s*ADAPTACIONES\s*$/.test(norm(l))) { nuevaParte('Adaptaciones', 'adapt'); return; }
@@ -1983,11 +1983,15 @@ function codigosTexto_(txt, cat, enMetcon) {
   if (out.indexOf('T01') >= 0 && out.indexOf('T02') >= 0) out.splice(out.indexOf(enMetcon ? 'T01' : 'T02'), 1);
   return out;
 }
+/** Apartados de preparación (calentamiento, movilidad, activación, progresión de cargas): sus saltos no cuentan para la meta. */
+var RE_PREP_ = /RANGO|MOVILIDAD|MOBILITY|ACTIVACI|ACTIVATION|WARM|CALENTAMIENTO|LOADING PROGRESSION|PROGRESION DE CARGAS|APROXIMACI/;
 /**
  * Saltos de pliometría de un texto. Reglas:
  *  · líneas con JUMP / POGO / BOUND / HOP (no jumping jacks): «3X10», «4×5 … + 3×5 …» (suma todas), «18/15/12/9» (por set) o «10 box jumps».
  *  · comba doble (DOUBLE UNDER / DU): cuentan a 4 por salto (regla de Pablo: 4 DU = 1 salto).
  *  · si el texto dice «(≈50 saltos)» y no hay nada más, se toma ese número.
+ *  · un número suelto dentro de «N SETS / RONDAS» se multiplica por N (las series AxB y las secuencias 18/15/12/9 ya son el total).
+ *  · no cuentan los apartados de calentamiento / activación / movilidad ni las adaptaciones (solo los del trabajo principal y el metcon).
  */
 function saltosTexto_(txt) {
   var n = 0, du = 0, t = norm(txt).replace(/×/g, 'X').split('\n').map(function (l) { return bilingue_(l).split('\n').pop(); }).join('\n');
@@ -1996,9 +2000,18 @@ function saltosTexto_(txt) {
     while ((m = re.exec(l))) tot += +m[1] * +m[2];
     if (tot) return tot;
     var sq = l.match(/^\s*((?:\d+\s*\/\s*){2,}\d+)/); if (sq) return sq[1].split('/').reduce(function (a, x) { return a + (+x || 0); }, 0);   // 18/15/12/9 por set
-    var r = l.match(/^\s*\+?\s*(\d+)\s/); return r ? +r[1] : 0;
+    var r = l.match(/^\s*\+?\s*(\d+)\s/); return r ? +r[1] * (sets || 1) : 0;   // «24 DOUBLE UNDER» dentro de «4 SETS» = 96
   };
-  t.split('\n').forEach(function (l) {
+  var salta = false, sets = 0;   // dentro de un apartado de calentamiento / activación / adaptaciones: no cuenta (regla de Pablo, 03/11)
+  t.split('\n').forEach(function (l, i) {
+    var cab = /^\s*[A-Z](?:\.\d)?\s*(?:·|\))\s*\S/.test(l) || /^\s*ADAPTACIONES\s*:?\s*$/.test(l) || (/^[^\d]{3,40}:\s*$/.test(l.trim()));
+    if (i === 0 || cab) {   // la 1.ª línea es el título del bloque: si es un calentamiento, todo el bloque lo es
+      var esPrep = RE_PREP_.test(l) || /^\s*ADAPTACIONES/.test(l);
+      if (cab || esPrep) { salta = esPrep; sets = 0; if (cab) return; }
+    }
+    if (salta) return;
+    var ms = l.match(/(\d+)\s*(?:SETS?|RONDAS?|ROUNDS?)\b/);
+    if (ms && !/JUMP|POGO|BOUND|HOP|DOUBLE UNDER|\bDUS?\b/.test(l)) { sets = +ms[1]; return; }
     if (/DOUBLE UNDER|\bDUS?\b/.test(l) && !/TRIPLE/.test(l)) { du += reps(l); return; }
     if (!/JUMP|POGO|BOUND|HOP/.test(l) || /JUMPING JACK|ROPE/.test(l)) return;
     n += reps(l);
@@ -2045,7 +2058,7 @@ function cargarFabrikSemana_(lunes) {
       d.bloques.forEach(function (b, k) {
         if (!b.n) return;
         var ref = d.nombre + '·' + b.n, txt = textoBloque_(b), met = esMetconB_(b), tipo = tipoBloque_(b);
-        var cods = codigosTexto_(txt, cat, met), sal = saltosTexto_(txt);
+        var cods = codigosTexto_(txt, cat, met), sal = saltosTexto_(b.titulo + '\n' + b.partes.filter(function (p) { return p.tipo === 'main'; }).map(function (p) { return p.etiqueta + '\n' + p.texto; }).join('\n'));
         if (sal && cods.indexOf('W07') < 0) cods.push('W07');
         var cien = CIENCIA_TIPO[tipo] || CIENCIA_TIPO.otro;
         var o = { 'TÍTULO': b.titulo, CONTENIDO: recortar(b.partes.filter(function (p) { return p.tipo !== 'adapt'; }).map(function (p) { return (p.etiqueta ? p.etiqueta + '\n' : '') + p.texto; }).join('\n\n')).slice(0, 4000),
@@ -2053,6 +2066,7 @@ function cargarFabrikSemana_(lunes) {
         var x = porRef[norm(ref)];
         if (x) {   // ya cargado: se respeta dónde lo pusiste; solo se refresca el contenido si Gabi lo ha cambiado
           if (x.CONTENIDO !== o.CONTENIDO || x['TÍTULO'] !== o['TÍTULO']) { actualizarFila_(HOJAS.PLAN, x._fila, Object.assign(o, { ACTUALIZADO: ahora_() })); act++; }
+          else if (String(x.CANTIDAD == null ? '' : x.CANTIDAD) !== String(o.CANTIDAD)) { actualizarFila_(HOJAS.PLAN, x._fila, { CANTIDAD: o.CANTIDAD, 'CÓDIGOS': o['CÓDIGOS'], ACTUALIZADO: ahora_() }); act++; }   // recuento de saltos (v0.10.1)
           return;
         }
         nuevas.push(Object.assign(o, { ID: idFabrik_(lunes, d.nombre, b.n), FECHA: isoAFecha(d.iso), 'DÍA': diaDe_(d.iso), TURNO: 'PM', ORDEN: 50 + k, ORIGEN: 'FABRIK', FABRIK_REF: ref,
