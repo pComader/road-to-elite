@@ -604,14 +604,22 @@
   }
   function cap(s) { s = String(s || '').toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); }
 
+  /** Bloque de CARRERA (no ergómetro) que cuenta: sirve para marcar en azul los días en que corres. */
+  function esBloqueCarrera(b) {
+    if (/NO HACER|OCULTO|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || ''))) return false;
+    var t = norm((b.titulo || '') + ' ' + (b.codigos || ''));
+    if (/\b(ERG|ERGO|REMO|ROW|BIKE|BICI|SKI|ASSAULT|ECHO)\b/.test(norm(b.titulo || ''))) return false;
+    return b.extra && (norm(b.origen) === 'CARRERA' || /\b(W01|W02|W04|R02|R03)\b/.test(t));
+  }
   function semana(d) {
+    var hayCarrera = d.dias.some(function (x) { return x.bloques.some(esBloqueCarrera); });
     return '<nav class="week" aria-label="Días">' + d.dias.map(function (x, i) {
-      var vacio = !x.bloques.length;
-      return '<button class="day-btn' + (vacio ? ' rest' : '') + '" type="button" data-dia="' + i + '" aria-pressed="' + (i === S.dia) + '" style="--c:' + rpeColor(x.rpe) + '">' +
+      var vacio = !x.bloques.length, corre = x.bloques.some(esBloqueCarrera);
+      return '<button class="day-btn' + (vacio ? ' rest' : '') + (corre ? ' carrera' : '') + '" type="button" data-dia="' + i + '" aria-pressed="' + (i === S.dia) + '" style="--c:' + rpeColor(x.rpe) + '">' +
         '<span class="d">' + CORTO_DIA[x.nombre] + '</span><span class="n">' + diaMes(x.iso) + '</span>' +
         (x.rpe ? '<span class="r">' + esc(x.rpe) + '</span>' : x.bloques.some(function (b) { return b.extra; }) && !x.fabrik ? '<span class="r ex">EX</span>' : '<span class="r" style="visibility:hidden">–</span>') +
         '<span class="dot' + (x.iso === d.hoy ? '' : ' off') + (x.doble ? ' doble' : '') + '"></span>' + ((x.eventos || []).length ? '<span class="evdot" title="Evento"></span>' : '') + '</button>';
-    }).join('') + '</nav>';
+    }).join('') + '</nav>' + (hayCarrera ? '<div class="leyenda-sem"><i></i>Días con carrera</div>' : '');
   }
 
   // ---------- chequeo de la mañana (APP · CHEQUEO) ----------
@@ -741,8 +749,10 @@
       gr.reels.map(function (r) { return '<div class="grab-i"><b>📷 Reel · ' + esc(r.idea) + '</b>' + (r.formato ? '<span class="hint">' + esc(r.formato) + '</span>' : '') + (r.hook ? '<span class="hint">Hook: ' + esc(r.hook) + '</span>' : '') + '<span>Ángulo: ' + esc(r.angulo) + '</span></div>'; }).join('') +
       (gr.story ? '<div class="grab-i"><b>' + esc(gr.story.tipo) + '</b><span>Ángulo: ' + esc(gr.story.angulo) + '</span><span>' + esc(gr.story.materiales) + '</span></div>' : '') + '</div></details>' : '';
     var accMet = esMetcon(b) && !b.extra ? '<div class="b-acc"><button type="button" class="btn-ghost sm" data-guardar-wod="' + esc(JSON.stringify({ iso: x.iso, n: b.n })) + '">☆ Guardar WOD</button></div>' : '';
-    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
-      '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : '';
+    var idMov = b.extra ? b.id : b.idPlan, puedeMover = idMov && !/^PROPUESTA/.test(est) && !/NO HACER|OCULTO/.test(est);
+    var botonMover = puedeMover ? '<button type="button" class="btn-ghost sm" data-mover="' + esc(S.dia + '|' + idMov) + '">↔ Mover' + (b.extra && esBloqueCarrera(b) || /W03/.test(b.codigos || '') ? ' / intercambiar' : '') + '</button>' : '';
+    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
+      '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : (botonMover ? '<div class="b-acc">' + botonMover + '</div>' : '');
     var sci = (b.porque || b.ciencia || b.interf) ? '<details class="sci"><summary>Por qué aquí · ciencia · interferencias</summary><div class="exp-body">' +
       (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
       (b.ciencia ? '<div class="part-lbl">Explicación técnica, fisiológica y biológica</div><div class="prose-n">' + esc(b.ciencia) + '</div>' : '') +
@@ -1136,7 +1146,7 @@
   function aprobarPlan() {
     var nb = (S.data.plan || []).filter(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }).length;
     abrirHoja('<div class="aprob"><h2>Aprobar plan</h2><p class="hint">' + nb + ' bloque' + (nb === 1 ? '' : 's') + ' pasan a programados.</p>' +
-      '<div class="pbar"><i></i></div><p class="aprob-t" id="ap-t">Guardando…</p></div>');
+      '<div class="pbar carga"><i></i></div><p class="aprob-t" id="ap-t">Guardando…</p></div>');
     var el = document.getElementById('ap-t'), bar = $scrim.querySelector('.pbar');
     api({ action: 'plan_aprobar', lunes: S.data.semana }).then(ok).then(function (r) {
       aplicarSemana(r.semana); render();
@@ -1415,7 +1425,7 @@
     var suma = 0, maxSet = 0, porc = 0;
     for (var i = desde; i < lineas.length; i++) {
       var l = lineas[i];
-      if (/^(EVERY|EMOM|E\d+MOM|AMRAP|TIME ?CAP|REST\b|THEN|INTO|[A-Z](\.\d)?\))/.test(l)) break;
+      if (/^(EVERY|EMOM|E\d+MOM|EM\d+\s*[MN]\b|AMRAP|TIME ?CAP|REST\b|THEN|INTO|[A-Z](\.\d)?\))/.test(l)) break;
       var a = l.match(/^(\d+)\s*SETS?\s+\d/); if (a) suma += Number(a[1]);
       var b = l.match(/^SETS?\s+([\d\/]+)\s*:/); if (b) b[1].split('/').forEach(function (x) { maxSet = Math.max(maxSet, Number(x) || 0); });
       var c = l.match(/^(\d+(?:[.,]\d+)?(?:\/\d+(?:[.,]\d+)?){2,})\s*%/); if (c && !porc) porc = c[1].split('/').length;
@@ -1428,7 +1438,7 @@
     var min = [], oe = [], abc = [], alt = false;
     for (var i = desde; i < lineas.length; i++) {
       var l = lineas[i];
-      if (/^(EVERY|EMOM|E\d+MOM|AMRAP|TIME ?CAP|REST\b)/.test(l) && i > desde) break;
+      if (/^(EVERY|EMOM|E\d+MOM|EM\d+\s*[MN]\b|AMRAP|TIME ?CAP|REST\b)/.test(l) && i > desde) break;
       var m;
       if ((m = l.match(/^(\d+)\s*'\s*:\s*(.+)/))) min[Number(m[1]) - 1] = m[2];
       else if ((m = l.match(/^(ODD|EVEN|IMPAR|PAR)\s*:\s*(.+)/))) oe[/ODD|IMPAR/.test(m[1]) ? 0 : 1] = m[1] + ': ' + m[2];
@@ -1475,6 +1485,16 @@
         if (!rondas) { var mins = 0; for (var q = i + 1; q < lineas.length && !/^ADAPTACI/.test(lineas[q]); q++) if (/^\d+\s*'\s*:/.test(lineas[q])) mins++; rondas = mins || null; }
         g.push({ k: 'onoff', on: on, off: tmSeg(m[2]), rondas: rondas || null, etiqueta: /AMRAP/.test(l) ? 'AMRAP' : 'ON/OFF' });
         hayCuenta = true; setsCtx = null; continue;
+      }
+      // EM2M / EM3N … = una ventana cada N minutos: «EM2M X 6», «EM2N X6 SETS» o «6 SETS» en la línea siguiente
+      if ((m = l.match(/\bEM(\d+)\s*[MN]\b\s*(?:X\s*(\d+))?/))) {
+        var cadaM = Number(m[1]) * 60, nM = m[2] ? Number(m[2]) : null, dpM = false;
+        if (!nM) { var sM = (lineas[i + 1] || '').match(/^(\d+)\s*(?:SETS?|ROUNDS?|RONDAS?)\b\s*$/); if (sM) { nM = Number(sM[1]); dpM = true; } else nM = tmSeriesDebajo(lineas, i + 1); }
+        var gm = { k: 'intervalo', cada: cadaM, rondas: nM, etiqueta: 'EM' + m[1] + 'M' };
+        if (dpM) gm.dePie = true;
+        if (capRonda) gm.cap = capRonda;
+        var esM = tmEstaciones(lineas, i + 1); if (esM) gm.estaciones = esM;
+        g.push(gm); hayCuenta = true; setsCtx = null; continue;
       }
       // EMOM / E2MOM
       if ((m = l.match(/\bE(\d*)MOM\s*(\d+\s*'(?:\s*\d+\s*")?)/))) {
@@ -1631,9 +1651,10 @@
 
   /** Pide confirmación con un segundo toque (cambia el texto del botón). */
   function confirmar(b, texto) {
-    if (b.dataset.confirmar === '1') return true;
-    b.dataset.confirmar = '1'; b.dataset.txt = b.textContent; b.textContent = texto || '¿Seguro?';
-    setTimeout(function () { if (b.isConnected && b.dataset.confirmar === '1') { b.dataset.confirmar = ''; b.textContent = b.dataset.txt; } }, 4000);
+    // (marca propia «data-seguro»: «data-confirmar» es el botón de confirmar la semana y lo captura el manejador global)
+    if (b.dataset.seguro === '1') return true;
+    b.dataset.seguro = '1'; b.dataset.txt = b.textContent; b.textContent = texto || '¿Seguro?';
+    setTimeout(function () { if (b.isConnected && b.dataset.seguro === '1') { b.dataset.seguro = ''; b.textContent = b.dataset.txt; } }, 4000);
     return false;
   }
   function falloApi(b) { return function (er) { if (b) b.disabled = false; toast(mensajeError(er.message)); }; }
@@ -1662,7 +1683,7 @@
   var abrirAjustes = perezoso('menu', 'abrirAjustes'), renderAjustes = perezoso('menu', 'renderAjustes'), renderCobertura = perezoso('menu', 'renderCobertura'),
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
-    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
+    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
     renderHoja = perezoso('menu', 'renderHoja'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
@@ -1704,6 +1725,10 @@
         render(); toast('RPE ' + rg2.RPE + ' guardado');
       }).catch(falloApi(null));
       return;
+    }
+    if ((b = t.closest('[data-mover]'))) {
+      var mv = b.dataset.mover.split('|'), xd = S.data.dias[+mv[0]], bq = xd && xd.bloques.filter(function (y) { return (y.extra ? y.id : y.idPlan) === mv[1]; })[0];
+      if (bq) abrirEditarBloque(bq, xd); return;
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
     if ((b = t.closest('[data-visto]'))) {
@@ -1810,7 +1835,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.7';
+  var WEB_VERSION = 'web 0.8';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

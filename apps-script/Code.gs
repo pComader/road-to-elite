@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.9.3',
+  VERSION: '0.10',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -124,6 +124,8 @@ function accion_(a, body, user) {
       case 'generar_extras': var rg = generarExtras_(body.lunes); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'hoja_semana': return json_({ ok: true, filas: pintarHojaSemana_(body.lunes) });
       case 'bloque_quitar': quitarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'refuerzo':   guardarRefuerzo_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'refuerzo_borrar': var rz = listar_(HOJAS.REFUERZOS).filter(function (r) { return r.ID === String(body.id); })[0]; if (!rz) throw new Error('no_encontrado');
@@ -642,7 +644,7 @@ function avanceMetas_(ambito, per, cache) {
       var mins = function (r) { var mr = real && minReal[claveR(r)]; return mr != null ? mr : (parseFloat(String(r.MIN).replace(',', '.')) || 0) * peso(r); };
       if (tipo === 'MIN') return lista.reduce(function (a, r) { return a + (peso(r) ? mins(r) : 0); }, 0);
       if (tipo === 'MIN_GT') return lista.reduce(function (a, r) { return Math.max(a, peso(r) ? (real && minReal[claveR(r)] != null ? minReal[claveR(r)] : (parseFloat(String(r.MIN).replace(',', '.')) || 0)) : 0); }, 0);
-      if (tipo === 'SALTOS') return lista.reduce(function (a, r) { return a + (parseFloat(String(r.CANTIDAD).replace(',', '.')) || 0) * peso(r); }, 0);
+      if (tipo === 'SALTOS') return lista.reduce(function (a, r) { return a + saltosDe_(r) * peso(r); }, 0);
       var vistos = {}, n = 0;                           // COUNT: una exposición por fecha + turno
       lista.forEach(function (r) { var k = celdaIso_(r.FECHA) + '|' + r.TURNO, p = peso(r); if (p && !(vistos[k] >= p)) { n += p - (vistos[k] || 0); vistos[k] = p; } });
       return n;
@@ -979,6 +981,128 @@ function revisarAvisos() {
   PROPS.setProperty('AVISOS_HECHOS', JSON.stringify(hecho));
 }
 
+// ===================== v0.10 · MOVER E INTERCAMBIAR BLOQUES · PESTAÑA «APP · SEMANA EN BLOQUES» =====================
+HOJAS.SEMBLOQUES = 'APP · SEMANA EN BLOQUES';
+var DIAS_CORTO_ = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+var HUECOS_ = (function () { var l = []; DIAS_CORTO_.forEach(function (d) { l.push(d + ' AM'); l.push(d + ' PM'); }); return l; })();
+var CAMPOS_POSICION_ = ['FECHA', 'TURNO', 'ORDEN'];
+/** Solo cambia la posición (día, turno u orden)? Entonces lo aprobado sigue aprobado: mover es decisión tuya. */
+function soloPosicion_(o) { return Object.keys(o).every(function (k) { return CAMPOS_POSICION_.indexOf(k) >= 0 || k === 'DÍA'; }); }
+
+/** Intercambia día, turno y orden de dos bloques de la misma semana (p. ej. la Z2 larga del miércoles con la corta del martes). */
+function intercambiarBloques_(idA, idB) {
+  return bloqueo_(function () {
+    var plan = listar_(HOJAS.PLAN);
+    var a = plan.filter(function (r) { return r.ID === String(idA || ''); })[0], b = plan.filter(function (r) { return r.ID === String(idB || ''); })[0];
+    if (!a || !b || a.ID === b.ID) throw new Error('no_encontrado');
+    if (lunesDe_(celdaIso_(a.FECHA)) !== lunesDe_(celdaIso_(b.FECHA))) throw new Error('otra_semana');
+    var pos = function (r) { var iso = celdaIso_(r.FECHA); return { FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: r.TURNO === 'AM' ? 'AM' : 'PM', ORDEN: r.ORDEN }; };
+    var pa = pos(a), pb = pos(b), sello = function (r) { return norm(r.ORIGEN) === 'FABRIK' ? {} : { GENERADO: 'manual ' + ahora_() + ' (candado · intercambio)' }; };
+    actualizarFila_(HOJAS.PLAN, a._fila, Object.assign({}, pb, sello(a), { ACTUALIZADO: ahora_() }));
+    actualizarFila_(HOJAS.PLAN, b._fila, Object.assign({}, pa, sello(b), { ACTUALIZADO: ahora_() }));
+    return lunesDe_(celdaIso_(a.FECHA));
+  });
+}
+/** Mueve un bloque a «Mié PM» (desde la pestaña). Va al final de esa sesión. */
+function moverBloqueA_(id, hueco, lunes) {
+  var k = HUECOS_.indexOf(String(hueco || '').trim()); if (k < 0) throw new Error('hueco_no_valido');
+  var iso = sumarDias(lunes, Math.floor(k / 2)), turno = k % 2 ? 'PM' : 'AM';
+  var otros = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && r.TURNO === turno && r.ID !== id; });
+  var orden = otros.reduce(function (m, r) { return Math.max(m, parseFloat(String(r.ORDEN).replace(',', '.')) || 0); }, turno === 'AM' ? 9 : 49) + 1;
+  editarBloque_({ id: id, campos: { FECHA: isoAFecha(iso), TURNO: turno, ORDEN: String(orden) } });
+}
+
+/** Pinta la semana día a día (AM / PM) con todos los bloques: Fabrik + extras + carrera. */
+function pintarHojaSemana_(lunes) {
+  lunes = lunesDe_(lunes);
+  var ss = miLibro_(), sh = ss.getSheetByName(HOJAS.SEMBLOQUES) || ss.insertSheet(HOJAS.SEMBLOQUES);
+  var fin = sumarDias(lunes, 6);
+  var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO); });
+  var etq = function (r) { var d = celdaIso_(r.FECHA), k = (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7; return DIAS_CORTO_[k] + ' ' + (r.TURNO === 'AM' ? 'AM' : 'PM') + ' · ' + String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 40) + ' · #' + r.ID; };
+  var opcionesSwap = plan.map(etq);
+  var filas = [], estilos = [];   // estilos: [fila, tipo]
+  filas.push(['SEMANA EN BLOQUES · Fabrik + extras + carrera', '', '', '', '', '', '', '', '', '', '']);
+  filas.push(['Lunes de la semana →', isoAFecha(lunes), '↻ Actualizar', false, 'Cambia la fecha o marca la casilla para recargar. Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON».', '', '', '', '', '', '']);
+  filas.push(['', '', '', '', '', '', '', '', '', '', '']);
+  filas.push(['DÍA · TURNO', 'Nº', 'BLOQUE', 'TIPO', 'MIN', 'CÓDIGOS', 'ESTADO', 'MOVER A', 'INTERCAMBIAR CON', 'POR QUÉ', 'ID']);
+  estilos.push([4, 'cab']);
+  for (var k = 0; k < 7; k++) {
+    var iso = sumarDias(lunes, k);
+    ['AM', 'PM'].forEach(function (tu) {
+      var bl = plan.filter(function (r) { return celdaIso_(r.FECHA) === iso && (r.TURNO === 'AM' ? 'AM' : 'PM') === tu; })
+        .sort(function (a, b) { return (parseFloat(String(a.ORDEN).replace(',', '.')) || 0) - (parseFloat(String(b.ORDEN).replace(',', '.')) || 0); });
+      filas.push([diaDe_(iso).toUpperCase() + ' ' + isoAFecha(iso).slice(0, 5) + ' · ' + (tu === 'AM' ? '☀️ AM' : '🌙 PM'), '', bl.length ? '' : '—', '', '', '', '', '', '', '', '']);
+      estilos.push([filas.length, tu === 'AM' ? 'am' : 'pm']);
+      bl.forEach(function (r) {
+        var fab = norm(r.ORIGEN) === 'FABRIK';
+        filas.push(['', fab ? String(r.FABRIK_REF || '').split('·')[1] || '' : '+', r['TÍTULO'] || r.BLOQUE || '', r.ORIGEN || '', r.MIN || '', r['CÓDIGOS'] || '', r.ESTADO || '', '', '', String(r['POR QUÉ (cursiva)'] || '').slice(0, 300), r.ID]);
+        estilos.push([filas.length, /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03)\b/.test(r['CÓDIGOS'] || '') ? 'carrera' : /W03/.test(r['CÓDIGOS'] || '') ? 'ergo' : fab ? 'fabrik' : 'extra']);
+      });
+    });
+  }
+  sh.clear(); sh.setConditionalFormatRules([]);
+  sh.getRange(1, 1, sh.getMaxRows(), 11).clearDataValidations();
+  if (sh.getMaxRows() < filas.length + 5) sh.insertRowsAfter(sh.getMaxRows(), filas.length + 5 - sh.getMaxRows());
+  sh.getRange(1, 1, filas.length, 11).setValues(filas.map(function (r) { return r.map(celdaSegura_); }));
+  sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
+  sh.getRange(2, 2).setNumberFormat('dd/mm/yyyy').setBackground('#fff7e0');
+  sh.getRange(2, 4).insertCheckboxes();
+  sh.getRange(2, 5).setFontStyle('italic').setFontColor('#666666');
+  sh.setFrozenRows(4);
+  [130, 40, 260, 95, 50, 120, 100, 110, 260, 320, 80].forEach(function (w, j) { sh.setColumnWidth(j + 1, w); });
+  // Formato en bloque (una llamada por propiedad): mucho más rápido que fila a fila
+  var colores = { cab: ['#121212', '#ffffff'], am: ['#fff2cc', '#000000'], pm: ['#e8eaf6', '#000000'], carrera: ['#dbeafe', '#000000'], ergo: ['#e0f2fe', '#000000'], fabrik: ['#f4f5f7', '#000000'], extra: ['#fff7ed', '#000000'] };
+  var tipoFila = {}; estilos.forEach(function (e) { tipoFila[e[0]] = e[1]; });
+  var bg = [], fc = [], fw = [];
+  for (var f = 1; f <= filas.length; f++) {
+    var t = tipoFila[f], c = t ? colores[t] : ['#ffffff', '#000000'], negrita = t === 'cab' || t === 'am' || t === 'pm';
+    bg.push(new Array(11).fill(c[0])); fc.push(new Array(11).fill(c[1])); fw.push(new Array(11).fill(negrita ? 'bold' : 'normal'));
+  }
+  sh.getRange(1, 1, filas.length, 11).setBackgrounds(bg).setFontColors(fc).setFontWeights(fw);
+  var filasBloque = estilos.filter(function (e) { return /carrera|ergo|fabrik|extra/.test(e[1]); }).map(function (e) { return e[0]; });
+  if (filasBloque.length) {
+    var vMover = SpreadsheetApp.newDataValidation().requireValueInList(HUECOS_, true).setAllowInvalid(false).build();
+    var vSwap = opcionesSwap.length ? SpreadsheetApp.newDataValidation().requireValueInList(opcionesSwap.slice(0, 450), true).setAllowInvalid(false).build() : null;
+    filasBloque.forEach(function (f) { sh.getRange(f, 8).setDataValidation(vMover); if (vSwap) sh.getRange(f, 9).setDataValidation(vSwap); });
+  }
+  sh.getRange(5, 1, Math.max(1, filas.length - 4), 11).setVerticalAlignment('top').setWrap(true);
+  sh.getRange(5, 10, Math.max(1, filas.length - 4), 1).setFontStyle('italic');
+  sh.setTabColor('#2f81f7');
+  ponerConfig_('semana_bloques', "'" + lunes, 'Semana que muestra APP · SEMANA EN BLOQUES');
+  return filas.length;
+}
+/** Repinta la pestaña si está mostrando esa semana (después de mover, aprobar o generar). */
+function refrescarHojaSemana_(lunes) {
+  try {
+    var cur = isoOk_(String(leerConfig_().semana_bloques || '').trim());
+    if (!cur) return;
+    if (!lunes || cur === lunesDe_(lunes)) pintarHojaSemana_(cur);
+  } catch (e) { Logger.log('Hoja semana: ' + e); }
+}
+/** Al abrir el Sheet (disparador instalable): la pestaña siempre al día, también con lo que hayas movido desde la app. */
+function alAbrirHoja() {
+  var cur = isoOk_(String(leerConfig_().semana_bloques || '').trim()), hoyL = lunesDe_(hoyIso_());
+  pintarHojaSemana_(!cur || cur < hoyL ? hoyL : cur);
+}
+/** Disparador instalable al editar el Sheet: cambios en la pestaña de la semana. */
+function alEditarHoja(e) {
+  try {
+    var sh = e.range.getSheet(); if (sh.getName() !== HOJAS.SEMBLOQUES) return;
+    var f = e.range.getRow(), c = e.range.getColumn(), v = e.range.getValue();
+    var lunes = celdaIso_(sh.getRange(2, 2).getValue()) || hoyIso_();
+    if (f === 2 && (c === 2 || c === 4)) { pintarHojaSemana_(lunes); return; }
+    if (f < 5 || (c !== 8 && c !== 9) || !v) return;
+    var id = String(sh.getRange(f, 11).getValue() || '').trim(); if (!id) return;
+    SpreadsheetApp.getActive().toast('Moviendo…', 'Road To Elite', 3);
+    if (c === 8) moverBloqueA_(id, v, lunesDe_(lunes));
+    else { var m = String(v).match(/#([\w-]+)\s*$/); if (m) intercambiarBloques_(id, m[1]); }
+    MEMO = null;
+    pintarHojaSemana_(lunes);
+    SpreadsheetApp.getActive().toast(c === 8 ? 'Movido a ' + v : 'Intercambiados', 'Road To Elite', 4);
+  } catch (err) { try { SpreadsheetApp.getActive().toast('No se pudo: ' + (err && err.message || err), 'Road To Elite', 6); } catch (x) {} }
+}
+function menuSemanaBloques() { pintarHojaSemana_(leerConfig_().semana_bloques || lunesDe_(hoyIso_())); SpreadsheetApp.getActive().getSheetByName(HOJAS.SEMBLOQUES).activate(); }
+
 function colLetra_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
 /** Crea o completa las pestañas de la app con su formato. No borra datos. */
@@ -1244,6 +1368,10 @@ function configurar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['copiarVideosGabi', 'backupSemanal', 'cierreSemanal', 'domingoNoche'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('domingoNoche').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(15).inTimezone(CONFIG.ZONA).create();   // termina antes del informe de las 23:30
   Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
+  // Pestaña «APP · SEMANA EN BLOQUES»: mover/intercambiar desde el Sheet y repintarla al abrirlo
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['alEditarHoja', 'alAbrirHoja'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('alEditarHoja').forSpreadsheet(CONFIG.SHEET_ID).onEdit().create();
+  ScriptApp.newTrigger('alAbrirHoja').forSpreadsheet(CONFIG.SHEET_ID).onOpen().create();
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarAvisos') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('revisarAvisos').timeBased().everyHours(1).create();
   // v0.9: Fabrik → plan el domingo a las 23:15 y Google Calendar cada hora
@@ -1263,6 +1391,7 @@ function configurar() {
   analizarCarrera_();
   var est = estructura_(fabrik_());
   Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
+  try { pintarHojaSemana_(lunesDe_(hoyIso_())); Logger.log('OK · Pestaña «APP · SEMANA EN BLOQUES» pintada'); } catch (e) { Logger.log('AVISO · Semana en bloques: ' + e); }
   Logger.log('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { return hojaMia_(HOJAS[k]).getName(); }).join(', '));
   Logger.log('OK · Vídeos en tu copia: ' + leerVideos_().length);
 }
@@ -1854,15 +1983,33 @@ function codigosTexto_(txt, cat, enMetcon) {
   if (out.indexOf('T01') >= 0 && out.indexOf('T02') >= 0) out.splice(out.indexOf(enMetcon ? 'T01' : 'T02'), 1);
   return out;
 }
+/**
+ * Saltos de pliometría de un texto. Reglas:
+ *  · líneas con JUMP / POGO / BOUND / HOP (no jumping jacks): «3X10», «4×5 … + 3×5 …» (suma todas), «18/15/12/9» (por set) o «10 box jumps».
+ *  · comba doble (DOUBLE UNDER / DU): cuentan a 4 por salto (regla de Pablo: 4 DU = 1 salto).
+ *  · si el texto dice «(≈50 saltos)» y no hay nada más, se toma ese número.
+ */
 function saltosTexto_(txt) {
-  var n = 0, t = norm(txt).split('\n').map(function (l) { return bilingue_(l).split('\n').pop(); }).join('\n');
+  var n = 0, du = 0, t = norm(txt).replace(/×/g, 'X').split('\n').map(function (l) { return bilingue_(l).split('\n').pop(); }).join('\n');
+  var reps = function (l) {
+    var tot = 0, m, re = /(\d+)\s*X\s*(\d+)/g;
+    while ((m = re.exec(l))) tot += +m[1] * +m[2];
+    if (tot) return tot;
+    var sq = l.match(/^\s*((?:\d+\s*\/\s*){2,}\d+)/); if (sq) return sq[1].split('/').reduce(function (a, x) { return a + (+x || 0); }, 0);   // 18/15/12/9 por set
+    var r = l.match(/^\s*\+?\s*(\d+)\s/); return r ? +r[1] : 0;
+  };
   t.split('\n').forEach(function (l) {
+    if (/DOUBLE UNDER|\bDUS?\b/.test(l) && !/TRIPLE/.test(l)) { du += reps(l); return; }
     if (!/JUMP|POGO|BOUND|HOP/.test(l) || /JUMPING JACK|ROPE/.test(l)) return;
-    var m = l.match(/(\d+)\s*X\s*(\d+)/); if (m) { n += +m[1] * +m[2]; return; }
-    var sq = l.match(/^\s*((?:\d+\s*\/\s*){2,}\d+)/); if (sq) { n += sq[1].split('/').reduce(function (a, x) { return a + (+x || 0); }, 0); return; }   // 18/15/12/9 por set
-    var r = l.match(/^\s*(\d+)\s/); if (r) n += +r[1];
+    n += reps(l);
   });
-  return n;
+  if (!n && !du) { var ex = t.match(/(\d+)\s*SALTOS/); if (ex) n = +ex[1]; }
+  return Math.round(n + du / 4);
+}
+/** Saltos de una fila del plan: CANTIDAD si la pusiste; si no, los que se leen en su contenido. */
+function saltosDe_(r) {
+  var c = parseFloat(String(r.CANTIDAD == null ? '' : r.CANTIDAD).replace(',', '.'));
+  return c > 0 ? c : saltosTexto_((r['TÍTULO'] || '') + '\n' + (r.CONTENIDO || ''));
 }
 function textoBloque_(b) { return b.titulo + '\n' + (b.partes || []).map(function (p) { return p.etiqueta + '\n' + p.texto; }).join('\n'); }
 function tipoBloque_(b) {
@@ -2125,7 +2272,8 @@ function generarExtras_(lunes, opts) {
   var deCatalogo = function (c, extra) {
     var e = cat[c] || {};
     return Object.assign({ ORIGEN: e.ORIGEN || 'EXTRA', 'TÍTULO': e.NOMBRE || c, CONTENIDO: (e.CONTENIDO || '') + (e['DATOS A REGISTRAR'] ? '\n\nRegistra: ' + e['DATOS A REGISTRAR'] : ''), INTENSIDAD: e.INTENSIDAD || '',
-      MIN: e.MIN || 10, 'CÓDIGOS': c, 'POR QUÉ (cursiva)': e['POR QUÉ (cursiva)'] || '', 'CIENCIA (técnica · fisiología · biología)': e['CIENCIA (técnica · fisiología · biología)'] || '', INTERFERENCIAS: e.INTERFERENCIAS || '' }, extra || {});
+      MIN: e.MIN || 10, 'CÓDIGOS': c, 'POR QUÉ (cursiva)': e['POR QUÉ (cursiva)'] || '', 'CIENCIA (técnica · fisiología · biología)': e['CIENCIA (técnica · fisiología · biología)'] || '', INTERFERENCIAS: e.INTERFERENCIAS || '',
+      CANTIDAD: saltosTexto_(e.CONTENIDO || '') || '' }, extra || {});
   };
   var candDe = function (o) { return candidatoDe_(o, cat); };
   var huecoCalidad = [];
@@ -2178,6 +2326,36 @@ function generarExtras_(lunes, opts) {
     var o = deCatalogo(c); o._prio = 'mes'; cola.push({ o: o }); mesEnCola++;
     colaMes[i].resta--; if (colaMes[i].resta > 0 && colaMes[i].urg > 1) i--;
   }
+  // 6.3b · SALTOS de la semana (meta tipo SALTOS, W07): nunca se quedan sin cubrir.
+  //   Regla de Pablo: o una sesión de pliometría aparte, o comba doble metida en un estímulo del mes a 4 DU por cada salto que falte.
+  metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || '').toUpperCase() === 'SALTOS'; }).forEach(function (m) {
+    var meta = parseFloat(String(m.META).replace(',', '.')) || 0, cods = codigosDe_(m['CÓDIGOS']);
+    if (!meta) return;
+    var tiene = function (r) { return codigosDe_(r['CÓDIGOS']).some(function (c) { return cods.indexOf(c) >= 0; }); };
+    var enPlan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && !(sim && esAuto(r)) && tiene(r); });
+    var hay = enPlan.concat(nuevos).filter(tiene).reduce(function (a, r) { return a + saltosDe_(r); }, 0) + cola.filter(function (x) { return tiene(x.o); }).reduce(function (a, x) { return a + saltosDe_(x.o); }, 0);
+    var falta = Math.ceil(meta - hay);
+    if (falta <= 0) return;
+    var anfitrion = falta <= 50 ? cola.filter(function (x) { return x.o._prio === 'mes' && norm(x.o.ORIGEN) !== 'CARRERA'; })[0] : null;
+    if (anfitrion) {
+      var du = falta * 4, o = anfitrion.o, base = saltosDe_(o) || 0;
+      o.CONTENIDO = (o.CONTENIDO || '') + '\n\n+ ' + du + ' DOUBLE UNDERS repartidos en series sin fallo (cubren los ' + falta + ' saltos que faltan esta semana: 4 DU = 1 salto).';
+      o.CANTIDAD = base + falta;
+      o['CÓDIGOS'] = codigosDe_(o['CÓDIGOS']).concat(cods.filter(function (c) { return codigosDe_(o['CÓDIGOS']).indexOf(c) < 0; })).join('|');
+      o.MIN = (parseFloat(o.MIN) || 10) + Math.ceil(du / 60) + 2;
+      o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], 'Lleva ' + du + ' DU para cubrir los ' + falta + ' saltos de pliometría que faltaban (regla 4×).'].filter(Boolean).join(' ');
+      log.push('Saltos: +' + du + ' DU dentro de «' + o['TÍTULO'] + '» (cubren ' + falta + ')');
+    } else {
+      // Hasta 50: box jump + broad jump de 5 en 5. Lo que pase de 50, en pogos de 10 (más baratos para el tendón y el SNC).
+      var pogo = falta > 50 ? Math.ceil((falta - 50) / 10) : 0, series = Math.max(2, Math.ceil(Math.min(falta, 50) / 5)), cajon = Math.ceil(series / 2), largo = series - cajon, total = pogo * 10 + series * 5;
+      var o2 = deCatalogo(cods[0] || 'W07', {
+        'TÍTULO': 'Pliometría · ' + total + ' saltos', CANTIDAD: total, MIN: Math.max(10, Math.round(total / 5)),
+        CONTENIDO: (pogo ? pogo + '×10 pogo jumps (rebote rápido, rodilla casi bloqueada) + ' : '') + cajon + '×5 box jump (bajando del cajón, aterrizaje en 2″) + ' + largo + '×5 broad jump con pausa de 2″ al caer · 60–90″ entre series. ' + total + ' saltos de calidad: si la técnica cae, para.',
+        'POR QUÉ (cursiva)': 'Faltaban ' + falta + ' saltos para la meta semanal de ' + meta + '. Antes de pierna pesada o haltero, nunca después.' });
+      o2._prio = 'semana'; cola.unshift({ o: o2 });
+      log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
+    }
+  });
   // 6.4 · endurance corta (≤35′) por la mañana: se le suma 10–15′ de calidad, lo que más falte (orden de la cola)
   huecoCalidad.forEach(function (hq) {
     for (var k = 0; k < cola.length; k++) {
@@ -2321,11 +2499,15 @@ function editarBloque_(b) {
   if (!x) throw new Error('no_encontrado');
   var o = permitidas_(b.campos || {}, CAMPOS_EDITABLES);
   if (norm(x.ORIGEN) === 'FABRIK') o = permitidas_(o, ['FECHA', 'TURNO', 'ORDEN', 'CÓDIGOS', 'POR QUÉ (cursiva)']);   // el contenido de Fabrik no se toca
+  // ¿Solo cambia de sitio? (lo demás llega igual que estaba) → lo aprobado sigue aprobado: moverlo es decisión tuya
+  Object.keys(o).forEach(function (k) { if (CAMPOS_POSICION_.indexOf(k) < 0 && String(o[k]) === String(x[k] == null ? '' : x[k])) delete o[k]; });
+  var soloMover = soloPosicion_(o);
   if (o.FECHA) { var iso = celdaIso_(o.FECHA); if (!iso) throw new Error('fecha_no_valida'); o.FECHA = isoAFecha(iso); o['DÍA'] = diaDe_(iso); }
   if (o.TURNO) o.TURNO = o.TURNO === 'AM' ? 'AM' : 'PM';
   if (o['TÍTULO']) o.BLOQUE = o['TÍTULO'];
   if (x.ESTADO === 'SIN HUECO' && o.FECHA) o.ESTADO = 'BORRADOR';
-  if (x.ESTADO === 'PROGRAMADO') o.ESTADO = 'BORRADOR';   // un cambio sobre lo aprobado se vuelve a aprobar (sigue contando en las metas)
+  if (x.ESTADO === 'PROGRAMADO' && !soloMover) o.ESTADO = 'BORRADOR';   // cambiar el CONTENIDO de lo aprobado se vuelve a aprobar (sigue contando en las metas)
+  if (o['CÓDIGOS'] && /W07/.test(o['CÓDIGOS']) && !o.CANTIDAD && !(parseFloat(x.CANTIDAD) > 0)) o.CANTIDAD = saltosTexto_((o['TÍTULO'] || x['TÍTULO'] || '') + '\n' + (o.CONTENIDO || x.CONTENIDO || '')) || '';
   if (norm(x.ORIGEN) !== 'FABRIK') o.GENERADO = 'manual ' + ahora_() + ' (candado)';   // lo que tocas a mano no lo vuelve a mover «Rehacer extras»
   o.ACTUALIZADO = ahora_();
   bloqueo_(function () { actualizarFila_(HOJAS.PLAN, x._fila, o); });
@@ -2481,7 +2663,8 @@ function subirEventosACal_() { listar_(HOJAS.EVENTOS).forEach(function (r) { if 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Road To Elite')
     .addItem('Cargar Fabrik · semana siguiente', 'menuCargarFabrikSiguiente').addItem('Cargar Fabrik · esta semana', 'menuCargarFabrikActual')
-    .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addToUi();
+    .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
+    .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
 function menuCargarFabrikActual() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(lunesDe_(hoyIso_())))); }

@@ -280,9 +280,10 @@
     if (R.mini) {   // «Ver WOD»: el timer sigue corriendo en una barra pequeña abajo
       el.className = 'reloj mini ' + (p.prep ? 'prep' : p.k) + (R.enPausa ? ' pausado' : '');
       var rdm = tmRonda(p);
-      el.innerHTML = '<button type="button" class="rl-mini" data-rl="max" aria-label="Volver al timer"><span class="rl-t">' + tmReloj(seg, color) + '</span>' +
-        '<span class="rl-mtxt"><b class="' + color + '">' + esc(p.tit) + '</b><small>' + esc((rdm ? 'Ronda ' + rdm.n + '/' + rdm.de + ' · ' : '') + R.r.titulo) + '</small></span><span class="rl-mgo">Volver ▲</span></button>' +
-        (p.dur ? '<div class="rl-bar ' + color + '"><i style="width:' + (prog * 100) + '%"></i></div>' : '');
+      // Igual que la app de Gabi: barra baja con el reloj, lo que toca y «Timer ›», y la pausa a un toque
+      el.innerHTML = '<button type="button" class="rl-mini-b" data-rl="max" aria-label="Volver al timer"><span class="rl-t" role="timer" aria-live="off">' + tmReloj(seg, color) + '</span>' +
+        '<span class="rl-mini-tx"><b class="' + color + '">' + esc(p.tit) + '</b>' + (rdm ? '<span>Ronda ' + rdm.n + '/' + rdm.de + '</span>' : '') + '</span><span class="rl-mini-go">Timer ›</span></button>' +
+        '<button type="button" class="rl-mini-p" data-rl="pausa" aria-label="' + (R.enPausa ? 'Seguir' : 'Pausa') + '">' + (R.enPausa ? '▶' : '❚❚') + '</button>';
       return;
     }
     el.className = 'reloj ' + (p.prep ? 'prep' : p.k) + (R.enPausa ? ' pausado' : '');
@@ -307,7 +308,7 @@
       '<button class="btn" type="button" data-rl="salir">Salir</button></div></div>';
   }
   // ---------- la ronda actual con sus movimientos y kilos; la siguiente, en gris ----------
-  var TM_CAB = /^(METCON|AMRAP|EMOM|E\d+MOM|EVERY|TIME\s*CAP|FOR\s*TIME|REST|DESCANSA|INTO|THEN|ODD|EVEN|\*|SET\s*\d|SETS?\b|RONDAS?\b|VENTANA|PARTNER|SI NO)/;
+  var TM_CAB = /^(METCON|AMRAP|EMOM|E\d+MOM|EM\d+\s*[MN]\b|EVERY|TIME\s*CAP|FOR\s*TIME|REST|DESCANSA|INTO|THEN|ODD|EVEN|\*|SET\s*\d|SETS?\b|RONDAS?\b|VENTANA|PARTNER|SI NO)/;
   function tmMovimientos(texto) {
     var out = [], fin = false;
     String(texto || '').split('\n').forEach(function (raw) {
@@ -336,10 +337,14 @@
       var kg = cargaLinea(l, ctx), pl = kg ? discosLado(kg) : '';
       return '<li>' + pizarra(l, ctx) + (kg && !/\d\s*%/.test(l) ? ' <span class="kg">' + (enLb() ? aLb(kg) + ' lb' : String(kg).replace('.', ',') + ' kg') + '</span>' : '') + (pl ? '<small class="rl-disc">🏋 ' + esc(pl) + '</small>' : '') + '</li>';
     };
-    var varia = movs.some(function (l) { return tmLineaRonda(l, 1) !== tmLineaRonda(l, 2); });
-    var act = movs.map(function (l) { return tmLineaRonda(l, k); }), sigR = (de > k || (varia && !rd)) ? movs.map(function (l) { return tmLineaRonda(l, k + 1); }) : null;
-    return '<div class="rl-wod"><div class="rl-wt">' + (rd ? 'Ronda ' + k + ' de ' + de : 'El WOD') + '</div><ul>' + act.map(fila).join('') + '</ul>' +
-      (sigR ? '<div class="rl-wt gris">Siguiente' + (rd ? ' · ronda ' + (k + 1) : '') + '</div><ul class="gris">' + sigR.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    // Como la app de Gabi: solo mientras se trabaja (no en «prepárate» ni en descansos), lo que toca ahora y, si cambia, lo siguiente.
+    if (p.prep || p.k === 'rest') return '';
+    var act = movs.map(function (l) { return tmLineaRonda(l, k); }).slice(0, 8);
+    var sigR = de > k ? movs.map(function (l) { return tmLineaRonda(l, k + 1); }).slice(0, 8) : null;
+    if (sigR && sigR.join('|') === act.join('|')) sigR = null;
+    var div = function (l) { return '<div>' + fila(l).replace(/^<li>|<\/li>$/g, '') + '</div>'; };
+    return '<div class="rl-mov" aria-label="Lo que toca"><div class="rl-mov-act">' + act.map(div).join('') + '</div>' +
+      (sigR ? '<div class="rl-mov-sig"><span>Siguiente</span>' + sigR.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>' : '') + '</div>';
   }
   function tmCerrar() {
     var R = TM.run; if (R) { clearInterval(R.int); tmWake(false); try { if (R.ac) R.ac.close(); } catch (e) {} }

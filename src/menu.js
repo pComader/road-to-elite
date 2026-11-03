@@ -227,7 +227,9 @@
         (tab === 'semana' ? ' · se reinicia el domingo' : ' · se cierra el último domingo del mes') + '</div>';
       html += '<div class="hint leyenda"><i class="lg prog"></i> programado <i class="lg real"></i> hecho</div>';
       if (falta.length) html += '<section class="por-cubrir"><div class="part-lbl">Por cubrir</div>' + falta.map(function (m) {
-        return '<div class="pc-i">' + esc(m.estimulo) + ' [' + num1(m.programado) + '/' + num1(m.meta) + unidadMeta(m) + ']</div>'; }).join('') + '</section>';
+        var resto = Math.max(0, Math.ceil(m.meta - m.programado));
+        return '<div class="pc-i">' + esc(m.estimulo) + ' [' + num1(m.programado) + '/' + num1(m.meta) + unidadMeta(m) + ']' +
+          (m.tipo === 'SALTOS' && resto ? '<small class="hint"> · faltan ' + resto + ': sesión de pliometría o ' + resto * 4 + ' DU dentro de otro bloque</small>' : '') + '</div>'; }).join('') + '</section>';
       html += tarjetasMetas(B.metas || []);
       html += '<button class="btn" type="button" id="meta-nueva">＋ Nueva meta ' + (tab === 'semana' ? 'semanal' : 'mensual') + '</button>';
     }
@@ -689,7 +691,8 @@
         '<label for="eb-co">Contenido</label><textarea id="eb-co" rows="5">' + esc(r.CONTENIDO || '') + '</textarea>' +
         '<div class="three"><div><label for="eb-mi">Min</label><input id="eb-mi" inputmode="numeric" value="' + esc(r.MIN || '') + '"></div><div><label for="eb-in">Intensidad</label><input id="eb-in" value="' + esc(r.INTENSIDAD || '') + '"></div>' +
         '<div><label for="eb-cd">Códigos</label><input id="eb-cd" value="' + esc(r['CÓDIGOS'] || '') + '"></div></div>') +
-      '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' + (/^PROGRAMADO$/.test(norm(b.estado)) || (!b.extra && !b.estado) ? '<div class="hint">Al guardar, el cambio queda pendiente de tu aprobación.</div>' : '') +
+      htmlIntercambio(b, x, idb) +
+      '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' + (/^PROGRAMADO$/.test(norm(b.estado)) || (!b.extra && !b.estado) ? '<div class="hint">Mover de día, turno u orden mantiene el bloque aprobado. Si cambias su contenido, vuelve a borrador para que lo apruebes.</div>' : '') +
       '<div class="two-btn">' + (fab || norm(b.estado) === 'SIN HUECO' ? '' : '<button class="btn" type="button" id="eb-q">' + (norm(b.estado) === 'BORRADOR' ? 'Quitar borrador' : 'No hacer') + '</button>') +
       '<button class="btn" type="button" id="eb-pd">' + (norm(b.estado) === 'SIN HUECO' ? 'Dejar en pendientes' : 'No hacer · a pendientes') + '</button></div></form>');
     var pedir = function () {
@@ -726,6 +729,13 @@
     document.getElementById('eb-f').onchange = function () { opciones(); pedir(); }; document.getElementById('eb-t').onchange = function () { opciones(); pedir(); };
     pedir();
     var fin = function (r2, msg) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast(msg); };
+    $scrim.querySelectorAll('[data-swap]').forEach(function (bt) {
+      bt.onclick = function () {
+        if (!confirmar(bt, '¿Intercambiar? Toca otra vez')) return;
+        bt.disabled = true;
+        api({ action: 'intercambiar', a: idb, b: bt.dataset.swap, ver: S.data.semana }).then(ok).then(function (r2) { fin(r2, 'Intercambiados: cada uno ocupa el día y turno del otro'); }).catch(falloApi(bt));
+      };
+    });
     document.getElementById('ebf').onsubmit = function (ev) {
       ev.preventDefault(); var bt = document.getElementById('eb-ok'); bt.disabled = true;
       var c = { FECHA: aTxt(val('eb-f')), TURNO: val('eb-t'), ORDEN: val('eb-o') };
@@ -737,6 +747,21 @@
     if (norm(b.estado) === 'SIN HUECO') document.getElementById('eb-pd').onclick = function () {
       var bt = this; bt.disabled = true; api({ action: 'bloque_quitar', id: idb, pendiente: true, ver: S.data.semana }).then(ok).then(function (r2) { fin(r2, 'En pendientes: se te propondrá la semana que viene'); }).catch(falloApi(bt));
     }; else document.getElementById('eb-pd').onclick = function () { cerrarHoja(); abrirNoHacer({ id: idb, fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }); };
+  }
+  /** Carrera y ergómetros: se pueden intercambiar entre sí a lo largo de la semana (día, turno y orden). */
+  function esCarreraOErgo(b) {
+    var t = norm((b.titulo || '') + ' ' + (b.codigos || '')), c = String(b.codigos || '');
+    return norm(b.origen) === 'CARRERA' || /\b(W01|W02|W03|W04|R02|R03)\b/.test(c) || /\b(Z2|ERG|ERGO|REMO|ROW|BIKE|SKI|RODAJE|SERIES)\b/.test(t) && b.extra;
+  }
+  function htmlIntercambio(b, x, idb) {
+    if (!b.extra || !esCarreraOErgo(b)) return '';
+    var otros = [];
+    S.data.dias.forEach(function (y) { y.bloques.forEach(function (z) {
+      if (z === b || !z.extra || z.id === idb || !esCarreraOErgo(z) || /NO HACER|OCULTO|SUSTITUIDO|SIN HUECO|PROPUESTA/.test(norm(z.estado || ''))) return;
+      otros.push('<button type="button" class="pos-op" data-swap="' + esc(z.id) + '"><b>⇄ ' + esc(NOMBRE_DIA[y.nombre] + ' ' + diaMes(y.iso) + ' · ' + z.turno) + '</b><span>' + esc(z.titulo) + (z.min ? ' · ' + esc(z.min) + '′' : '') + '</span><span class="go">Cambiar</span></button>');
+    }); });
+    if (!otros.length) return '';
+    return '<div class="part-lbl">Intercambiar con otra sesión de carrera o ergómetro</div><div class="hint">Cada uno pasa al día, turno y orden del otro. Sigue aprobado.</div><div class="mover-sel">' + otros.join('') + '</div>';
   }
   function abrirPedirClaude(lunes) {
     abrirHoja('<div class="row"><h2>Pedir a Claude</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +

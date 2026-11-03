@@ -910,10 +910,39 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 #carga.on{opacity:1}
 #carga i{position:absolute;top:0;bottom:0;width:40%;background:var(--accent);animation:carga 1.1s ease-in-out infinite}
 @keyframes carga{0%{left:-40%}100%{left:100%}}
-.pbar{height:8px;border-radius:8px;background:var(--line);overflow:hidden;position:relative;margin:14px 0}
-.pbar i{position:absolute;top:0;bottom:0;width:35%;border-radius:8px;background:var(--accent);animation:carga 1s ease-in-out infinite}
-.pbar.fin i{animation:none;left:0;width:100%;background:var(--ok,#3fb950)}
-.pbar.error i{animation:none;left:0;width:100%;background:var(--danger,#e5534b)}
+.pbar.carga{height:8px;border-radius:8px;background:var(--line);overflow:hidden;position:relative;margin:14px 0}
+.pbar.carga i{position:absolute;top:0;bottom:0;width:35%;border-radius:8px;background:var(--accent);animation:carga 1s ease-in-out infinite}
+.pbar.carga.fin i{animation:none;left:0;width:100%;background:var(--ok,#3fb950)}
+.pbar.carga.error i{animation:none;left:0;width:100%;background:var(--danger,#e5534b)}
 .aprob{text-align:center;padding:8px 0}
 .aprob-ok{width:64px;height:64px;margin:4px auto 8px;border-radius:50%;display:grid;place-items:center;font-size:34px;font-weight:800;color:#fff;background:var(--ok,#3fb950)}
 .ok-banner{display:flex;align-items:center;gap:10px;justify-content:space-between;border:1px solid color-mix(in srgb,var(--ok,#3fb950) 45%,transparent);background:color-mix(in srgb,var(--ok,#3fb950) 10%,var(--surface));border-radius:14px;padding:8px 12px;margin:8px 0;font-weight:700}
+
+/* ===== web 0.8 · barras fijas, días de carrera, marcador como la app de Gabi, mover/intercambiar ===== */
+.pbar.dbl i{animation:none}
+.day-btn.carrera{box-shadow:inset 0 0 0 2px #2f81f7}
+.day-btn.carrera[aria-pressed=true]{box-shadow:inset 0 0 0 3px #2f81f7}
+.leyenda-sem{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:-4px 0 6px}
+.leyenda-sem i{width:12px;height:12px;border-radius:4px;box-shadow:inset 0 0 0 2px #2f81f7;display:inline-block}
+.rl-mov{width:100%;max-width:560px;display:grid;gap:8px;text-align:left;margin-top:4px}
+.rl-mov-act{background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:10px 14px;font:700 clamp(16px,4.4vw,22px)/1.3 var(--f-board);color:#f1f3f5;display:grid;gap:2px}
+.rl-mov-sig{border:1px dashed #333;border-radius:12px;padding:8px 14px;font:600 clamp(13px,3.6vw,16px)/1.3 var(--f-board);color:#7d848b;display:grid;gap:2px}
+.rl-mov-sig>span{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#5f666d}
+.rl-mov .kg{margin-left:6px;padding:0 6px;border-radius:6px;background:#2a1715;color:#ff8b80;font-weight:800}
+.rl-mov-sig .kg{background:#1d1d1d;color:#9aa0a6}
+.rl-mov .rl-disc{display:block;font-size:12px;color:#9aa0a6;font-weight:600}
+.reloj.mini{inset:auto 0 0;height:auto;display:flex;flex-direction:row;align-items:stretch;gap:0;padding:0 max(8px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(8px,env(safe-area-inset-left,0px));z-index:25;border-top:1px solid #2a2a2a;box-shadow:0 -6px 18px #00000059}
+.rl-mini-b{all:unset;box-sizing:border-box;flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:10px 6px;cursor:pointer}
+.rl-mini-b .rl-t{flex:0 0 auto;width:auto;height:auto;display:block;max-width:none}
+.rl-mini-b .rl-t svg{height:34px!important;width:auto!important;max-width:none!important}
+.rl-mini-tx{flex:1;min-width:0;display:flex;flex-direction:column;font:700 14px/1.2 var(--f-board);color:#e9ecef;overflow:hidden}
+.rl-mini-tx b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase}
+.rl-mini-tx b.rojo{color:var(--rojo)}
+.rl-mini-tx b.verde{color:var(--verde)}
+.rl-mini-tx span{color:#9aa0a6;font-weight:600}
+.rl-mini-go{font:700 14px var(--f-board);color:#fff;background:#c43a28;border-radius:999px;padding:8px 12px;white-space:nowrap;align-self:center}
+.rl-mini-p{all:unset;cursor:pointer;width:48px;display:flex;align-items:center;justify-content:center;color:#e9ecef;font-size:18px}
+.rl-mini-b:focus-visible,.rl-mini-p:focus-visible{outline:2px solid #fff;outline-offset:-2px;border-radius:10px}
+@media (orientation:landscape) and (max-height:520px){.rl-mov{display:none}}
+.mover-sel{display:grid;gap:6px;margin:6px 0}
+.mover-sel .pos-op{text-align:left}
