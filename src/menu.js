@@ -24,6 +24,7 @@
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Cobertura y carrera<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-extras"><span class="set-ico">⊕</span>Extras semana en curso<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-calendario"><span class="set-ico">▦</span>Calendario de eventos<span class="go">›</span></button>';
     var pend = (d.pendientes || []);
     html += seccion('s-pend', 'Pendientes', htmlPendientes(pend), pend.length ? String(pend.length) : '', '↺');
@@ -51,6 +52,7 @@
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     $app.querySelectorAll('[data-unidad]').forEach(function (b) { b.onclick = function () { guardar('rte-unidad', b.dataset.unidad); S._abrir = 's-unid'; render(); toast('Cargas en ' + b.dataset.unidad); }; });
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
     if (S._abrir === 's-wods') cargarWods();
     document.getElementById('s-desc').addEventListener('toggle', function () { if (this.open) cargarDescuentos(); });
@@ -192,7 +194,7 @@
     if ((A.calidad || []).length) h += '<div class="part-lbl">Últimas sesiones de calidad</div>' + A.calidad.slice().reverse().map(function (x) {
       return '<div class="run-c"><div class="run-h"><b>' + esc(x.sesion || x.tipo) + '</b><span class="tag">' + esc(x.tipo) + '</span></div><div class="hint">' + fechaCorta(x.fecha) +
         (x.series ? ' · ' + esc(x.series) : '') + ' · parciales: ' + esc(x.cumple || '—') + (x.rpe ? ' · RPE ' + esc(x.rpe) : '') + '</div></div>'; }).join('');
-    return h + '<div class="hint">Actualizado ' + esc(A.actualizado || '') + ' · también en la pestaña APP · ANÁLISIS CARRERA del Sheet.</div>';
+    return h + '<div class="hint">Actualizado ' + esc(A.actualizado || '') + ' · también en la pestaña APP · RESUMEN del Sheet, con tus sensaciones de cada día.</div>';
   }
   function renderCobertura() {
     var html = cabeceraVista('Cobertura', 'Menú');
@@ -475,36 +477,76 @@
   }
   function refAnt(p, k, suf) { return p && p[k] ? (p._dia + ': ' + p[k] + (suf || '')) : ''; }
   function leerEscala(id) { var b = document.querySelector('#' + id + ' .on'); return b ? b.dataset.v : ''; }
+  var ZONAS = ['Hombros', 'Codos / antebrazo (agarre)', 'Dorsal / espalda alta', 'Lumbar', 'Core', 'Cadera / glúteo', 'Cuádriceps', 'Isquios', 'Gemelo / sóleo', 'Tobillo / Aquiles', 'Rodillas', 'Pies'];
+  /** v0.11 · Chequeo por sensaciones (sin Garmin): al abrir la sesión del día. */
   function abrirChequeo(iso) {
     var c = (S.data.chequeos || []).filter(function (x) { return aIso(x.FECHA) === iso; })[0] || {};
     var pa = chequeoAnterior(iso); if (pa) pa._dia = aIso(pa.FECHA) === sumarDias(iso, -1) ? 'ayer' : fechaCorta(aIso(pa.FECHA));
     var lblRef = function (k) { var t = refAnt(pa, k); return t ? ' <span class="ref-ant">' + esc(t) + '</span>' : ''; };
-    abrirHoja('<div class="row"><h2>Chequeo · ' + fechaCorta(iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
-      '<form id="chf" class="avf"><div class="two"><div><label for="ch-s">Horas de sueño</label><input id="ch-s" inputmode="decimal" value="' + esc(c['SUEÑO (h)'] || '') + '" placeholder="' + esc(refAnt(pa, 'SUEÑO (h)', ' h') || '7,5') + '"></div>' +
-      '<div><label for="ch-v">VFC (ms) · Garmin</label><input id="ch-v" inputmode="numeric" value="' + esc(c['VFC (ms)'] || '') + '" placeholder="' + esc(refAnt(pa, 'VFC (ms)', ' ms') || '62') + '"></div></div>' +
-      '<div class="two"><div><label for="ch-fc">FC en reposo</label><input id="ch-fc" inputmode="numeric" value="' + esc(c['FC REPOSO'] || '') + '" placeholder="' + esc(refAnt(pa, 'FC REPOSO', ' ppm') || '48') + '"></div><div></div></div>' +
-      '<label>Calidad del sueño · 1 fatal · 5 perfecto' + lblRef('CALIDAD SUEÑO (1-5)') + '</label>' + chipsEscala('ch-cs', 1, 5, c['CALIDAD SUEÑO (1-5)']) +
-      '<label>Energía · 1 vacío · 5 a tope' + lblRef('ENERGÍA (1-5)') + '</label>' + chipsEscala('ch-en', 1, 5, c['ENERGÍA (1-5)']) +
-      '<label>Molestias · 0 nada · 5 dolor que limita' + lblRef('MOLESTIAS (0-5)') + '</label>' + chipsEscala('ch-mo', 0, 5, c['MOLESTIAS (0-5)']) +
-      '<label for="ch-z">Zona de la molestia</label><input id="ch-z" maxlength="80" value="' + esc(c['ZONA MOLESTIA'] || '') + '" placeholder="Ej. cuello, rodilla izquierda">' +
-      '<label>Estrés · 1 tranquilo · 5 muy alto' + lblRef('ESTRÉS (1-5)') + '</label>' + chipsEscala('ch-es', 1, 5, c['ESTRÉS (1-5)']) +
-      '<label for="ch-n">Notas</label><input id="ch-n" maxlength="300" value="' + esc(c.NOTAS || '') + '">' +
-      '<div class="hint">En gris, lo del último chequeo como referencia: no se rellena solo. La VFC y la FC en reposo se comparan con tu media de los últimos 7 chequeos (hacen falta 3); lo que falte no cuenta.</div>' +
-      '<button class="btn btn-primary" type="submit" id="ch-ok">Guardar y ver el semáforo</button></form>');
+    var zonas = String(c['ZONAS CARGADAS'] || '').split(/\s*,\s*/);
+    var hoy = (S.data.dias || []).filter(function (y) { return y.iso === iso; })[0];
+    var corre = hoy && hoy.bloques.some(function (b) { return norm(b.origen) === 'CARRERA' || /\b(W01|W02|W04)\b/.test(b.codigos || ''); });
+    abrirHoja('<div class="row"><h2>¿Cómo llegas hoy? · ' + fechaCorta(iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<form id="chf" class="avf">' +
+      '<label>Cansancio general · 1 fresco · 10 reventado' + lblRef('CANSANCIO (1-10)') + '</label>' + chipsEscala('ch-ca', 1, 10, c['CANSANCIO (1-10)']) +
+      '<label>Agujetas / cuerpo trabajado de sesiones previas · 1 nada · 10 mucho' + lblRef('AGUJETAS (1-10)') + '</label>' + chipsEscala('ch-ag', 1, 10, c['AGUJETAS (1-10)']) +
+      '<label>Zonas más cargadas' + lblRef('ZONAS CARGADAS') + '</label><div class="zonas" id="ch-z">' + ZONAS.map(function (z) {
+        return '<button type="button" class="zona' + (zonas.indexOf(z) >= 0 ? ' on' : '') + '" data-z="' + esc(z) + '" aria-pressed="' + (zonas.indexOf(z) >= 0) + '">' + esc(z) + '</button>'; }).join('') + '</div>' +
+      '<label>Sueño' + lblRef('SUEÑO') + '</label><div class="seg" role="group" id="ch-su">' + ['Bien', 'Regular', 'Mal'].map(function (v) { return '<button type="button" data-su="' + v + '" aria-pressed="' + (c['SUEÑO'] === v) + '">' + v + '</button>'; }).join('') + '</div>' +
+      '<label for="ch-n">Notas</label><input id="ch-n" maxlength="300" value="' + esc(c.NOTAS || '') + '" placeholder="Opcional">' +
+      '<div class="hint">Lo cruzo con lo que toca hoy y con lo de los 3 días anteriores: si una zona cargada choca con un bloque, te digo cómo ajustarlo y de dónde viene.' + (corre ? ' Hoy corres: tus sensaciones quedan junto a los datos de la carrera para explicar el resultado.' : '') + '</div>' +
+      '<button class="btn btn-primary" type="submit" id="ch-ok">Guardar y ver cómo ajusto el día</button></form>');
     $scrim.querySelectorAll('.esc').forEach(function (g) {
       g.querySelectorAll('.esc-chip').forEach(function (b) { b.onclick = function () { var ya = b.classList.contains('on'); g.querySelectorAll('.esc-chip').forEach(function (y) { y.classList.remove('on'); }); if (!ya) b.classList.add('on'); }; });
     });
+    $scrim.querySelectorAll('[data-z]').forEach(function (b) { b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }; });
+    $scrim.querySelectorAll('[data-su]').forEach(function (b) { b.onclick = function () { var on = b.getAttribute('aria-pressed') !== 'true'; $scrim.querySelectorAll('[data-su]').forEach(function (y) { y.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', on); }; });
     document.getElementById('chf').onsubmit = function (ev) {
       ev.preventDefault();
-      var o = { FECHA: aTxt(iso), 'SUEÑO (h)': val('ch-s').replace(',', '.'), 'VFC (ms)': val('ch-v'), 'FC REPOSO': val('ch-fc'), 'CALIDAD SUEÑO (1-5)': leerEscala('ch-cs'),
-        'ENERGÍA (1-5)': leerEscala('ch-en'), 'MOLESTIAS (0-5)': leerEscala('ch-mo'), 'ZONA MOLESTIA': val('ch-z'), 'ESTRÉS (1-5)': leerEscala('ch-es'), NOTAS: val('ch-n') };
+      var su = $scrim.querySelector('[data-su][aria-pressed="true"]');
+      var o = { FECHA: aTxt(iso), 'CANSANCIO (1-10)': leerEscala('ch-ca'), 'AGUJETAS (1-10)': leerEscala('ch-ag'),
+        'ZONAS CARGADAS': [].map.call($scrim.querySelectorAll('[data-z].on'), function (b) { return b.dataset.z; }).join(', '), 'SUEÑO': su ? su.dataset.su : '', NOTAS: val('ch-n') };
+      if (!o['CANSANCIO (1-10)'] && !o['AGUJETAS (1-10)']) { toast('Marca al menos el cansancio o las agujetas'); return; }
       var b = document.getElementById('ch-ok'); b.disabled = true;
       apiGuardar({ action: 'chequeo', chequeo: o }).then(ok).then(function (r) {
-        var nuevo = r.chequeo || Object.assign({ 'RECOMENDACIÓN': 'Guardado sin conexión: el semáforo se calcula al volver la red.' }, o);
+        var nuevo = r.chequeo || Object.assign({ 'RECOMENDACIÓN': 'Guardado sin conexión: el ajuste se calcula al volver la red.' }, o);
         S.data.chequeos = (S.data.chequeos || []).filter(function (x) { return aIso(x.FECHA) !== iso; }).concat([nuevo]);
         cerrarHoja(); render(); toast(nuevo['SEMÁFORO'] ? 'Semáforo ' + nuevo['SEMÁFORO'].toLowerCase() : 'Guardado');
       }).catch(falloApi(b));
     };
+  }
+
+  // ---------- v0.11 · Extras de la semana en curso ----------
+  function renderExtras() {
+    var d = S.data, X = S.extrasCurso && S.extrasCurso.lunes === d.semana ? S.extrasCurso : null;
+    var html = cabeceraVista('Extras semana en curso', 'Menú');
+    if (!X) {
+      $app.innerHTML = html + '<div class="hint">Calculando qué suma cada extra…</div>';
+      document.getElementById('atras').onclick = function () { abrirAjustes(); };
+      api({ action: 'extras_curso', lunes: d.semana }).then(ok).then(function (r) { S.extrasCurso = r.extras; if (S.vista === 'extras') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
+      return;
+    }
+    html += '<section class="me" style="display:block"><b>Semana del ' + fechaCorta(X.lunes) + ' · ' + esc(cap(X.mes)) + '</b>' +
+      '<div class="xk"><div><b>+' + num1(X.aporteSemanaMes) + ' pp</b><span>suman al mes los extras de esta semana</span></div>' +
+      '<div><b>' + num1(X.acumuladoMes) + ' %</b><span>acumulado del mes (programado) · hecho ' + num1(X.realizadoMes) + ' %</span></div>' +
+      '<div><b>+' + num1(X.aporteExtrasMes) + ' pp</b><span>aportan todos los extras del mes</span></div>' +
+      '<div><b>' + num1(X.semanaSin) + ' → ' + num1(X.semanaCon) + ' %</b><span>metas de la semana sin y con extras</span></div></div>' +
+      (X.borradores ? '<div class="hint">⚠ ' + X.borradores + ' en borrador: ya cuentan como programados, pero apruébalos en la hoja de la semana.</div>' : '') + '</section>';
+    if (!X.bloques.length) html += '<div class="empty">Aún no hay extras esta semana. Cárgalos desde la hoja de la semana.</div>';
+    var porDia = {};
+    X.bloques.forEach(function (b) { (porDia[b.fecha] = porDia[b.fecha] || []).push(b); });
+    Object.keys(porDia).sort().forEach(function (iso) {
+      html += '<section class="h-dia"><div class="h-cab"><b>' + esc(porDia[iso][0].dia) + ' ' + diaMes(iso) + '</b></div>' + porDia[iso].map(function (b) {
+        return '<div class="xb' + (b.clave ? ' clave' : '') + '"><div class="xb-h"><span class="tag">' + b.turno + '</span><b class="xb-t">' + esc(b.titulo) + '</b>' +
+          (b.estado === 'BORRADOR' ? '<span class="tag draft">Borrador</span>' : '<span class="tag ok">Aprobado</span>') + '</div>' +
+          (b.metas.length ? '<div class="xb-m">' + b.metas.map(function (m) { return '<span class="chip-m">' + esc(m) + '</span>'; }).join('') + '</div>' : '<div class="hint">No cubre ninguna meta activa</div>') +
+          '<div class="xb-p"><span>Mes <b>+' + num1(b.aporteMes) + ' pp</b></span><span>Semana <b>+' + num1(b.aporteSemana) + ' pp</b></span>' + (b.clave ? '<span class="xb-c">🎯 ' + esc(b.clave) + '</span>' : '') + '</div></div>';
+      }).join('') + '</section>';
+    });
+    html += '<div class="hint">pp = puntos porcentuales que sube la cobertura gracias a ese extra. También en la pestaña APP · RESUMEN del Sheet.</div><button class="btn" type="button" id="xc-re">Actualizar</button>';
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = function () { abrirAjustes(); };
+    document.getElementById('xc-re').onclick = function () { S.extrasCurso = null; render(); };
   }
 
   // ---------- v0.6 · añadir bloque (borrador) y plantillas ----------
@@ -633,7 +675,7 @@
     html += '<div class="hoja-acc">' + (!d.fabrikCargado ? '<button class="btn sm" type="button" data-cargar-fabrik="' + d.semana + '">Cargar Fabrik</button>' : '') +
       (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '↻ Rehacer extras' : 'Cargar extras') + '</button>' : '<button class="btn sm" type="button" data-confirmar="' + d.semana + '">Confirmar semana</button>') +
       (d.borrador ? '<button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button>' : '') +
-      '<button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>' +
+      '<button class="btn-ghost sm" type="button" id="h-xc">Extras semana en curso</button><button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>' +
       '<label class="toggle"><input type="checkbox" id="h-endu"' + (d.enduranceManana ? ' checked' : '') + '><span><b>Endurance de mañana</b><small>Z2 de carrera y erg solo en tus mañanas libres (el domingo, de comodín). Z6–Z8, calidad en series, RMU y cuerda: donde tú quieras.</small></span></label>';
     html += d.dias.map(function (x, i) {
       var t = function (tu) {
@@ -642,8 +684,8 @@
         return '<div class="h-turno"><span class="h-t">' + (tu === 'AM' ? '☀️ AM' : '🌙 PM') + '</span>' + bl.map(function (b) {
           var est = norm(b.estado), gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
           var edit = b.extra || b.idPlan ? ' data-h-ed="' + i + '|' + esc(b.extra ? b.id : b.idPlan) + '"' : '';
-          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (est === 'NO HACER' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
-            '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + esc(b.titulo) + '</span>' + (/^manual/.test((filaPlanDe(b) || {}).GENERADO || '') ? '<span title="Con candado: «Rehacer extras» no lo mueve">🔒</span>' : '') + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
+          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
+            '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + (b.clave ? '🎯 ' : '') + esc(b.titulo) + '</span>' + (/^manual/.test((filaPlanDe(b) || {}).GENERADO || '') ? '<span title="Con candado: «Rehacer extras» no lo mueve">🔒</span>' : '') + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
             (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(String(b.codigos).split('|')[0]) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
         }).join('') + '</div>';
       };
@@ -654,6 +696,7 @@
     $app.innerHTML = html;
     document.getElementById('atras').onclick = volverSemana;
     document.getElementById('h-claude').onclick = function () { abrirPedirClaude(d.semana); };
+    document.getElementById('h-xc').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     var he = document.getElementById('h-endu');
     he.onchange = function () {
       he.disabled = true;
@@ -682,12 +725,14 @@
     var r = filaPlanDe(b) || {}, fab = !b.extra, idb = b.extra ? b.id : b.idPlan;
     var sel = function (id, v, l) { return '<select id="' + id + '">' + l.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select>'; };
     abrirHoja('<div class="row"><h2>' + esc(b.titulo) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
-      '<div class="hint">' + (fab ? 'Bloque de Fabrik: puedes moverlo de día o turno; su contenido no se toca.' : norm(b.estado) === 'SIN HUECO' ? 'No cabía en ninguna mañana libre. Elige día y turno (te digo qué choca) o pásalo a pendientes.' : 'Bloque ' + esc(b.origen || 'EXTRA') + ' · ' + esc(b.estado || '') + ' · al guardar queda con 🔒 candado: «Rehacer extras» no lo moverá.') + '</div>' +
+      '<div class="hint">' + (fab ? 'Bloque de Fabrik: muévelo de día o turno, o edita sus ejercicios. Si lo editas queda con ✎ candado: la recarga de Fabrik no lo pisa.' : norm(b.estado) === 'SIN HUECO' ? 'No cabía en ninguna mañana libre. Elige día y turno (te digo qué choca) o pásalo a pendientes.' : 'Bloque ' + esc(b.origen || 'EXTRA') + ' · ' + esc(b.estado || '') + ' · al guardar queda con 🔒 candado: «Rehacer extras» no lo moverá.') + '</div>' +
       '<form id="ebf" class="avf"><div class="three"><div><label for="eb-f">Día</label><input id="eb-f" type="date" value="' + x.iso + '" min="' + S.data.semana + '" max="' + sumarDias(S.data.semana, 6) + '"></div>' +
       '<div><label for="eb-t">Turno</label>' + sel('eb-t', b.turno, ['AM', 'PM']) + '</div><div></div></div>' +
       '<label for="eb-pos-s">Posición dentro de la sesión</label><select id="eb-pos-s"></select><input type="hidden" id="eb-o" value="' + esc(r.ORDEN || b.orden || '') + '">' +
       '<div id="eb-pos" class="pos"><div class="hint">Calculando la posición óptima…</div></div>' +
-      (fab ? '' : '<label for="eb-ti">Título</label><input id="eb-ti" maxlength="120" value="' + esc(r['TÍTULO'] || b.titulo) + '">' +
+      (fab ? (r.ID ? '<details class="set"><summary>✎ Editar ejercicios de este bloque</summary><div class="set-body"><label for="eb-ti">Título</label><input id="eb-ti" maxlength="120" value="' + esc(r['TÍTULO'] || b.titulo) + '">' +
+        '<label for="eb-co">Ejercicios</label><textarea id="eb-co" rows="10">' + esc(r.CONTENIDO || '') + '</textarea><div class="hint">Las líneas «A · …», «B · …» son los apartados (calentamiento, fuerza…).</div></div></details>' : '') :
+        '<label for="eb-ti">Título</label><input id="eb-ti" maxlength="120" value="' + esc(r['TÍTULO'] || b.titulo) + '">' +
         '<label for="eb-co">Contenido</label><textarea id="eb-co" rows="5">' + esc(r.CONTENIDO || '') + '</textarea>' +
         '<div class="three"><div><label for="eb-mi">Min</label><input id="eb-mi" inputmode="numeric" value="' + esc(r.MIN || '') + '"></div><div><label for="eb-in">Intensidad</label><input id="eb-in" value="' + esc(r.INTENSIDAD || '') + '"></div>' +
         '<div><label for="eb-cd">Códigos</label><input id="eb-cd" value="' + esc(r['CÓDIGOS'] || '') + '"></div></div>') +
@@ -740,6 +785,7 @@
       ev.preventDefault(); var bt = document.getElementById('eb-ok'); bt.disabled = true;
       var c = { FECHA: aTxt(val('eb-f')), TURNO: val('eb-t'), ORDEN: val('eb-o') };
       if (!fab) { c['TÍTULO'] = val('eb-ti'); c.CONTENIDO = val('eb-co'); c.MIN = val('eb-mi'); c.INTENSIDAD = val('eb-in'); c['CÓDIGOS'] = val('eb-cd').toUpperCase(); }
+      else if (document.getElementById('eb-co') && (val('eb-co') !== String(r.CONTENIDO || '').trim() || val('eb-ti') !== String(r['TÍTULO'] || b.titulo).trim())) { c['TÍTULO'] = val('eb-ti'); c.CONTENIDO = val('eb-co'); }
       api({ action: 'bloque_editar', id: idb, campos: c, ver: S.data.semana }).then(ok).then(function (r2) { fin(r2, 'Bloque actualizado'); }).catch(falloApi(bt));
     };
     var q = document.getElementById('eb-q');

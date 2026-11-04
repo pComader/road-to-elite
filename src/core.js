@@ -283,7 +283,21 @@
     b.porque = r['POR QUÉ (cursiva)'] || b.porque || ''; b.ciencia = r['CIENCIA (técnica · fisiología · biología)'] || b.ciencia || '';
     b.interf = r.INTERFERENCIAS || b.interf || ''; b.estado = r.ESTADO || ''; b.cambio = r.CAMBIO_ID || ''; b.filaPlan = r._fila;
     if (r.ID) b.idPlan = r.ID;
+    b.alternativas = r.ALTERNATIVAS || ''; b.editado = /editado/.test(r.GENERADO || '');
     return b;
+  }
+  /** v0.11 · Bloque de Fabrik editado por ti (Sheet o app): manda tu versión. Las cabeceras «A · …» vuelven a ser apartados. */
+  var RE_PREP = /RANGO|MOVILIDAD|MOBILITY|ACTIVACI|ACTIVATION|WARM|CALENTAMIENTO|LOADING PROGRESSION|PROGRESION DE CARGAS|APROXIMACI/;
+  function partesDeTexto(txt) {
+    var partes = [], p = null;
+    String(txt || '').split('\n').forEach(function (l) {
+      var m = l.match(/^\s*([A-Z](?:\.\d)?)\s*·\s*(.+)$/);
+      if (m) { p = { etiqueta: m[1] + ' · ' + m[2].trim(), tipo: RE_PREP.test(norm(m[2])) ? 'prep' : 'main', lineas: [] }; partes.push(p); return; }
+      if (/^\s*ADAPTACIONES\s*:?\s*$/i.test(l)) { p = { etiqueta: 'Adaptaciones', tipo: 'adapt', lineas: [] }; partes.push(p); return; }
+      if (!p) { p = { etiqueta: '', tipo: 'main', lineas: [] }; partes.push(p); }
+      p.lineas.push(l);
+    });
+    return partes.map(function (x) { return { etiqueta: x.etiqueta, tipo: x.tipo, texto: x.lineas.join('\n').replace(/^\s*\n+|\s+$/g, '') }; }).filter(function (x) { return x.texto || x.etiqueta; });
   }
   function construirDatos(sem) {
     var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO' && norm(r.ESTADO) !== 'SIN HUECO'; });
@@ -308,12 +322,13 @@
         var rb = refBloque[fd.nombre + '·' + b.n], d2 = rb ? porIso[aIso(rb.FECHA)] : destino;
         if (!d2) return;
         var r = rb || rd;
+        if (rb && /editado/.test(rb.GENERADO || '') && rb.CONTENIDO) b = Object.assign({}, b, { titulo: rb['TÍTULO'] || b.titulo, partes: partesDeTexto(rb.CONTENIDO) });
         b.turno = r && norm(r.TURNO) === 'AM' ? 'AM' : 'PM';
         b.orden = rb && rb.ORDEN !== '' ? Number(rb.ORDEN) : (rd && rd.ORDEN !== '' ? Number(rd.ORDEN) + k / 100 : 50 + k / 100);
         b.fabrikDia = fd.nombre;
         infoPlan(b, r);
         if (rd && !rb) { b.porque = b.porque || ''; }
-        if (rb && rb['TÍTULO'] && norm(rb['TÍTULO']).replace(/\W+/g, '') !== norm(b.titulo).replace(/\W+/g, '')) b.refCambio = rb['TÍTULO'];
+        if (rb && !/editado/.test(rb.GENERADO || '') && rb['TÍTULO'] && norm(rb['TÍTULO']).replace(/\W+/g, '') !== norm(b.titulo).replace(/\W+/g, '')) b.refCambio = rb['TÍTULO'];
         d2.bloques.push(b);
         datosDia(d2, fd, rd && !rb ? rd.CONTENIDO : '');
       });
@@ -326,7 +341,10 @@
         extra: true, origen: r.ORIGEN || 'EXTRA', turno: norm(r.TURNO) === 'AM' ? 'AM' : 'PM', orden: Number(r.ORDEN) || 0, intensidad: r.INTENSIDAD || '', min: r.MIN || '',
         codigos: r['CÓDIGOS'] || '', id: r.ID || ('X-' + r._fila) }, r));
     });
+    var clave = sem.clave || {};
     dias.forEach(function (dd) {
+      dd.bloques.forEach(function (b) { var idc = b.extra ? b.id : b.idPlan; if (idc && clave[idc]) b.clave = clave[idc]; });
+      dd.combustible = (sem.combustible || {})[dd.iso] || null;
       dd.bloques.sort(function (a, b) { return (a.turno === 'AM' ? 0 : 1) - (b.turno === 'AM' ? 0 : 1) || a.orden - b.orden; });
       var activos = dd.bloques.filter(function (b) { return !/^PROPUESTA$/.test(norm(b.estado)); });
       dd.doble = activos.some(function (b) { return b.turno === 'AM'; }) && activos.some(function (b) { return b.turno === 'PM'; });
@@ -547,11 +565,13 @@
     if (S.vista === 'calendario') return renderCalendario();
     if (S.vista === 'propuesta') return renderPropuesta();
     if (S.vista === 'hoja') return renderHoja();
-    TM.reg = [];
+    if (S.vista === 'extras') return renderExtras();
+    TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
       (S.aviso ? '<div class="stale">' + esc(S.aviso) + '</div>' : '');
     enlazarCabecera();
+    if (S._autoChq && $scrim.hidden) { var iq = S._autoChq; guardar('rte-chq-' + iq, 1); setTimeout(function () { abrirChequeo(iq); }, 350); }   // se abre solo una vez al abrir la sesión del día
   }
 
   function cabecera(d) {
@@ -632,8 +652,10 @@
         (c['LISTO (0-100)'] ? '<span class="chq-n">' + esc(c['LISTO (0-100)']) + '/100</span>' : '') + '</span><span class="chq-r">' + esc(c['RECOMENDACIÓN'] || '') + '</span></button>';
     }
     if (x.iso !== d.hoy) return '';
-    return '<button class="chq pend" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>☀️ Chequeo de la mañana</b><span class="chq-n">30 s</span></span>' +
-      '<span class="chq-r">Sueño, energía, molestias y VFC del Garmin. Decide si hoy van la Z6–Z8 y la calidad.</span></button>';
+    if (!x.bloques.length) return '';
+    if (!leer('rte-chq-' + x.iso)) S._autoChq = x.iso;
+    return '<button class="chq pend" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>🫀 ¿Cómo llegas hoy?</b><span class="chq-n">15 s</span></span>' +
+      '<span class="chq-r">Cansancio, agujetas y zonas cargadas: ajusto lo de hoy y explico tu carrera.</span></button>';
   }
 
   // ---------- cuenta atrás a los tests (APP · CONFIG) ----------
@@ -667,7 +689,7 @@
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
-    html += htmlChequeo(d, x);
+    html += htmlChequeo(d, x) + htmlCombustible(x);
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
     html += (x.fases || []).map(function (f) { return '<div class="variant-note fase"><span class="v-tag">' + esc(f.tipo) + '</span><span>' + esc(f.txt) + '</span></div>'; }).join('');
@@ -692,6 +714,14 @@
     return html;
   }
 
+  /** v0.11 · Combustible e hidratación del día: desplegable aparte de la sesión. */
+  function htmlCombustible(x) {
+    var c = x.combustible; if (!c || !c.items) return '';
+    return '<details class="fuel"><summary>⛽ Combustible e hidratación · ' + esc(c.titulo) + '</summary><div class="exp-body">' +
+      c.items.map(function (i) { return '<div class="fuel-i"><b>' + esc(i.m) + '</b><span>' + esc(i.t) + '</span></div>'; }).join('') +
+      (c.recuperacion ? '<div class="fuel-i rec"><b>Recuperar para la siguiente</b><span>' + esc(c.recuperacion) + '</span></div>' : '') +
+      '<div class="hint">Calculado con tu peso y la carga del día y del siguiente. ' + esc(c.fuentes || '') + '. No sustituye a un nutricionista.</div></div></details>';
+  }
   function esMetcon(b) {
     return /METCON|\bWOD\b|ACONDICIONAMIENTO|CONDITIONING/.test(norm(b.titulo)) || b.partes.some(function (p) { return /^\s*METCON\s*:/.test(norm(p.texto)); });
   }
@@ -741,6 +771,8 @@
     var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes</div>' :
       est === 'PROPUESTA' ? '<div class="b-state prop">Propuesta de cambio · pendiente de tu aprobación</div>' :
       est === 'PROPUESTA · NO HACER' ? '<div class="b-state prop">Propuesta: no hacer este bloque</div>' : '';
+    if (b.clave) tagEst += '<div class="b-clave">🎯 Clave para tus carencias · ' + esc(b.clave) + '</div>';
+    if (b.editado && !b.extra) tagEst += '<div class="b-state">✎ Editado por ti: la recarga de Fabrik no lo cambia.</div>';
     if (b.refCambio) tagEst += '<div class="b-state warn">⚠ Este hueco de Fabrik era «' + esc(b.refCambio) + '» cuando se programó: el orden ha cambiado. Revisa el bloque antes de entrenar.</div>';
     var chq = chequeoDe(d, x.iso);
     if (chq && /Ámbar|Rojo/.test(chq['SEMÁFORO']) && (/Z6|CALIDAD|Z4|Z5/.test(norm(b.origen + ' ' + b.titulo + ' ' + (b.codigos || ''))) || /R01|R02|R03|W04/.test(b.codigos || '')))
@@ -757,9 +789,9 @@
       (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
       (b.ciencia ? '<div class="part-lbl">Explicación técnica, fisiológica y biológica</div><div class="prose-n">' + esc(b.ciencia) + '</div>' : '') +
       (b.interf ? '<div class="part-lbl">Posibles interferencias</div><div class="prose-n">' + esc(b.interf) + '</div>' : '') + '</div></details>' : '';
-    return '<article class="block' + (b.extra ? ' extra' : '') + (est === 'NO HACER' ? ' off' : '') + (/^PROPUESTA/.test(est) ? ' prop' : '') + '" id="b-' + esc(b.n) + '">' + cab + tagEst +
+    return '<article class="block' + (b.extra ? ' extra' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' ? ' off' : '') + (/^PROPUESTA/.test(est) ? ' prop' : '') + '" id="b-' + esc(b.n) + '">' + cab + tagEst +
       (prep.length ? '<details><summary>Calentamiento y activación</summary><div class="exp-body">' + prep.map(parte).join('') + '</div></details>' : '') +
-      main.map(parte).join('') + sci +
+      main.map(parte).join('') + (b.alternativas ? '<details class="alt"><summary>↔ Alternativas · elige según con quién entrenas</summary><div class="exp-body"><div class="prose-n pre">' + esc(b.alternativas) + '</div></div></details>' : '') + sci +
       (adapt.length ? '<details><summary>Adaptaciones</summary><div class="exp-body">' + adapt.map(parte).join('') + '</div></details>' : '') +
       (notas ? '<details><summary class="coach-sum">Notas del coach</summary><div class="exp-body">' + notas + '</div></details>' : '') +
       (b.variantes || []).map(function (v) { return htmlVariante(v, parte); }).join('') +
@@ -853,13 +885,12 @@
     abrirHoja('<div class="row"><h2>Registrar</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
       '<div class="hint">' + esc(ref.bloque) + ' · ' + fechaCorta(ref.iso) + '</div>' +
       '<form id="regf" class="avf">' + chipsH + '<label>RPE · 1 muy fácil · 10 máximo</label>' + chipsR +
-      '<div class="two"><div><label for="rg-min">Minutos reales</label><input id="rg-min" inputmode="numeric" value="' + esc(r.MIN_REAL || '') + '"></div>' +
-      '<div><label for="rg-sue">Sueño (h o 1–5)</label><input id="rg-sue" value="' + esc(r['SUEÑO'] || '') + '"></div></div>' +
+      '<div class="two"><div><label for="rg-min">Minutos reales</label><input id="rg-min" inputmode="numeric" value="' + esc(r.MIN_REAL || '') + '"></div><div></div></div>' +
       '<label for="rg-dat">Parciales / vatios / tiempos / resultado</label><textarea id="rg-dat" rows="2" placeholder="Ej. 1:52 · 1:54 · 1:55 · 1050-980 W · 12:10">' + esc(r['DATOS (parciales/vatios)'] || '') + '</textarea>' +
       '<label for="rg-car">Cargas usadas</label><input id="rg-car" value="' + esc(r.CARGAS || '') + '">' +
       '<label for="rg-mol">Molestias</label><input id="rg-mol" value="' + esc(r.MOLESTIAS || '') + '">' +
       '<label for="rg-not">Notas</label><textarea id="rg-not" rows="2">' + esc(r.NOTAS || '') + '</textarea>' +
-      htmlCamposCarrera(carreraDe(ref.iso, ref.id) || {}, !!ref.run, ref.tipo) +
+      (ref.run || carreraDe(ref.iso, ref.id) ? htmlCamposCarrera(carreraDe(ref.iso, ref.id) || {}, !!ref.run, ref.tipo) : '') +
       '<details class="run-f"><summary>🏆 Nueva marca en este bloque</summary><div class="exp-body">' +
         '<datalist id="rg-movs">' + LEVANTAMIENTOS.map(function (m) { return '<option value="' + esc(m) + '">'; }).join('') + '</datalist>' +
         '<label for="rg-pm">Movimiento o test</label><input id="rg-pm" list="rg-movs" maxlength="60" placeholder="Ej. SNATCH, Test 2 km">' +
@@ -883,7 +914,7 @@
       ev.preventDefault();
       var h = $scrim.querySelector('[data-rh][aria-pressed="true"]'), rr = $scrim.querySelector('[data-rr].on');
       var reg = { FECHA: aTxt(ref.iso), ID_PLAN: ref.id, BLOQUE: ref.bloque, HECHO: h ? h.dataset.rh : 'Sí', RPE: rr ? rr.dataset.rr : '', MIN_REAL: val('rg-min'),
-        'DATOS (parciales/vatios)': val('rg-dat'), CARGAS: val('rg-car'), 'SUEÑO': val('rg-sue'), MOLESTIAS: val('rg-mol'), NOTAS: val('rg-not') };
+        'DATOS (parciales/vatios)': val('rg-dat'), CARGAS: val('rg-car'), 'SUEÑO': r['SUEÑO'] || '', MOLESTIAS: val('rg-mol'), NOTAS: val('rg-not') };
       var b = document.getElementById('rg-ok'); b.disabled = true; b.textContent = 'Guardando…';
       var car = leerCamposCarrera(); car.FECHA = reg.FECHA; car.ID_PLAN = ref.id; car['SESIÓN'] = ref.bloque.replace(/^EXTRA · /, ''); car.RPE = reg.RPE;
       var pm = val('rg-pm').toUpperCase(), pv = val('rg-pv'), pt = val('rg-pt');
@@ -1684,7 +1715,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1835,7 +1866,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.8';
+  var WEB_VERSION = 'web 0.9';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
