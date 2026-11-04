@@ -516,6 +516,133 @@
     };
   }
 
+
+  // ---------- v0.9.1 · Compartir el día como imagen (solo ejercicios) ----------
+  /** Líneas que no son ejercicios (notas, referencias, «registra», por qué…): fuera de la imagen. */
+  var NO_EJERCICIO = /^\s*(Registra|Dónde va|Referencia|Zona\b|⚙|REGLA|TÚ\b|Por qué|Cuándo|Ciencia|Atac|Plan de carrera|Va el|\(ajústala|★|↔|👥)/i;
+  function bloquesCompartibles(x) {
+    return x.bloques.filter(function (b) { return !/NO HACER|OCULTO|PROPUESTA|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || '')); });
+  }
+  function ejerciciosDe(b, conPrep) {
+    return (b.partes || []).filter(function (p) { return p.tipo !== 'adapt' && (conPrep || p.tipo !== 'prep'); }).map(function (p) {
+      var lin = String(p.texto || '').split('\n').filter(function (l) { return !NO_EJERCICIO.test(l); });
+      while (lin.length && !lin[lin.length - 1].trim()) lin.pop();
+      return { etiqueta: p.etiqueta || '', lineas: lin };
+    }).filter(function (p) { return p.lineas.some(function (l) { return l.trim(); }); });
+  }
+  function seleccionCompartir(x, modo, marcados) {
+    return bloquesCompartibles(x).filter(function (b, k) {
+      return modo === 'AM' ? b.turno === 'AM' : modo === 'PM' ? b.turno === 'PM' : modo === 'sel' ? marcados[k] : true;
+    });
+  }
+  /** Dibuja la pizarra en un canvas 1080 px de ancho (alto según el contenido). */
+  function pintarPizarra(x, bloques, conPrep) {
+    var W = 1080, P = 64, cv = document.createElement('canvas'), g = cv.getContext('2d');
+    var cs = getComputedStyle(document.body), fBody = cs.getPropertyValue('--f-body') || 'system-ui, sans-serif', fDisp = cs.getPropertyValue('--f-display') || fBody;
+    var C = { bg: '#0f1115', card: '#181b22', acc: '#ff7a1a', txt: '#f2f3f5', mut: '#9aa1ab', run: '#2f81f7' };
+    var partir = function (txt, font, ancho) {
+      g.font = font; var out = [];
+      String(txt).split('\n').forEach(function (par) {
+        if (!par.trim()) { out.push(''); return; }
+        var pal = par.split(/\s+/), lin = '';
+        pal.forEach(function (w) { var t = lin ? lin + ' ' + w : w; if (g.measureText(t).width > ancho && lin) { out.push(lin); lin = w; } else lin = t; });
+        out.push(lin);
+      });
+      return out;
+    };
+    var F = { h1: '800 72px ' + fDisp, sub: '600 28px ' + fBody, turno: '800 30px ' + fDisp, tit: '800 40px ' + fDisp, lbl: '700 24px ' + fBody, txt: '500 31px ' + fBody, pie: '600 24px ' + fBody };
+    var anchoTxt = W - 2 * P - 64, ops = [], y = P;
+    var add = function (o) { ops.push(o); };
+    var turnos = bloques.some(function (b) { return b.turno === 'AM'; }) && bloques.some(function (b) { return b.turno === 'PM'; });
+    add({ t: 'txt', s: (NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso)).toUpperCase(), f: F.h1, c: C.txt, y: y + 64 }); y += 92;
+    add({ t: 'txt', s: 'ROAD TO ELITE' + (x.rpe ? ' · RPE ' + x.rpe : ''), f: F.sub, c: C.acc, y: y + 28 }); y += 64;
+    var turno = null;
+    bloques.forEach(function (b) {
+      if (turnos && b.turno !== turno) { turno = b.turno; y += 8; add({ t: 'txt', s: turno === 'AM' ? 'MAÑANA' : 'TARDE', f: F.turno, c: C.mut, y: y + 30 }); y += 52; }
+      var titulo = partir((b.extra ? '+ ' : (b.n ? b.n + '  ' : '')) + b.titulo, F.tit, anchoTxt), partes = ejerciciosDe(b, conPrep);
+      var alto = 36 + titulo.length * 50 + 12;
+      var cuerpo = partes.map(function (p) { var l = partir(p.lineas.join('\n'), F.txt, anchoTxt); alto += (p.etiqueta ? 44 : 0) + l.length * 42 + 18; return { e: p.etiqueta, l: l }; });
+      var y0 = y;
+      add({ t: 'card', y: y0, h: alto, c: b.extra ? (/CARRERA/.test(norm(b.origen || '')) ? C.run : C.acc) : '#3a3f4a' });
+      y += 36;
+      titulo.forEach(function (l) { add({ t: 'txt', s: l, f: F.tit, c: b.extra ? C.acc : C.txt, y: y + 38, x: P + 36 }); y += 50; });
+      y += 12;
+      cuerpo.forEach(function (p) {
+        if (p.e) { add({ t: 'txt', s: p.e.toUpperCase(), f: F.lbl, c: C.mut, y: y + 30, x: P + 36 }); y += 44; }
+        p.l.forEach(function (l) { add({ t: 'txt', s: l, f: F.txt, c: C.txt, y: y + 32, x: P + 36 }); y += 42; });
+        y += 18;
+      });
+      y = y0 + alto + 24;
+    });
+    add({ t: 'txt', s: 'Road To Elite', f: F.pie, c: C.mut, y: y + 30 }); y += 30 + P;
+    cv.width = W; cv.height = Math.max(y, 600);
+    g.fillStyle = C.bg; g.fillRect(0, 0, W, cv.height);
+    g.fillStyle = C.acc; g.fillRect(0, 0, W, 10);
+    ops.forEach(function (o) {
+      if (o.t === 'card') {
+        var r = 22, x0 = P, w = W - 2 * P;
+        g.fillStyle = C.card; g.beginPath(); g.moveTo(x0 + r, o.y); g.arcTo(x0 + w, o.y, x0 + w, o.y + o.h, r); g.arcTo(x0 + w, o.y + o.h, x0, o.y + o.h, r); g.arcTo(x0, o.y + o.h, x0, o.y, r); g.arcTo(x0, o.y, x0 + w, o.y, r); g.closePath(); g.fill();
+        g.fillStyle = o.c; g.fillRect(x0, o.y + 14, 8, o.h - 28);
+      } else { g.font = o.f; g.fillStyle = o.c; g.textBaseline = 'alphabetic'; g.fillText(o.s, o.x || P, o.y); }
+    });
+    return cv;
+  }
+  /** Versión en texto (para WhatsApp, Telegram o correo sin imagen). */
+  function textoPizarra(x, bloques, conPrep) {
+    var out = [(NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso)).toUpperCase()], turno = null;
+    var turnos = bloques.some(function (b) { return b.turno === 'AM'; }) && bloques.some(function (b) { return b.turno === 'PM'; });
+    bloques.forEach(function (b) {
+      if (turnos && b.turno !== turno) { turno = b.turno; out.push('', turno === 'AM' ? '— MAÑANA —' : '— TARDE —'); }
+      out.push('', '*' + (b.extra ? '+ ' : (b.n ? b.n + '. ' : '')) + b.titulo + '*');
+      ejerciciosDe(b, conPrep).forEach(function (p) { if (p.etiqueta) out.push('_' + p.etiqueta + '_'); out.push(p.lineas.join('\n')); });
+    });
+    return out.join('\n').replace(/\n{3,}/g, '\n\n');
+  }
+  function abrirCompartir(i) {
+    var x = S.data.dias[i]; if (!x) return;
+    var lista = bloquesCompartibles(x);
+    if (!lista.length) { toast('Este día no tiene bloques que compartir'); return; }
+    var hayAM = lista.some(function (b) { return b.turno === 'AM'; }), hayPM = lista.some(function (b) { return b.turno === 'PM'; });
+    var st = { modo: 'todo', marcados: lista.map(function () { return true; }), prep: true, blob: null, url: null };
+    var nombre = 'road-to-elite-' + norm(NOMBRE_DIA[x.nombre]).toLowerCase() + '-' + x.iso + '.png';
+    abrirHoja('<div class="row"><h2>Compartir · ' + esc(NOMBRE_DIA[x.nombre]) + ' ' + diaMes(x.iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="seg" role="group" aria-label="Qué compartir" id="sh-modo">' + [['todo', 'Todo'], ['AM', 'Mañana'], ['PM', 'Tarde'], ['sel', 'Elegir']].filter(function (m) { return m[0] === 'todo' || m[0] === 'sel' || (hayAM && hayPM && (m[0] === 'AM' || m[0] === 'PM')); })
+        .map(function (m) { return '<button type="button" data-sm="' + m[0] + '" aria-pressed="' + (m[0] === 'todo') + '">' + m[1] + '</button>'; }).join('') + '</div>' +
+      '<div id="sh-sel" class="sh-sel" hidden>' + lista.map(function (b, k) { return '<label class="sh-b"><input type="checkbox" data-sb="' + k + '" checked><span>' + (b.turno === 'AM' ? '☀️ ' : '') + esc((b.extra ? '+ ' : (b.n ? b.n + ' · ' : '')) + b.titulo) + '</span></label>'; }).join('') + '</div>' +
+      '<label class="sh-b"><input type="checkbox" id="sh-prep" checked><span>Incluir calentamiento y activación</span></label>' +
+      '<div class="sh-prev"><img id="sh-img" alt="Vista previa de la pizarra del día"></div>' +
+      '<button class="btn btn-primary" type="button" id="sh-share">Compartir imagen · WhatsApp, Telegram, correo…</button>' +
+      '<div class="sh-row"><a class="btn" id="sh-save" download="' + nombre + '">Guardar imagen</a></div>' +
+      '<div class="sh-row three"><a class="btn sm" id="sh-wa" target="_blank" rel="noopener">WhatsApp</a><a class="btn sm" id="sh-tg" target="_blank" rel="noopener">Telegram</a><a class="btn sm" id="sh-ml">Correo</a></div>' +
+      '<div class="hint">«Compartir imagen» abre el menú del móvil con la captura. WhatsApp, Telegram y Correo mandan el texto de los ejercicios (para la imagen, guárdala y adjúntala). Solo salen los ejercicios: sin notas del coach, porqués ni referencias.</div>');
+    var pintar = function () {
+      var bl = seleccionCompartir(x, st.modo, st.marcados);
+      var ok = bl.length > 0;
+      ['sh-share', 'sh-save', 'sh-wa', 'sh-tg', 'sh-ml'].forEach(function (id) { document.getElementById(id).classList.toggle('dis', !ok); });
+      if (!ok) { document.getElementById('sh-img').removeAttribute('src'); st.blob = null; return; }
+      var cv = pintarPizarra(x, bl, st.prep), txt = textoPizarra(x, bl, st.prep);
+      var img = document.getElementById('sh-img'); img.src = cv.toDataURL('image/png');
+      document.getElementById('sh-save').href = img.src;
+      document.getElementById('sh-wa').href = 'https://wa.me/?text=' + encodeURIComponent(txt);
+      document.getElementById('sh-tg').href = 'https://t.me/share/url?url=' + encodeURIComponent(' ') + '&text=' + encodeURIComponent(txt);
+      document.getElementById('sh-ml').href = 'mailto:?subject=' + encodeURIComponent('Entreno · ' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso)) + '&body=' + encodeURIComponent(txt.replace(/[*_]/g, ''));
+      st.blob = null; cv.toBlob(function (b) { st.blob = b; }, 'image/png');
+    };
+    $scrim.querySelectorAll('[data-sm]').forEach(function (b) {
+      b.onclick = function () { st.modo = b.dataset.sm; $scrim.querySelectorAll('[data-sm]').forEach(function (y) { y.setAttribute('aria-pressed', y === b); }); document.getElementById('sh-sel').hidden = st.modo !== 'sel'; pintar(); };
+    });
+    $scrim.querySelectorAll('[data-sb]').forEach(function (c) { c.onchange = function () { st.marcados[+c.dataset.sb] = c.checked; pintar(); }; });
+    document.getElementById('sh-prep').onchange = function () { st.prep = this.checked; pintar(); };
+    document.getElementById('sh-share').onclick = function () {
+      if (!st.blob) { toast('Preparando la imagen…'); return; }
+      var f = new File([st.blob], nombre, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) {
+        navigator.share({ files: [f], title: 'Entreno · ' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) }).catch(function (e) { if (e && e.name !== 'AbortError') toast('No se pudo compartir: guárdala y adjúntala'); });
+      } else { document.getElementById('sh-save').click(); toast('Este navegador no comparte imágenes: la he guardado para que la adjuntes'); }
+    };
+    pintar();
+  }
+
   // ---------- v0.11 · Extras de la semana en curso ----------
   function renderExtras() {
     var d = S.data, X = S.extrasCurso && S.extrasCurso.lunes === d.semana ? S.extrasCurso : null;

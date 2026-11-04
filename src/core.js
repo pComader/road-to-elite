@@ -685,6 +685,7 @@
 
   function dia(d, x) {
     var html = '<div class="day-title"><h1>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</h1>' +
+      (x.bloques.length ? '<button class="share-btn" type="button" data-compartir="' + d.dias.indexOf(x) + '" aria-label="Compartir el día">⤴ Compartir</button>' : '') +
       (x.rpe ? '<div class="rpe-pill" style="--c:' + rpeColor(x.rpe) + '"><b>' + esc(x.rpe) + '</b><span>' + (x.rpe === 'Z2' ? 'Recovery' : /≈/.test(x.rpe) ? 'RPE estimado' : 'RPE del metcon') + '</span></div>' :
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
@@ -1715,7 +1716,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1762,6 +1763,7 @@
       if (bq) abrirEditarBloque(bq, xd); return;
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
+    if ((b = t.closest('[data-compartir]'))) { abrirCompartir(+b.dataset.compartir); return; }
     if ((b = t.closest('[data-visto]'))) {
       b.disabled = true;
       api({ action: 'aviso_visto', id: b.dataset.visto }).then(ok).then(function () { S.data.avisosVistos = (S.data.avisosVistos || []).concat([b.dataset.visto]); render(); toast('Visto · queda en el calendario y en Menú › Avisos'); }).catch(falloApi(b));
@@ -1866,7 +1868,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.9';
+  var WEB_VERSION = 'web 0.9.1';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
