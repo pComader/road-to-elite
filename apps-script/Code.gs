@@ -1976,6 +1976,12 @@ function codigosTexto_(txt, cat, enMetcon) {
   });
   if (out.indexOf('W20') >= 0 && !(t.match(/(\d{2,3})\s*%/g) || []).some(function (x) { return parseInt(x, 10) > 85; })) out.splice(out.indexOf('W20'), 1);   // >85 % o no cuenta
   if (out.indexOf('T01') >= 0 && out.indexOf('T02') >= 0) out.splice(out.indexOf(enMetcon ? 'T01' : 'T02'), 1);
+  // W34 · split jerk en fatiga o pesado (decisión de Pablo 6/11): en metcon siempre cuenta; fuera, solo a ≥85 % o heavy (no los push/power jerk ni el jerk drive)
+  if (out.indexOf('W34') >= 0) {
+    var jPush = /\b(PUSH|POWER)\s+JERK|JERK\s+DRIVE|DIP\s+DRIVE/.test(t) && !/SPLIT|C\s?&\s?J|CLEAN\s*(&|AND|Y)\s*(SPLIT\s*)?JERK/.test(t);
+    var jPesado = (t.match(/(\d{2,3})\s*%/g) || []).some(function (x) { var n = parseInt(x, 10); return n >= 85 && n <= 105; }) || /HEAVY|PESAD|\bRM\b|1RM|2RM/.test(t);
+    if (jPush || !(enMetcon || jPesado)) out.splice(out.indexOf('W34'), 1);
+  }
   return out;
 }
 /** Apartados de preparación (calentamiento, movilidad, activación, progresión de cargas): sus saltos no cuentan para la meta. */
