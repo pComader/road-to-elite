@@ -1370,6 +1370,7 @@ function configurarSin_() {
   logc_('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
   logc_('OK · Tests pasados a APP · EVENTOS: ' + migrarTestsAEventos_() + ' (0 = ya estaban)');
   try { logc_('OK · Manual v2.0: ' + aplicarManualV2_()); } catch (e) { logc_('AVISO · Manual v2.0: ' + e); }
+  try { var aud = auditarProtocolosMes_(); logc_(aud.length ? 'AVISO · Meses sin algún P: ' + aud.map(function (x) { return x.mes + ' (falta ' + x.faltan.join(', ') + ')'; }).join(' · ') : 'OK · Plan de carrera: todos los meses tienen P1, P2, P3 y P4'); } catch (e) { logc_('AVISO · Auditoría de P: ' + e); }
   ['objetivo_2km', 'objetivo_10km'].forEach(function (k) {     // «45:00» se había convertido en 45 horas: se guarda como texto
     var x = listar_(HOJAS.CONFIG).filter(function (r) { return r.CLAVE === k; })[0];
     if (x && /^\d+:\d{2}:00$/.test(x.VALOR)) actualizarFila_(HOJAS.CONFIG, x._fila, { VALOR: x.VALOR.replace(/:00$/, '') });
@@ -2295,6 +2296,8 @@ function generarExtras_(lunes, opts) {
   var ordenC = function (s) { var c = s['CÓDIGOS']; return /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
   var yaCarrera = function (c) { return ctx.dias.some(function (d) { return d.codigos.indexOf(c) >= 0 && d.fijos && d.fijos.indexOf(c) >= 0; }); };
   var CARR = carreraSemana_(lunes), tipoSem = CARR.semanaTipo || 'carga', sinR04 = '', EXC = excepcionSemana_(lunes);
+  try { var mesP = periodoMes_(lunes).etiqueta, faltaP = auditarProtocolosMes_().filter(function (x) { return x.mes === mesP; })[0];
+    if (faltaP) log.push('⚠ ' + mesP + ': el plan de carrera no tiene ' + faltaP.faltan.join(', ') + ' (regla: al menos un P de cada tipo al mes)'); } catch (e) {}
   if (EXC) {   // semana sin requisito semanal: solo Z2 corta y ergo, suaves y opcionales; nada intenso ni metas
     CARR = CARR.filter(function (s) { return /^(W02|W03)$/.test(s['CÓDIGOS']); }).map(function (s) {
       return Object.assign(s, { 'TÍTULO': s['TÍTULO'] + ' · opcional', 'POR QUÉ (cursiva)': 'Semana sin requisito semanal (' + EXC + '): solo movimiento suave y opcional para llegar fresco. ' + (s['POR QUÉ (cursiva)'] || '') });
@@ -2586,6 +2589,29 @@ function excepcionSemana_(lunes) {
     else if (/Competici/i.test(e.TIPO || '') && i0 <= dom && f0 >= sab) out = 'competición el fin de semana: ' + e.EVENTO;
   });
   return out;
+}
+/**
+ * Decisión de Pablo 6/11: cada mes lleva AL MENOS UN P DE CADA TIPO (P1, P2, P3, P4).
+ * Lee la pestaña «carrera» (protocolo de cada semana) y devuelve los meses a los que les falta alguno: [{ mes, faltan: ['P1'] }].
+ */
+function auditarProtocolosMes_() {
+  var sh = miLibro_().getSheetByName('carrera'); if (!sh) return [];
+  var g = sh.getRange(1, 1, Math.min(sh.getLastRow(), 400), 1).getDisplayValues();
+  var ini = (String(g[1] && g[1][0]).match(/(\d{1,2})\s+([A-Z]{3})\s+(\d{4})/i) || []);
+  var MES = { ENE: 1, FEB: 2, MAR: 3, ABR: 4, MAY: 5, JUN: 6, JUL: 7, AGO: 8, SEP: 9, OCT: 10, NOV: 11, DIC: 12 };
+  if (!ini[1]) return [];
+  var base = lunesDe_(ini[3] + '-' + ('0' + MES[norm(ini[2])]).slice(-2) + '-' + ('0' + ini[1]).slice(-2));
+  var porMes = {}, orden = [], sem = 0;
+  g.forEach(function (r) {
+    var t = String(r[0]).trim(), m = t.match(/^(\d{2})\s*·/);
+    if (m) { sem = +m[1]; return; }
+    if (!sem || !/^POTENCIA/i.test(t)) return;
+    var p = (norm(t).match(/\bP([1-4])\b/) || [])[1]; if (!p) return;
+    var per = periodoMes_(sumarDias(base, (sem - 1) * 7));
+    if (!porMes[per.etiqueta]) { porMes[per.etiqueta] = {}; orden.push(per.etiqueta); }
+    porMes[per.etiqueta]['P' + p] = 1;
+  });
+  return orden.map(function (k) { return { mes: k, faltan: ['P1', 'P2', 'P3', 'P4'].filter(function (x) { return !porMes[k][x]; }) }; }).filter(function (x) { return x.faltan.length; });
 }
 /** ¿Cabe la 2.ª P integrada (R04) en el mejor hueco? Devuelve el motivo si NO cabe (decisión de Pablo 6/11 + manual §10.3). */
 function motivoSinR04_(h, ctx, tipo, lunes) {
