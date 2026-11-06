@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.12.1',
+  VERSION: '0.13.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1369,6 +1369,7 @@ function configurarSin_() {
   try { logc_('OK · Reels de datos: ' + ideasReels_().length + ' ideas con bloque asociable'); } catch (e) { logc_('AVISO · Reels: ' + e); }
   logc_('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
   logc_('OK · Tests pasados a APP · EVENTOS: ' + migrarTestsAEventos_() + ' (0 = ya estaban)');
+  try { logc_('OK · Manual v2.0: ' + aplicarManualV2_()); } catch (e) { logc_('AVISO · Manual v2.0: ' + e); }
   ['objetivo_2km', 'objetivo_10km'].forEach(function (k) {     // «45:00» se había convertido en 45 horas: se guarda como texto
     var x = listar_(HOJAS.CONFIG).filter(function (r) { return r.CLAVE === k; })[0];
     if (x && /^\d+:\d{2}:00$/.test(x.VALOR)) actualizarFila_(HOJAS.CONFIG, x._fila, { VALOR: x.VALOR.replace(/:00$/, '') });
@@ -2266,6 +2267,10 @@ function generarExtras_(lunes, opts) {
       if (lista[0]) lista[0].motivos.unshift('domingo como comodín: no quedaba ninguna mañana libre');
     }
     var h = lista[0];
+    if (o._condicional) {   // v0.13 · 2.ª P integrada: solo si cabe (decisión de Pablo 6/11, manual v2.0)
+      var mot = motivoSinR04_(h, ctx, tipoSem, lunes);
+      if (mot) { sinR04 = mot; log.push('2.ª P integrada no programada: ' + mot); return false; }
+    }
     if (!h) {
       sinHueco.push(o['TÍTULO']);
       if (endu) { o.ID = nuevoId_(); o.FECHA = isoAFecha(lunes); o['DÍA'] = ''; o.TURNO = 'AM'; o.ORDEN = 0; o.ESTADO = 'SIN HUECO'; o.GENERADO = sello; o.ACTUALIZADO = ahora_(); o.BLOQUE = o['TÍTULO'];
@@ -2286,11 +2291,21 @@ function generarExtras_(lunes, opts) {
   var candDe = function (o) { return candidatoDe_(o, cat); };
   var huecoCalidad = [];
   // 6.2 · carrera de la semana (pestaña «carrera») adaptada con el histórico; los tests sustituyen la calidad
-  var ordenC = function (s) { var c = s['CÓDIGOS']; return /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
+  var ordenC = function (s) { var c = s['CÓDIGOS']; return s._fijo ? -1 : /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
   var yaCarrera = function (c) { return ctx.dias.some(function (d) { return d.codigos.indexOf(c) >= 0 && d.fijos && d.fijos.indexOf(c) >= 0; }); };
-  carreraSemana_(lunes).sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
+  var CARR = carreraSemana_(lunes), tipoSem = CARR.semanaTipo || 'carga', sinR04 = '';
+  CARR.sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
     if (codigosDe_(s['CÓDIGOS']).every(yaCarrera)) return;                          // ya lo tienes con candado
-    var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO; anadir(s, c);
+    var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO;
+    // v0.13 · manual v2.0: el P que ya cubre Fabrik va su día; la Z2 corta va el día de la Z2 de Fabrik
+    var dF = s._fijo ? ctx.dias.filter(function (x) { return x.iso === s._fijo.iso; })[0] : null;
+    if (dF) { colocar(s, c, { iso: dF.iso, dia: diaDe_(dF.iso), turno: s._fijo.turno, motivos: [s._fijo.motivo], choques: [] }); return; }
+    if (s._fabrikZ2) {
+      var hz = puntuarHuecos_(c, ctx, true).filter(function (h) { return h.iso === s._fabrikZ2.iso; })
+        .sort(function (a, b) { var la = /no la tienes libre/.test(a.choques.join()) ? 1 : 0, lb = /no la tienes libre/.test(b.choques.join()) ? 1 : 0; return la - lb || (a.turno === 'AM' ? -1 : 1); })[0];
+      if (hz) { hz.motivos = ['es la Z2 que pide Fabrik ese día (se registra una vez)'].concat(hz.motivos || []); hz.choques = (hz.choques || []).filter(function (m) { return !/Endurance de mañana|no la tienes libre/.test(m); }); colocar(s, c, hz); return; }
+    }
+    anadir(s, c);
   });
   // 6.3 · cola de prioridad del resto: refuerzos → pendientes → semanales → mensuales
   var cola = [];
@@ -2318,6 +2333,7 @@ function generarExtras_(lunes, opts) {
       var o = deCatalogo(c);
       if (c === 'R04') { var pr01 = nuevos.concat(listar_(HOJAS.PLAN)).filter(function (r) { var d = celdaIso_(r.FECHA); return /R01/.test(r['CÓDIGOS']) && d >= lunes && d <= sumarDias(lunes, 6); })[0];
         o = bloqueIntegrado_(o, lunes, pr01 ? ((norm(pr01['TÍTULO']).match(/\bP([1-4])\b/) || [])[0] || '') : ''); }
+      if (c === 'R04') o._condicional = true;
       o._prio = 'semana'; cola.push({ o: o });
     }
   });
@@ -2398,9 +2414,10 @@ function generarExtras_(lunes, opts) {
   var previa = { modoAM: modoAM, mananas: ctx.dias.filter(function (d) { return d.am && !d.descanso; }).map(function (d) { return diaDe_(d.iso); }),
     endurance: colocados.filter(function (o) { return esEndurance(candDe(o)); }).map(function (o) { return o['TÍTULO'] + ' → ' + o['DÍA'] + ' ' + o.TURNO; }),
     refuerzos: refs.map(function (r) { return r.TEXTO; }), pendientes: cola.length >= 0 ? nuevos.filter(function (o) { return o.PENDIENTE_ID; }).map(function (o) { return o['TÍTULO']; }) : [],
-    sinHueco: sinHueco, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
+    sinHueco: sinHueco, sinR04: sinR04, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
   if (sim) return previa;
-  nuevos.forEach(function (o) { delete o._prio; });
+  nuevos.forEach(function (o) { delete o._prio; delete o._fijo; delete o._fabrikZ2; delete o._condicional; });
+  if (sinR04) ponerConfig_('r04_' + lunes, sinR04, '2.ª P integrada: motivo por el que no se programó esa semana');
   asegurarColumna_(HOJAS.PLAN, 'REFUERZO_ID'); asegurarColumna_(HOJAS.SEMANAS, 'BALANCE ESTÍMULOS'); asegurarColumna_(HOJAS.PLAN, 'ALTERNATIVAS');
   if (nuevos.length) bloqueo_(function () {
     var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
@@ -2457,20 +2474,23 @@ function carreraSemana_(lunes) {
     var t = String(r[0]).trim(), m = t.match(/^(\d{2})\s*·/);
     if (m) { dentro = +m[1] === nSem; if (dentro) titulo = t; return; }
     if (!dentro || !t || r.slice(1).every(function (c) { return !String(c).trim(); })) return;
-    var nt = norm(t), cod = /Z2.*LARGA/.test(nt) ? 'W01|W02' : /Z2/.test(nt) ? 'W02' : /CALIDAD.*Z5|VO2/.test(nt) ? 'W04|R03' : /CALIDAD/.test(nt) ? 'W04|R02' : /ERG/.test(nt) ? 'W03' : /POTENCIA|Z6|Z8|RSA/.test(nt) ? 'R01' : '';
+    // v0.13 (manual v2.0 §15): «SPRINT · aceleraciones» = V01; un P3 con SPR2 dentro cuenta R01 y V01 en una sola sesión
+    var nt = norm(t), cod = /Z2.*LARGA/.test(nt) ? 'W01|W02' : /Z2/.test(nt) ? 'W02' : /CALIDAD.*Z5|VO2/.test(nt) ? 'W04|R03' : /CALIDAD/.test(nt) ? 'W04|R02' : /ERG/.test(nt) ? 'W03' : /^SPRINT|ACELERACI/.test(nt) ? 'V01' : /POTENCIA|Z6|Z8|RSA/.test(nt) ? 'R01' + (/SPR\d|SPRINT/.test(nt) ? '|V01' : '') : '';
     if (!cod || /OPCIONAL/.test(nt)) return;
     var min = (String(r[1]).match(/≈\s*(\d+)\s*[′']/) || [])[1] || (/W04/.test(cod) ? 45 : (String(r[1]).match(/(\d+)\s*[′']/) || [])[1]);
+    if (/W04/.test(cod)) min = Math.max(+min || 0, 45);   // v0.13: en la calidad, «≈N′» es el TRABAJO; la sesión completa ronda 45′
     out.push({ ORIGEN: /R01/.test(cod) ? 'Z6–Z8' : 'CARRERA', 'TÍTULO': t, CONTENIDO: r[1] + (r[2] ? '\n\nReferencia: ' + r[2] : '') + (r[3] ? '\nZona: ' + r[3] : '') + '\n\nRegistra: ' + ((catalogo_()[cod.split('|')[0]] || {})['DATOS A REGISTRAR'] || 'tiempo, RPE y sensaciones'),
-      INTENSIDAD: /R01/.test(cod) ? '🔴 Z6–Z8' : /W04/.test(cod) ? '🟠 Calidad' : '🔵 Z2', MIN: min || (/W01/.test(cod) ? 60 : /R01/.test(cod) ? 20 : 35), 'CÓDIGOS': cod,
+      INTENSIDAD: /R01/.test(cod) ? '🔴 Z6–Z8' : /W04/.test(cod) ? '🟠 Calidad' : /V01/.test(cod) ? '🔴 Velocidad' : '🔵 Z2', MIN: min || (/W01/.test(cod) ? 60 : /R01/.test(cod) ? 20 : /V01/.test(cod) ? 20 : 35), 'CÓDIGOS': cod,
       'POR QUÉ (cursiva)': 'Plan de carrera · ' + titulo.split('·').slice(1).join('·').trim(), 'CIENCIA (técnica · fisiología · biología)': (catalogo_()[cod.split('|')[0]] || {})['CIENCIA (técnica · fisiología · biología)'] || '',
       INTERFERENCIAS: (catalogo_()[cod.split('|')[0]] || {}).INTERFERENCIAS || '', TURNO_FORZADO: /R01/.test(cod) ? 'PM' : '' });
   });
   // v0.11 · Q con alternativas (la del plan es la recomendada) y Z6–Z8 elegido de la biblioteca según tus carencias
   out = out.map(function (s) {
-    if (/R01/.test(s['CÓDIGOS'])) { try { return bloqueZ68_(s, lunes); } catch (e) { return s; } }
+    if (/R01/.test(s['CÓDIGOS'])) { try { var b68 = bloqueZ68_(s, lunes); if (/V01/.test(s['CÓDIGOS'])) { b68.CONTENIDO = s.CONTENIDO; b68['TÍTULO'] = 'POTENCIA · ' + s['TÍTULO'].replace(/^POTENCIA\s*·\s*/i, ''); b68['CÓDIGOS'] = codigosDe_(b68['CÓDIGOS']).concat(['V01']).filter(function (c, i, a) { return a.indexOf(c) === i; }).join('|'); } return b68; } catch (e) { return s; } }
     if (/W04/.test(s['CÓDIGOS'])) { try { s.ALTERNATIVAS = alternativasQ_(s); } catch (e) {} }
     return s;
   });
+  out = reglasManualV2_(out, lunes, titulo);
   // Ajustes del histórico (domingo 22:00)
   var aj = {}; try { aj = JSON.parse(PROPS.getProperty('CARRERA_AJUSTE') || '{}'); } catch (e) {}
   out.forEach(function (s) {
@@ -2487,6 +2507,101 @@ function carreraSemana_(lunes) {
   });
   return out;
 }
+// ===================== v0.13 · MANUAL DE RENDIMIENTO HÍBRIDO v2.0 (doc del proyecto, rev. 5/11/2026) =====================
+/**
+ * Reglas del manual que la app aplica al «Cargar extras» (decisión de Pablo 6/11/2026: al pie de la letra):
+ *  · §14.1/§14.4 · si un metcon de Fabrik ya es de la familia P1/P4, ES el Z6–Z8 de la semana: no se añade otro bloque.
+ *  · §15.1 · SPR1 va al inicio de la sesión del P de esa semana (una sola sesión física); SPR2 va dentro del P3.
+ *  · §11.1 · el jueves Fabrik pide Z2 real: la Z2 corta va ese día y se registra una sola vez.
+ *  · §10.3 + decisión de Pablo · la 2.ª P integrada (R04) solo entra si cabe por volumen, intensidad y fatiga.
+ */
+var MANUAL_V2_ = 'Manual de rendimiento híbrido v2.0';
+function filasFabrikSemana_(lunes) {
+  return listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6) && !/NO HACER|SUSTITUIDO|OCULTO/.test(r.ESTADO); });
+}
+/** Metcon de Fabrik de la semana que ya es de la familia P1 (every N′ con máquina + barra/WB) o P4 (alternancia de trabajo controlado y picos). */
+function fabrikCubreP_(lunes, proto) {
+  if (!/^P[14]$/.test(proto)) return null;
+  return filasFabrikSemana_(lunes).filter(function (r) {
+    var t = norm(r['TÍTULO'] + '\n' + r.CONTENIDO);
+    var erg = /\bCALS?\b|CALORI|ROW|SKI|BIKE|ECHO|ASSAULT|\d+\s*M\s*(RUN|CARRERA)|\bRUN\b/.test(t);
+    var barra = /WALL ?BALLS?|\bWB\b|CLEAN|SNATCH|THRUSTER|LUNGE|STOH|SHOULDER TO|JERK/.test(t);
+    var every = /EVERY\s*\d+\s*\D{0,3}\s*[X×]\s*[3-6]\b|E\s?\d\s?M\s?O?M\s*[X×]\s*[3-6]\b/.test(t);
+    var alterna = /EMOM/.test(t) && /IMPAR|\bPAR\b|\bODD\b|\bEVEN\b|ALTERN/.test(t) && /SNATCH|CLEAN|THRUSTER|STOH|SHOULDER TO|JERK|MUSCLE/.test(t);
+    return (every && erg && barra) || (proto === 'P4' && alterna);
+  })[0] || null;
+}
+/** Bloque de Fabrik de la semana con Z2 real (conversacional, RPE <6). */
+function fabrikZ2_(lunes) {
+  return filasFabrikSemana_(lunes).filter(function (r) {
+    var t = norm(r['TÍTULO'] + '\n' + r.CONTENIDO), rpe = parseInt(String(r.INTENSIDAD || '').replace(/\D/g, ''), 10) || 0;
+    return /\bZ2\b|ZONA 2|CONVERSACIONAL/.test(t) && rpe < 6;
+  })[0] || null;
+}
+function reglasManualV2_(out, lunes, titulo) {
+  var nt = norm(titulo || '');
+  var tipo = /\bTEST (2|10) ?KM/.test(nt) && !/SIN TEST/.test(nt) ? 'test' : /PUESTA A PUNTO|TAPER/.test(nt) ? 'taper' : /DESCARGA/.test(nt) ? 'descarga' : 'carga';
+  var p = out.filter(function (x) { return /R01/.test(x['CÓDIGOS']); })[0];
+  var spr = out.filter(function (x) { return x['CÓDIGOS'] === 'V01'; })[0];
+  // 1 · Fabrik ya cubre el P1/P4 de la semana
+  if (p) {
+    var proto = (norm(p['TÍTULO']).match(/\bP[1-4]\b/) || [''])[0], f = fabrikCubreP_(lunes, proto);
+    if (f) {
+      var dia = diaDe_(celdaIso_(f.FECHA));
+      var cub = { ORIGEN: 'Z6–Z8', 'TÍTULO': proto + ' · lo cubre Fabrik (' + dia.toLowerCase() + ': ' + f['TÍTULO'] + ')',
+        CONTENIDO: 'No añadas otro bloque: el metcon de Fabrik del ' + dia.toLowerCase() + ' («' + f['TÍTULO'] + '») ya es de la familia ' + proto + ' (' + MANUAL_V2_ + ' §14.1/§14.4).\n\n' +
+          'Cuenta como el Z6–Z8 de la semana SOLO si lo completas con tiempos estables y repeticiones válidas en todas las rondas o minutos. Si los tiempos se disparan o se deforma la técnica, márcalo «No hecho»: pasa a pendientes y se recoloca el ' + proto + ' con tu aprobación.\n\nRegistra: tiempo de cada ronda o minuto, técnica y RPE.',
+        INTENSIDAD: '🔴 Z6–Z8', MIN: 0, 'CÓDIGOS': 'R01',
+        'POR QUÉ (cursiva)': 'Manual v2.0: lo que Fabrik ya cubre se registra una vez y no se repite (§16.1). Apilar otro ' + proto + ' encima sumaría fatiga sin estímulo nuevo (§4).',
+        'CIENCIA (técnica · fisiología · biología)': p['CIENCIA (técnica · fisiología · biología)'] || '', INTERFERENCIAS: p.INTERFERENCIAS || '',
+        ALTERNATIVAS: 'Si el metcon de Fabrik no sale estable, el ' + proto + ' del plan queda como pendiente:\n' + p['TÍTULO'] + '\n' + p.CONTENIDO,
+        _fijo: { iso: celdaIso_(f.FECHA), turno: norm(f.TURNO) === 'AM' ? 'AM' : 'PM', motivo: 'el metcon de Fabrik de ese día ya es el ' + proto + ' de la semana' } };
+      out.splice(out.indexOf(p), 1, cub); p = null;
+    }
+  }
+  // 2 · SPR1 al inicio de la sesión del P (una sola sesión física, §15.1)
+  if (spr && p) {
+    p.CONTENIDO = 'SPRINT · SPR1 al INICIO, en fresco (se descuenta del total):\n' + spr.CONTENIDO + '\n\n— Después, el protocolo —\n' + p.CONTENIDO;
+    p['CÓDIGOS'] = codigosDe_(p['CÓDIGOS']).concat(['V01']).filter(function (c, i, a) { return a.indexOf(c) === i; }).join('|');
+    p.MIN = (parseFloat(p.MIN) || 20) + 15;
+    p['POR QUÉ (cursiva)'] = [p['POR QUÉ (cursiva)'], 'Lleva el sprint de carrera del mes al principio (manual §15.1): la velocidad va en fresco y cuenta como una sola sesión física.'].filter(Boolean).join(' ');
+    out.splice(out.indexOf(spr), 1);
+  }
+  // 3 · Z2 corta = la Z2 que pide Fabrik (§11.1)
+  var z = out.filter(function (x) { return x['CÓDIGOS'] === 'W02'; })[0], fz = z ? fabrikZ2_(lunes) : null;
+  if (z && fz) {
+    z._fabrikZ2 = { iso: celdaIso_(fz.FECHA), ref: fz['TÍTULO'] };
+    z['POR QUÉ (cursiva)'] = [z['POR QUÉ (cursiva)'], 'Ese día Fabrik pide Z2 real («' + fz['TÍTULO'] + '»): esta Z2 corta ES esa Z2 y se registra una sola vez (manual §11.1).'].filter(Boolean).join(' ');
+  }
+  out.semanaTipo = tipo;
+  return out;
+}
+/** ¿Cabe la 2.ª P integrada (R04) en el mejor hueco? Devuelve el motivo si NO cabe (decisión de Pablo 6/11 + manual §10.3). */
+function motivoSinR04_(h, ctx, tipo, lunes) {
+  if (/descarga|taper|test/.test(tipo || '')) return 'semana de ' + tipo + ' del complemento';
+  if (ctx.dias.some(function (d) { return d.semanaTest; })) return 'semana de test';
+  if (metconDuro_(lunes) >= 2) return 'Fabrik ya trae ≥2 metcons de RPE ≥8 esta semana';
+  if (!h) return 'no hay hueco';
+  var malo = (h.choques || []).filter(function (c) { return /dura|48 h|pierna pesada|RPE|evento|recuperaci/.test(c); });
+  if (malo.length) return malo.join('; ');
+  var i = ctx.dias.map(function (d) { return d.iso; }).indexOf(h.iso), ant = ctx.dias[i - 1], sig = ctx.dias[i + 1];
+  if (ant && (ant.rpe >= 8 || ant.duro)) return 'el día anterior es duro';
+  if (sig && (sig.rpe >= 8 || sig.duro)) return 'el día siguiente es duro';
+  return '';
+}
+/** v0.13 · Una vez (flag manual_v2 en APP · CONFIG): lleva a Google Calendar los tests movidos a enero y alinea la ciencia del catálogo con el manual. */
+function aplicarManualV2_() {
+  if (leerConfig_().manual_v2) return 'ya aplicado (' + leerConfig_().manual_v2 + ')';
+  var n = 0;
+  listar_(HOJAS.EVENTOS).filter(function (r) { return /^Test/i.test(r.EVENTO) && r['ORIGEN CAL'] !== 'Google'; }).forEach(function (r) { eventoACal_(r.ID); n++; });
+  var CIEN = {
+    R01: 'Manual v2.0 §14: cuatro intenciones (P1 potencia con fatiga local, P2 sprints repetidos, P3 contraste, P4 modelado en metcon), no protocolos validados tal cual. La fosfocreatina no se recupera entera en 80–105″ y en sprints repetidos crece el aporte aeróbico; las adaptaciones de transportadores e iones son específicas de cada protocolo y no se asumen sin medirlas [R37][R39][R40][R41].',
+    R04: 'Manual v2.0 §14.1/§14.4: picos por encima de VT2 con pausa (P1) o con trabajo controlado (P4). El lactato se oxida como combustible mientras sigues trabajando; la fatiga es multifactorial (H⁺, fosfato, iones) [R42][R43]. Solo si cabe por volumen, intensidad y fatiga del día antes y después.'
+  };
+  listar_(HOJAS.ESTIMULOS).forEach(function (r) { var t = CIEN[r['CÓDIGO']]; if (t && r['CIENCIA (técnica · fisiología · biología)'] !== t) { actualizarFila_(HOJAS.ESTIMULOS, r._fila, { 'CIENCIA (técnica · fisiología · biología)': t }); } });
+  ponerConfig_('manual_v2', ahora_(), 'Manual de rendimiento híbrido v2.0 aplicado (tests a enero en Calendar, ciencia del catálogo)');
+  return n + ' tests actualizados en Google Calendar · catálogo alineado';
+}
 /** Domingo 22:00 (dentro de domingoNoche): con lo registrado esta semana, cómo ajustar la carrera de la siguiente. */
 function ajusteCarrera_() {
   var lunes = lunesDe_(hoyIso_()), car = listar_(HOJAS.CARRERA).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
@@ -2497,7 +2612,7 @@ function ajusteCarrera_() {
   var z2 = car.filter(function (r) { return /^Z2/i.test(r.TIPO) && n(r['FC MEDIA']); }), fcObj = 149;
   if (z2.length && z2.reduce(function (a, r) { return a + n(r['FC MEDIA']); }, 0) / z2.length > fcObj + 5) aj.z2 = 'la FC media en Z2 salió alta: ve 10–15″/km más lento para quedarte en ~' + fcObj + ' ppm.';
   var pot = car.filter(function (r) { return /Z6/.test(r.TIPO); });
-  if (pot.length && /ca[ií]da\s*(\d+)/i.test(pot[0].NOTAS || '') && +RegExp.$1 > 15) aj.potencia = 'caída de potencia >15 %: mantén el nº de sprints y alarga el descanso 15″.';
+  if (pot.length && /ca[ií]da\s*(\d+)/i.test(pot[0].NOTAS || '') && +RegExp.$1 > 10) aj.potencia = 'caída de potencia >10 % (corte del manual §14.2): no progreses; repite la dosis y vigila que no cambie la mecánica.';
   var reg = listar_(HOJAS.REGISTRO).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
   var no = reg.filter(function (r) { return r.HECHO === 'No'; }).length;
   if (no >= 3) aj.z2 = (aj.z2 ? aj.z2 + ' ' : '') + 'Hubo ' + no + ' bloques sin hacer: semana conservadora, sin subir minutos.';
@@ -2719,7 +2834,7 @@ ESQUEMA['APP · BIBLIOTECA'] = {
   colores: [['ACTIVO', '^No$', '#5a5a5a', '#ffffff'], ['TIPO', 'Z6', '#fde8e8'], ['TIPO', 'Z4', '#fff2e0'], ['TIPO', 'Z5', '#ffe9d6']]
 };
 HOJAS.BIBLIOTECA = 'APP · BIBLIOTECA';
-var FUENTE_GUIA_ = 'Guía Road to 2027 (anexo Z6–Z8)';
+var FUENTE_GUIA_ = 'Manual de rendimiento híbrido v2.0 (§14)';
 var BIBLIO_BASE_ = [
   // ---------------- P1 · Z6 HÍBRIDO (desoxigenación) ----------------
   ['P1A', 'Z6–Z8', 'P1', 'P1 · Z6 híbrido · bike + wall ball + jumping lunges',
@@ -2968,7 +3083,7 @@ function alternativasQ_(s) {
   var otra = lista.filter(function (r) { return r !== grupo && !parecida(r) && r.GRUPO !== 'Sí'; })[0] || lista.filter(function (r) { return r !== grupo; })[0];
   // dosis de la recomendada: minutos totales a ritmo (p. ej. 2×6′ = 12′)
   var dosis = 0, m, re = /(\d+)\s*[×X]\s*(\d+)\s*[′']/g; while ((m = re.exec(s.CONTENIDO || ''))) dosis += +m[1] * +m[2];
-  var txt = ['★ RECOMENDADA: la del plan. ' + (z5 ? 'Es la Z5 del mes según la guía (techo aeróbico).' : 'Sigue la progresión de umbral de la guía (noviembre: base y VT2, lo que más mueve el 10 km).') +
+  var txt = ['★ RECOMENDADA: la del plan. ' + (z5 ? 'Es la Z5 del mes según el manual v2.0 (§13.3, techo aeróbico).' : 'Sigue la progresión de umbral del manual v2.0 (§13.1: 3×6→3×7→3×8′, 18–25′ de trabajo).') +
     ' Su dosis está ajustada a tu semana' + (dosis ? ' (≈' + dosis + '′ de trabajo a ritmo)' : '') + ': si cambias, respeta esa dosis.'];
   [grupo, otra].filter(Boolean).forEach(function (r, i) {
     txt.push((i ? '↔ OTRA OPCIÓN' : '👥 EN GRUPO') + ': ' + r.NOMBRE + '\n' + r.CONTENIDO + (dosis ? '\n(ajústala a ≈' + dosis + '′ de trabajo a ritmo, como la recomendada)' : '') +
@@ -3290,8 +3405,8 @@ function bloqueIntegrado_(base, lunes, protoR01) {
     INTENSIDAD: '🔴 Z6–Z8', MIN: 25, 'CÓDIGOS': cods.join('|'), CANTIDAD: saltosTexto_(cont) || '',
     'POR QUÉ (cursiva)': '2.ª sesión Z6–Z8 de la semana con enfoque de competición (' + (proto === 'P1' ? 'P1 híbrido: picos repetidos con pausa' : 'P4 modelado: pico + aclarado a umbral') + '). Integra ' + nombres.join(' y ') +
       (faltan.length ? ', lo que más te falta este mes (' + faltan.join(', ') + ')' : '') + ', con calorías de ergómetro para generar potencia en fatiga.',
-    'CIENCIA (técnica · fisiología · biología)': 'Fisiología: los picos por encima de VT2 acumulan H⁺ y fosfato; en las pausas (P1) o en el minuto a umbral (P4) entrenas a aclararlos: el lactato pasa por MCT4 fuera de la fibra rápida y por MCT1 a las fibras lentas y al corazón, que lo oxidan. ' +
-      'Adaptaciones centrales: más gasto cardiaco y volumen sistólico. Periféricas: capilarización, capacidad tampón y enzimas glucolíticas en los músculos del gesto de competición. Biología: alto coste; 24–48 h para repetir algo igual.',
+    'CIENCIA (técnica · fisiología · biología)': 'Manual v2.0 §14.1/§14.4: picos por encima de VT2 seguidos de pausa (P1) o de trabajo controlado (P4). El lactato se transporta y se oxida como combustible mientras sigues trabajando; la fatiga se relaciona más con H⁺, fosfato inorgánico y manejo iónico que con el lactato [R42][R43]. ' +
+      'Las adaptaciones de transportadores (MCT1/MCT4) son específicas de cada protocolo y no se asumen sin medirlas [R40]. Alto coste: 24–48 h para repetir algo igual. Solo entra si cabe por volumen, intensidad y fatiga del día antes y después (decisión de Pablo 6/11).',
     INTERFERENCIAS: '≥48 h del otro Z6–Z8 y de la calidad de carrera. La víspera, nada que fatigue ' + elegidos.map(function (m) { return m.g.toLowerCase(); }).filter(function (x, i, a) { return a.indexOf(x) === i; }).join(' ni ') + '. Al día siguiente: suave.'
   });
 }
