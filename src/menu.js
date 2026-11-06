@@ -22,7 +22,7 @@
     var hechos = (d.registro || []).length;
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
-    html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Cobertura y carrera<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-extras"><span class="set-ico">⊕</span>Extras semana en curso<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-calendario"><span class="set-ico">▦</span>Calendario de eventos<span class="go">›</span></button>';
@@ -165,6 +165,13 @@
   }
   function num1(n) { n = Math.round((Number(n) || 0) * 10) / 10; return String(n).replace('.', ','); }
   function unidadMeta(m) { return m.tipo === 'MIN' || m.tipo === 'MIN_GT' ? '′' : m.tipo === 'SALTOS' ? ' saltos' : ''; }
+  /** Días de la semana/mes en que está programado cada estímulo (chips). */
+  function diasMeta(m) {
+    var d = m.dias || []; if (!d.length) return '<div class="mg"><b>📅 Programado</b><span class="falta">sin programar</span></div>';
+    return '<div class="mg"><b>📅 Programado</b><span class="dchips">' + d.map(function (x) {
+      return '<span class="dchip' + (x.estado === 'BORRADOR' ? ' borr' : '') + (x.origen === 'FABRIK' ? ' fab' : '') + '">' + esc(diaSem(x.iso)) + ' ' + x.turno + ' · ' + esc(String(x.titulo).slice(0, 34)) + '</span>'; }).join('') + '</span></div>';
+  }
+  function diaSem(iso) { var n = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][new Date(iso + 'T12:00:00').getDay()]; return n + ' ' + Number(iso.slice(8, 10)); }
   function tarjetasMetas(lista) {
     if (!lista.length) return '<div class="hint">Sin metas. Crea la primera con «＋ Nueva meta».</div>';
     var grupos = {}, orden = [];
@@ -177,7 +184,10 @@
           '<div class="pbar dbl" title="Programado ' + pp + '% · hecho ' + pr + '%"><i class="prog' + (pp >= 100 ? ' full' : '') + '" style="width:' + pp + '%"></i><i class="real" style="width:' + pr + '%"></i></div>' +
           '<div class="meta-sub">' + (m.cubierta ? '✔ Programada' : 'Falta programar ' + num1(Math.max(0, m.meta - m.programado)) + u) + ' · hecho ' + num1(m.realizado) + u +
             (m.borrador ? ' · ' + num1(m.borrador) + ' en borrador' : '') + '</div></summary>' +
-          '<div class="exp-body">' + (m.notas ? '<div class="hint">' + esc(m.notas) + '</div>' : '') +
+          '<div class="exp-body">' + diasMeta(m) +
+          (m.integrar ? '<div class="mg"><b>🔗 Integrar con</b><span>' + esc(m.integrar) + '</span></div>' : '') +
+          (m.mejorar ? '<div class="mg"><b>📈 Cómo mejorarlo</b><span>' + esc(m.mejorar) + '</span></div>' : '') +
+          (m.notas ? '<div class="mg"><b>📝 Notas</b><span>' + esc(m.notas) + '</span></div>' : '') +
           '<div class="hint">Códigos ' + esc(m.codigos || '—') + ' · tipo ' + esc(m.tipo) + (m.maximo ? ' · máx. ' + esc(m.maximo) : '') + (m.ajuste ? ' · ajustes manuales ' + num1(m.ajuste) : '') + '</div>' +
           '<div class="evc-acc"><button class="btn-ghost sm" type="button" data-meta-aj="' + esc(m.id) + '">＋ Marcar hecho a mano</button><button class="btn-ghost sm" type="button" data-meta-ed="' + esc(m.id) + '">Editar</button></div></div></details>';
       }).join('');
@@ -197,7 +207,7 @@
     return h + '<div class="hint">Actualizado ' + esc(A.actualizado || '') + ' · también en la pestaña APP · RESUMEN del Sheet, con tus sensaciones de cada día.</div>';
   }
   function renderCobertura() {
-    var html = cabeceraVista('Cobertura', 'Menú');
+    var html = cabeceraVista('Estímulos', 'Menú');
     var C = S.cobertura;
     if (C && !C.metas) { $app.innerHTML = html + '<div class="hint">El servidor aún no tiene la versión con metas: instala la última versión del Apps Script.</div>'; document.getElementById('atras').onclick = function () { abrirAjustes(); }; return; }
     if (!C) {
@@ -225,6 +235,10 @@
       }).join('');
     } else {
       var B = M[tab], falta = B.metas.filter(function (m) { return !m.cubierta; });
+      var quedan = B.metas.reduce(function (a, m) { return a + (m.tipo === 'COUNT' ? Math.max(0, Math.ceil(m.meta - m.programado)) : 0); }, 0);
+      html += '<div class="xk">' + (tab === 'semana' ? '<div><b>' + B.cubiertas + '/' + B.total + '</b><span>metas semanales programadas</span></div>' : '<div><b>' + Math.round(B.pctProg * 100) + ' %</b><span>programado del mes · hecho ' + Math.round(B.pctReal * 100) + ' %</span></div>') +
+        '<div><b>' + quedan + '</b><span>sesiones por programar ' + (tab === 'semana' ? 'esta semana' : 'en el mes') + '</span></div></div>' +
+        '<button class="btn-ghost sm" type="button" id="cob-mail">✉ Enviarme el resumen por correo</button>';
       html += '<div class="hint">' + (tab === 'semana' ? 'Semana' : cap(B.etiqueta)) + ': ' + fechaCorta(B.desde) + ' – ' + fechaCorta(B.hasta) +
         (tab === 'semana' ? ' · se reinicia el domingo' : ' · se cierra el último domingo del mes') + '</div>';
       html += '<div class="hint leyenda"><i class="lg prog"></i> programado <i class="lg real"></i> hecho</div>';
@@ -243,6 +257,8 @@
     var todas = M.semana.metas.concat(M.mes.metas), porId = function (id) { return todas.filter(function (m) { return m.id === id; })[0]; };
     $app.querySelectorAll('[data-meta-ed]').forEach(function (b) { b.onclick = function () { abrirFormMeta(porId(b.dataset.metaEd)); }; });
     $app.querySelectorAll('[data-meta-aj]').forEach(function (b) { b.onclick = function () { abrirAjusteMeta(porId(b.dataset.metaAj)); }; });
+    var ml = document.getElementById('cob-mail');
+    if (ml) ml.onclick = function () { ml.disabled = true; api({ action: 'enviar_resumen', lunes: S.data.semana }).then(ok).then(function () { toast('Enviado a tu correo'); ml.disabled = false; }).catch(falloApi(ml)); };
     var nm = document.getElementById('meta-nueva'); if (nm) nm.onclick = function () { abrirFormMeta(null, tab === 'semana' ? 'Semana' : 'Mes'); };
     var nc = document.getElementById('car-nueva'); if (nc) nc.onclick = function () { abrirCarrera({ iso: S.data.hoy, id: '', bloque: '' }); };
     if (tab === 'carrera' && !S.analisis && !S._pidiendoAn) {
@@ -257,7 +273,7 @@
       return;
     }
     var fila = m && (S.metasLista || []).filter(function (r) { return r.ID === m.id; })[0], o = {};
-    if (fila) o = { ID: fila.ID, 'ÁMBITO': fila['ÁMBITO'], PRIORIDAD: fila.PRIORIDAD, 'ESTÍMULO': fila['ESTÍMULO'], META: fila.META, MPM: fila['META POR MES'], MAXIMO: fila['MÁXIMO'], TIPO: fila.TIPO, CODIGOS: fila['CÓDIGOS'], ACTIVA: fila.ACTIVA, NOTAS: fila.NOTAS, ORDEN: fila.ORDEN };
+    if (fila) o = { ID: fila.ID, 'ÁMBITO': fila['ÁMBITO'], PRIORIDAD: fila.PRIORIDAD, 'ESTÍMULO': fila['ESTÍMULO'], META: fila.META, MPM: fila['META POR MES'], MAXIMO: fila['MÁXIMO'], TIPO: fila.TIPO, CODIGOS: fila['CÓDIGOS'], ACTIVA: fila.ACTIVA, NOTAS: fila.NOTAS, ORDEN: fila.ORDEN, INT: fila['INTEGRAR CON'], MEJ: fila['CÓMO MEJORARLO'] };
     if (!o['ÁMBITO']) o['ÁMBITO'] = ambito || 'Semana';
     var sel = function (v, l) { return l.map(function (x) { return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join(''); };
     abrirHoja('<div class="row"><h2>' + (o.ID ? 'Editar meta' : 'Nueva meta') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
@@ -270,7 +286,9 @@
       '<div class="two"><div><label for="mt-x">Máximo (opcional)</label><input id="mt-x" inputmode="decimal" value="' + esc(o.MAXIMO || '') + '"></div>' +
       '<div><label for="mt-c">Códigos del plan</label><input id="mt-c" maxlength="80" value="' + esc(o.CODIGOS || '') + '" placeholder="W17 o W15|W16"></div></div>' +
       '<label for="mt-mm">Meta distinta por mes (opcional)</label><input id="mt-mm" maxlength="80" value="' + esc(o.MPM || '') + '" placeholder="11:3, 12:2, 1:1, *:3">' +
-      '<label for="mt-n">Notas / criterio</label><textarea id="mt-n" rows="2">' + esc(o.NOTAS || '') + '</textarea>' +
+      '<label for="mt-n">Notas / criterio</label><textarea id="mt-n" rows="3">' + esc(o.NOTAS || '') + '</textarea>' +
+      '<label for="mt-int">🔗 Con qué movimientos integrarlo</label><textarea id="mt-int" rows="2" placeholder="Ej. Z6–Z8 integrado con DU o bike">' + esc(o.INT || '') + '</textarea>' +
+      '<label for="mt-mej">📈 Cómo mejorarlo (objetivos y debilidades)</label><textarea id="mt-mej" rows="3">' + esc(o.MEJ || '') + '</textarea>' +
       '<div class="two"><div><label for="mt-o">Orden</label><input id="mt-o" inputmode="numeric" value="' + esc(o.ORDEN || '') + '"></div>' +
       '<div><label for="mt-on">Activa</label><select id="mt-on">' + sel(o.ACTIVA || 'Sí', ['Sí', 'No']) + '</select></div></div>' +
       '<div class="hint">El avance se calcula solo con los bloques del plan que llevan estos códigos (programado) y con lo que registres como hecho.</div>' +
@@ -286,7 +304,7 @@
       ev.preventDefault();
       var b = document.getElementById('mt-ok'); b.disabled = true;
       var meta = { ID: o.ID || '', 'ÁMBITO': val('mt-a'), PRIORIDAD: val('mt-p'), 'ESTÍMULO': val('mt-e'), META: val('mt-m').replace(',', '.'), 'MÁXIMO': val('mt-x').replace(',', '.'), TIPO: val('mt-t'),
-        'CÓDIGOS': val('mt-c').toUpperCase(), 'META POR MES': val('mt-mm'), NOTAS: val('mt-n'), ORDEN: val('mt-o'), ACTIVA: val('mt-on') };
+        'CÓDIGOS': val('mt-c').toUpperCase(), 'META POR MES': val('mt-mm'), NOTAS: val('mt-n'), ORDEN: val('mt-o'), ACTIVA: val('mt-on'), 'INTEGRAR CON': val('mt-int'), 'CÓMO MEJORARLO': val('mt-mej') };
       api({ action: 'meta', meta: meta }).then(ok).then(function (r) { fin(r); toast('Meta guardada'); }).catch(falloApi(b));
     };
   }

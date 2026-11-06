@@ -906,3 +906,11 @@ details.alt .exp-body{padding:0 10px 10px}
 .sh-row .btn{flex:1;text-align:center;text-decoration:none}
 .sh-row.three .btn{padding-left:6px;padding-right:6px}
 .dis{opacity:.4;pointer-events:none}
+.mg{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-top:1px dashed var(--line)}
+.mg b{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}
+.mg span{font-size:14px;line-height:1.45}
+.mg .falta{color:#e5534b;font-weight:700}
+.dchips{display:flex;flex-wrap:wrap;gap:4px}
+.dchip{font-size:12px;border-radius:999px;padding:3px 8px;background:rgba(255,122,26,.14);color:var(--fg);border:1px solid rgba(255,122,26,.35)}
+.dchip.fab{background:var(--line);border-color:var(--line)}
+.dchip.borr{border-style:dashed}

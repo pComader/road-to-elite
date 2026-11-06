@@ -1868,7 +1868,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.9.1';
+  var WEB_VERSION = 'web 0.10';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
