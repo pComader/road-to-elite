@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.12',
+  VERSION: '0.12.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1332,11 +1332,20 @@ function coberturaSin_() {
 
 // ===================== INSTALACIÓN =====================
 /** Ejecutar desde el editor tras cada actualización: crea la copia semanal de vídeos (domingo 23:00) y el backup (domingo 23:30, Madrid) y comprueba accesos. */
+/** v0.12.1 · El registro de «configurar» se guarda en APP · CONFIG › ultimo_configurar: Claude lo lee del Sheet y no hace falta pegarlo. */
+var LOGC_ = [];
+function logc_(s) { Logger.log(s); LOGC_.push(String(s)); }
 function configurar() {
+  LOGC_ = ['configurar ' + CONFIG.VERSION + ' · ' + new Date().toISOString()];
+  try { configurarSin_(); logc_('FIN · todo OK'); }
+  catch (e) { logc_('ERROR · ' + (e && e.message || e) + (e && e.stack ? ' · ' + String(e.stack).split('\n').slice(0, 3).join(' | ') : '')); throw e; }
+  finally { try { ponerConfig_('ultimo_configurar', LOGC_.join('\n').slice(0, 45000), 'Registro de la última ejecución de configurar (lo lee Claude)'); } catch (e2) { Logger.log('No se pudo guardar el registro: ' + e2); } }
+}
+function configurarSin_() {
   // Domingo: una sola tarea en cadena (cierre → vídeos → backup) en vez de tres con horarios cercanos.
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['copiarVideosGabi', 'backupSemanal', 'cierreSemanal', 'domingoNoche'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('domingoNoche').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(15).inTimezone(CONFIG.ZONA).create();   // termina antes del informe de las 23:30
-  Logger.log('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
+  logc_('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
   // Pestaña «APP · SEMANA EN BLOQUES»: mover/intercambiar desde el Sheet y repintarla al abrirlo
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['alEditarHoja', 'alAbrirHoja'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('alEditarHoja').forSpreadsheet(CONFIG.SHEET_ID).onEdit().create();
@@ -1347,31 +1356,31 @@ function configurar() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['cargarFabrikDomingo', 'sincronizarCalendario'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('cargarFabrikDomingo').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(15).inTimezone(CONFIG.ZONA).create();
   ScriptApp.newTrigger('sincronizarCalendario').timeBased().everyHours(1).create();
-  try { Logger.log('OK · Unificación: ' + unificar_()); } catch (e) { Logger.log('AVISO · Unificación (no se ha borrado nada): ' + e); }
+  try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
-  Logger.log('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
-  Logger.log('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
-  Logger.log('OK · Metas nuevas de competición (Z6–Z8 integrado, DU, front squat, burpees, hang snatch/clean): ' + sembrarMetasV12_());
-  Logger.log('OK · «Integrar con» y «Cómo mejorarlo» rellenados en ' + sembrarGuiaMetas_() + ' metas (solo celdas vacías)');
+  logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
+  logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
+  logc_('OK · Metas nuevas de competición (Z6–Z8 integrado, DU, front squat, burpees, hang snatch/clean): ' + sembrarMetasV12_());
+  logc_('OK · «Integrar con» y «Cómo mejorarlo» rellenados en ' + sembrarGuiaMetas_() + ' metas (solo celdas vacías)');
   if (!leerConfig_().resumen_auto) ponerConfig_('resumen_auto', 'Sí', 'Correo con los estímulos de la semana al aprobarla (Sí/No)');
-  Logger.log('OK · «Datos a registrar» sin pulsómetro fuera de la carrera: ' + limpiarDatosRegistrar_() + ' estímulos');
+  logc_('OK · «Datos a registrar» sin pulsómetro fuera de la carrera: ' + limpiarDatosRegistrar_() + ' estímulos');
   if (!leerConfig_().peso_kg) ponerConfig_('peso_kg', '90', 'Tu peso para las pautas de combustible e hidratación (kg)');
-  try { subirEventosACal_(); sincronizarCalendario(); Logger.log('OK · Google Calendar: ' + calendario_().getName()); } catch (e) { Logger.log('AVISO · Calendar: ' + e); }
-  try { Logger.log('OK · Reels de datos: ' + ideasReels_().length + ' ideas con bloque asociable'); } catch (e) { Logger.log('AVISO · Reels: ' + e); }
-  Logger.log('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
-  Logger.log('OK · Tests pasados a APP · EVENTOS: ' + migrarTestsAEventos_() + ' (0 = ya estaban)');
+  try { subirEventosACal_(); sincronizarCalendario(); logc_('OK · Google Calendar: ' + calendario_().getName()); } catch (e) { logc_('AVISO · Calendar: ' + e); }
+  try { logc_('OK · Reels de datos: ' + ideasReels_().length + ' ideas con bloque asociable'); } catch (e) { logc_('AVISO · Reels: ' + e); }
+  logc_('OK · Metas migradas desde Semana/Mes: ' + migrarMetas_() + ' (0 = ya estaban)');
+  logc_('OK · Tests pasados a APP · EVENTOS: ' + migrarTestsAEventos_() + ' (0 = ya estaban)');
   ['objetivo_2km', 'objetivo_10km'].forEach(function (k) {     // «45:00» se había convertido en 45 horas: se guarda como texto
     var x = listar_(HOJAS.CONFIG).filter(function (r) { return r.CLAVE === k; })[0];
     if (x && /^\d+:\d{2}:00$/.test(x.VALOR)) actualizarFila_(HOJAS.CONFIG, x._fila, { VALOR: x.VALOR.replace(/:00$/, '') });
   });
   analizarCarrera_();
   var est = estructura_(fabrik_());
-  Logger.log('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
-  try { pintarHojaSemana_(lunesDe_(hoyIso_())); Logger.log('OK · Pestaña «APP · SEMANA EN BLOQUES» pintada'); } catch (e) { Logger.log('AVISO · Semana en bloques: ' + e); }
-  try { pintarResumen_(); Logger.log('OK · Pestaña «APP · RESUMEN» pintada (mismos % que la app)'); } catch (e) { Logger.log('AVISO · Resumen: ' + e); }
-  Logger.log('OK · Pestañas visibles: ' + ordenarHojas_() + ' · las internas de la app quedan ocultas');
-  Logger.log('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { var sh = miLibro_().getSheetByName(HOJAS[k]); return sh ? sh.getName() : HOJAS[k] + ' (se crea al usarla)'; }).join(', '));
-  Logger.log('OK · Vídeos en tu copia: ' + leerVideos_().length);
+  logc_('OK · Fabrik: ' + est.semanas.length + ' semanas leídas · erratas: ' + est.erratas.length);
+  try { pintarHojaSemana_(lunesDe_(hoyIso_())); logc_('OK · Pestaña «APP · SEMANA EN BLOQUES» pintada'); } catch (e) { logc_('AVISO · Semana en bloques: ' + e); }
+  try { pintarResumen_(); logc_('OK · Pestaña «APP · RESUMEN» pintada (mismos % que la app)'); } catch (e) { logc_('AVISO · Resumen: ' + e); }
+  logc_('OK · Pestañas visibles: ' + ordenarHojas_() + ' · las internas de la app quedan ocultas');
+  logc_('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { var sh = miLibro_().getSheetByName(HOJAS[k]); return sh ? sh.getName() : HOJAS[k] + ' (se crea al usarla)'; }).join(', '));
+  logc_('OK · Vídeos en tu copia: ' + leerVideos_().length);
 }
 
 // ===================== FABRIK: ESTRUCTURA POR POSICIÓN (copiado de la app de Gabi, solo lectura) =====================
