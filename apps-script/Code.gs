@@ -2124,6 +2124,7 @@ function contextoSemana_(lunes, excluirId, excluirFn) {
     if (t === 'AM') { var cAM = codigosDe_(r['CÓDIGOS']); d.codigosAM = (d.codigosAM || []).concat(cAM); if (cAM.some(function (c) { return /^(W01|W02|W04)$/.test(c); })) d.minCarreraAM = (d.minCarreraAM || 0) + min;
       else if (!cAM.some(function (c) { return /^W0[123]$/.test(c); })) d.nExtraAMcal = (d.nExtraAMcal || 0) + 1; }
     if (/R01|R02|R03|R04|W04/.test(r['CÓDIGOS'])) d.duro = true;
+    if (norm(r.ORIGEN) === 'FABRIK' && esMetconP_(r)) { d.duro = true; d.fabrikP = (d.fabrikP || []).concat([r['TÍTULO']]); }
   });
   eventosEntre_(sumarDias(lunes, -3), sumarDias(lunes, 10)).forEach(function (e) {
     var i0 = celdaIso_(e.INICIO), f0 = celdaIso_(e.FIN) || i0, an = +e['ANTES (días bajar volumen)'] || 0, de = +e['DESPUÉS (días recuperación)'] || 0;
@@ -2291,15 +2292,19 @@ function generarExtras_(lunes, opts) {
   var candDe = function (o) { return candidatoDe_(o, cat); };
   var huecoCalidad = [];
   // 6.2 · carrera de la semana (pestaña «carrera») adaptada con el histórico; los tests sustituyen la calidad
-  var ordenC = function (s) { var c = s['CÓDIGOS']; return s._fijo ? -1 : /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
+  var ordenC = function (s) { var c = s['CÓDIGOS']; return /W04/.test(c) ? 0 : /R01/.test(c) ? 1 : /W01/.test(c) ? 2 : /W02/.test(c) ? 3 : 4; };
   var yaCarrera = function (c) { return ctx.dias.some(function (d) { return d.codigos.indexOf(c) >= 0 && d.fijos && d.fijos.indexOf(c) >= 0; }); };
-  var CARR = carreraSemana_(lunes), tipoSem = CARR.semanaTipo || 'carga', sinR04 = '';
+  var CARR = carreraSemana_(lunes), tipoSem = CARR.semanaTipo || 'carga', sinR04 = '', EXC = excepcionSemana_(lunes);
+  if (EXC) {   // semana sin requisito semanal: solo Z2 corta y ergo, suaves y opcionales; nada intenso ni metas
+    CARR = CARR.filter(function (s) { return /^(W02|W03)$/.test(s['CÓDIGOS']); }).map(function (s) {
+      return Object.assign(s, { 'TÍTULO': s['TÍTULO'] + ' · opcional', 'POR QUÉ (cursiva)': 'Semana sin requisito semanal (' + EXC + '): solo movimiento suave y opcional para llegar fresco. ' + (s['POR QUÉ (cursiva)'] || '') });
+    });
+    CARR.semanaTipo = tipoSem; log.push('Semana sin requisito semanal: ' + EXC);
+  }
   CARR.sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
     if (codigosDe_(s['CÓDIGOS']).every(yaCarrera)) return;                          // ya lo tienes con candado
     var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO;
-    // v0.13 · manual v2.0: el P que ya cubre Fabrik va su día; la Z2 corta va el día de la Z2 de Fabrik
-    var dF = s._fijo ? ctx.dias.filter(function (x) { return x.iso === s._fijo.iso; })[0] : null;
-    if (dF) { colocar(s, c, { iso: dF.iso, dia: diaDe_(dF.iso), turno: s._fijo.turno, motivos: [s._fijo.motivo], choques: [] }); return; }
+    // v0.13 · manual v2.0: la Z2 corta va el día de la Z2 de Fabrik
     if (s._fabrikZ2) {
       var hz = puntuarHuecos_(c, ctx, true).filter(function (h) { return h.iso === s._fabrikZ2.iso; })
         .sort(function (a, b) { var la = /no la tienes libre/.test(a.choques.join()) ? 1 : 0, lb = /no la tienes libre/.test(b.choques.join()) ? 1 : 0; return la - lb || (a.turno === 'AM' ? -1 : 1); })[0];
@@ -2317,7 +2322,7 @@ function generarExtras_(lunes, opts) {
     o.REFUERZO_ID = r.ID; o._prio = 'refuerzo';
     cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Programado', 'CÓDIGO': c || '' }); } });
   });
-  pendientesAbiertos_().filter(function (p) { return p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes; }).forEach(function (p) {
+  pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes; }).forEach(function (p) {
     var orig = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {};
     var o = { ORIGEN: orig.ORIGEN && norm(orig.ORIGEN) !== 'FABRIK' ? orig.ORIGEN : 'EXTRA', 'TÍTULO': 'Pendiente · ' + (p.BLOQUE || orig['TÍTULO'] || ''), CONTENIDO: orig.CONTENIDO || '', MIN: orig.MIN || 15,
       'CÓDIGOS': orig['CÓDIGOS'] || '', INTENSIDAD: orig.INTENSIDAD || '', 'POR QUÉ (cursiva)': 'Recolocado desde el ' + p['FECHA ORIGINAL'] + (p.MOTIVO ? ' (' + p.MOTIVO + ')' : '') + '. Solo cuenta cuando lo hagas.', PENDIENTE_ID: p.ID, _prio: 'pendiente' };
@@ -2325,7 +2330,7 @@ function generarExtras_(lunes, opts) {
   });
   var cub = function (c) { return ctx.dias.reduce(function (a, d) { return a + d.codigos.filter(function (x) { return x === c; }).length; }, 0); };
   var enCola = function (c) { return cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf(c) >= 0; }).length; };
-  var metas = listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
+  var metas = EXC ? [] : listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
   metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
     var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) - cods.reduce(function (a, c) { return a + cub(c) + enCola(c); }, 0);
     var c = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
@@ -2414,10 +2419,11 @@ function generarExtras_(lunes, opts) {
   var previa = { modoAM: modoAM, mananas: ctx.dias.filter(function (d) { return d.am && !d.descanso; }).map(function (d) { return diaDe_(d.iso); }),
     endurance: colocados.filter(function (o) { return esEndurance(candDe(o)); }).map(function (o) { return o['TÍTULO'] + ' → ' + o['DÍA'] + ' ' + o.TURNO; }),
     refuerzos: refs.map(function (r) { return r.TEXTO; }), pendientes: cola.length >= 0 ? nuevos.filter(function (o) { return o.PENDIENTE_ID; }).map(function (o) { return o['TÍTULO']; }) : [],
-    sinHueco: sinHueco, sinR04: sinR04, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
+    sinHueco: sinHueco, sinR04: sinR04, excepcion: EXC, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
   if (sim) return previa;
-  nuevos.forEach(function (o) { delete o._prio; delete o._fijo; delete o._fabrikZ2; delete o._condicional; });
+  nuevos.forEach(function (o) { delete o._prio; delete o._fabrikZ2; delete o._condicional; });
   if (sinR04) ponerConfig_('r04_' + lunes, sinR04, '2.ª P integrada: motivo por el que no se programó esa semana');
+  if (EXC) ponerConfig_('excepcion_' + lunes, EXC, 'Semana sin requisito semanal: motivo');
   asegurarColumna_(HOJAS.PLAN, 'REFUERZO_ID'); asegurarColumna_(HOJAS.SEMANAS, 'BALANCE ESTÍMULOS'); asegurarColumna_(HOJAS.PLAN, 'ALTERNATIVAS');
   if (nuevos.length) bloqueo_(function () {
     var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
@@ -2503,14 +2509,15 @@ function carreraSemana_(lunes) {
     var t = { ORIGEN: 'CARRERA', 'TÍTULO': e.EVENTO, CONTENIDO: '15′ calentamiento + 3×15″ progresivos · ' + e.EVENTO + ' a tope · 10′ suaves.\n\n' + (e['CÓMO PROCEDER'] || '') + '\n\nRegistra: tiempo total, parciales por km, FC media y máx, RPE.',
       INTENSIDAD: '🔴 Test', MIN: /10/.test(e.EVENTO) ? 75 : 40, 'CÓDIGOS': q ? q['CÓDIGOS'] : 'W04', 'POR QUÉ (cursiva)': 'Test de la semana: sustituye la calidad. Descansado, sin Z6–Z8 ni pierna pesada el día antes.', INTERFERENCIAS: 'Nada duro el día antes; el día después, suave.' };
     if (q) out.splice(out.indexOf(q), 1, t); else out.push(t);
-    if (/10/.test(e.EVENTO)) out = out.filter(function (s) { return !/W01/.test(s['CÓDIGOS']); });
+    // v0.13 · decisión de Pablo 6/11: aunque haya test se mantiene el requisito semanal (la larga no desaparece)
   });
   return out;
 }
 // ===================== v0.13 · MANUAL DE RENDIMIENTO HÍBRIDO v2.0 (doc del proyecto, rev. 5/11/2026) =====================
 /**
  * Reglas del manual que la app aplica al «Cargar extras» (decisión de Pablo 6/11/2026: al pie de la letra):
- *  · §14.1/§14.4 · si un metcon de Fabrik ya es de la familia P1/P4, ES el Z6–Z8 de la semana: no se añade otro bloque.
+ *  · Decisión de Pablo 6/11 · el P del plan va SIEMPRE; un metcon de Fabrik tipo P1–P4 solo cuenta como día duro (≥48 h)
+ *    y hace más difícil encajar la 2.ª P. El requisito semanal se mantiene aunque haya test (excepciones: excepcionSemana_).
  *  · §15.1 · SPR1 va al inicio de la sesión del P de esa semana (una sola sesión física); SPR2 va dentro del P3.
  *  · §11.1 · el jueves Fabrik pide Z2 real: la Z2 corta va ese día y se registra una sola vez.
  *  · §10.3 + decisión de Pablo · la 2.ª P integrada (R04) solo entra si cabe por volumen, intensidad y fatiga.
@@ -2519,17 +2526,14 @@ var MANUAL_V2_ = 'Manual de rendimiento híbrido v2.0';
 function filasFabrikSemana_(lunes) {
   return listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6) && !/NO HACER|SUSTITUIDO|OCULTO/.test(r.ESTADO); });
 }
-/** Metcon de Fabrik de la semana que ya es de la familia P1 (every N′ con máquina + barra/WB) o P4 (alternancia de trabajo controlado y picos). */
-function fabrikCubreP_(lunes, proto) {
-  if (!/^P[14]$/.test(proto)) return null;
-  return filasFabrikSemana_(lunes).filter(function (r) {
+/** ¿Este bloque de Fabrik es un metcon de la familia P1 (every N′ con máquina + barra/WB) o P4 (alternancia de trabajo controlado y picos)? */
+function esMetconP_(r) {
     var t = norm(r['TÍTULO'] + '\n' + r.CONTENIDO);
     var erg = /\bCALS?\b|CALORI|ROW|SKI|BIKE|ECHO|ASSAULT|\d+\s*M\s*(RUN|CARRERA)|\bRUN\b/.test(t);
     var barra = /WALL ?BALLS?|\bWB\b|CLEAN|SNATCH|THRUSTER|LUNGE|STOH|SHOULDER TO|JERK/.test(t);
     var every = /EVERY\s*\d+\s*\D{0,3}\s*[X×]\s*[3-6]\b|E\s?\d\s?M\s?O?M\s*[X×]\s*[3-6]\b/.test(t);
     var alterna = /EMOM/.test(t) && /IMPAR|\bPAR\b|\bODD\b|\bEVEN\b|ALTERN/.test(t) && /SNATCH|CLEAN|THRUSTER|STOH|SHOULDER TO|JERK|MUSCLE/.test(t);
-    return (every && erg && barra) || (proto === 'P4' && alterna);
-  })[0] || null;
+    return (every && erg && barra) || alterna;
 }
 /** Bloque de Fabrik de la semana con Z2 real (conversacional, RPE <6). */
 function fabrikZ2_(lunes) {
@@ -2543,21 +2547,11 @@ function reglasManualV2_(out, lunes, titulo) {
   var tipo = /\bTEST (2|10) ?KM/.test(nt) && !/SIN TEST/.test(nt) ? 'test' : /PUESTA A PUNTO|TAPER/.test(nt) ? 'taper' : /DESCARGA/.test(nt) ? 'descarga' : 'carga';
   var p = out.filter(function (x) { return /R01/.test(x['CÓDIGOS']); })[0];
   var spr = out.filter(function (x) { return x['CÓDIGOS'] === 'V01'; })[0];
-  // 1 · Fabrik ya cubre el P1/P4 de la semana
+  // 1 · Decisión de Pablo 6/11: el P del plan va SIEMPRE (obligatorio aunque Fabrik traiga un metcon de la familia P1–P4).
+  //     El metcon tipo P de Fabrik cuenta como día duro: el P del plan se separa ≥48 h y la 2.ª P cuesta más de encajar.
   if (p) {
-    var proto = (norm(p['TÍTULO']).match(/\bP[1-4]\b/) || [''])[0], f = fabrikCubreP_(lunes, proto);
-    if (f) {
-      var dia = diaDe_(celdaIso_(f.FECHA));
-      var cub = { ORIGEN: 'Z6–Z8', 'TÍTULO': proto + ' · lo cubre Fabrik (' + dia.toLowerCase() + ': ' + f['TÍTULO'] + ')',
-        CONTENIDO: 'No añadas otro bloque: el metcon de Fabrik del ' + dia.toLowerCase() + ' («' + f['TÍTULO'] + '») ya es de la familia ' + proto + ' (' + MANUAL_V2_ + ' §14.1/§14.4).\n\n' +
-          'Cuenta como el Z6–Z8 de la semana SOLO si lo completas con tiempos estables y repeticiones válidas en todas las rondas o minutos. Si los tiempos se disparan o se deforma la técnica, márcalo «No hecho»: pasa a pendientes y se recoloca el ' + proto + ' con tu aprobación.\n\nRegistra: tiempo de cada ronda o minuto, técnica y RPE.',
-        INTENSIDAD: '🔴 Z6–Z8', MIN: 0, 'CÓDIGOS': 'R01',
-        'POR QUÉ (cursiva)': 'Manual v2.0: lo que Fabrik ya cubre se registra una vez y no se repite (§16.1). Apilar otro ' + proto + ' encima sumaría fatiga sin estímulo nuevo (§4).',
-        'CIENCIA (técnica · fisiología · biología)': p['CIENCIA (técnica · fisiología · biología)'] || '', INTERFERENCIAS: p.INTERFERENCIAS || '',
-        ALTERNATIVAS: 'Si el metcon de Fabrik no sale estable, el ' + proto + ' del plan queda como pendiente:\n' + p['TÍTULO'] + '\n' + p.CONTENIDO,
-        _fijo: { iso: celdaIso_(f.FECHA), turno: norm(f.TURNO) === 'AM' ? 'AM' : 'PM', motivo: 'el metcon de Fabrik de ese día ya es el ' + proto + ' de la semana' } };
-      out.splice(out.indexOf(p), 1, cub); p = null;
-    }
+    var fP = filasFabrikSemana_(lunes).filter(esMetconP_);
+    if (fP.length) p['POR QUÉ (cursiva)'] = [p['POR QUÉ (cursiva)'], 'Fabrik ya trae un metcon tipo P (' + fP.map(function (r) { return diaDe_(celdaIso_(r.FECHA)).toLowerCase() + ': ' + r['TÍTULO']; }).join('; ') + '): el P del plan va igualmente (obligatorio), separado ≥48 h de ese día, y la 2.ª P solo entra si aún cabe.'].filter(Boolean).join(' ');
   }
   // 2 · SPR1 al inicio de la sesión del P (una sola sesión física, §15.1)
   if (spr && p) {
@@ -2576,22 +2570,38 @@ function reglasManualV2_(out, lunes, titulo) {
   out.semanaTipo = tipo;
   return out;
 }
+/**
+ * Semana sin requisito semanal (decisión de Pablo 6/11): SOLO si (a) él lo indica (APP · SEMANAS › SIN REQUISITO SEMANAL = Sí),
+ * (b) hay una competición decidida el fin de semana, o (c) hay un test que él marca como MUY EXIGENTE (Open, clasificatorio online…)
+ * en APP · EVENTOS. Los tests normales NO levantan el requisito. Devuelve el motivo o ''.
+ */
+function excepcionSemana_(lunes) {
+  var conf = filaSemana_(lunes) || {}, si = function (v) { return /^(S[IÍ]|TRUE|1|X)$/i.test(String(v || '').trim()); };
+  if (si(conf['SIN REQUISITO SEMANAL'])) return 'lo indicaste tú en la confirmación de la semana';
+  var sab = sumarDias(lunes, 5), dom = sumarDias(lunes, 6), out = '';
+  eventosEntre_(lunes, dom).forEach(function (e) {
+    if (out || /Ignorado|Pendiente/i.test(e.ESTADO || '')) return;
+    var i0 = celdaIso_(e.INICIO), f0 = celdaIso_(e.FIN) || i0;
+    if (si(e['MUY EXIGENTE'])) out = 'test o competición muy exigente: ' + e.EVENTO + ' (' + isoAFecha(i0) + ')';
+    else if (/Competici/i.test(e.TIPO || '') && i0 <= dom && f0 >= sab) out = 'competición el fin de semana: ' + e.EVENTO;
+  });
+  return out;
+}
 /** ¿Cabe la 2.ª P integrada (R04) en el mejor hueco? Devuelve el motivo si NO cabe (decisión de Pablo 6/11 + manual §10.3). */
 function motivoSinR04_(h, ctx, tipo, lunes) {
-  if (/descarga|taper|test/.test(tipo || '')) return 'semana de ' + tipo + ' del complemento';
-  if (ctx.dias.some(function (d) { return d.semanaTest; })) return 'semana de test';
   if (metconDuro_(lunes) >= 2) return 'Fabrik ya trae ≥2 metcons de RPE ≥8 esta semana';
   if (!h) return 'no hay hueco';
   var malo = (h.choques || []).filter(function (c) { return /dura|48 h|pierna pesada|RPE|evento|recuperaci/.test(c); });
   if (malo.length) return malo.join('; ');
   var i = ctx.dias.map(function (d) { return d.iso; }).indexOf(h.iso), ant = ctx.dias[i - 1], sig = ctx.dias[i + 1];
-  if (ant && (ant.rpe >= 8 || ant.duro)) return 'el día anterior es duro';
-  if (sig && (sig.rpe >= 8 || sig.duro)) return 'el día siguiente es duro';
+  if (ant && (ant.rpe >= 8 || ant.duro)) return 'el día anterior es duro' + (ant.fabrikP ? ' (metcon tipo P de Fabrik)' : '');
+  if (sig && (sig.rpe >= 8 || sig.duro)) return 'el día siguiente es duro' + (sig.fabrikP ? ' (metcon tipo P de Fabrik)' : '');
   return '';
 }
 /** v0.13 · Una vez (flag manual_v2 en APP · CONFIG): lleva a Google Calendar los tests movidos a enero y alinea la ciencia del catálogo con el manual. */
 function aplicarManualV2_() {
-  if (leerConfig_().manual_v2) return 'ya aplicado (' + leerConfig_().manual_v2 + ')';
+  asegurarColumna_(HOJAS.SEMANAS, 'SIN REQUISITO SEMANAL'); asegurarColumna_(HOJAS.EVENTOS, 'MUY EXIGENTE');
+  if (leerConfig_().manual_v2) return 'ya aplicado (' + leerConfig_().manual_v2 + ') · columnas de excepción listas';
   var n = 0;
   listar_(HOJAS.EVENTOS).filter(function (r) { return /^Test/i.test(r.EVENTO) && r['ORIGEN CAL'] !== 'Google'; }).forEach(function (r) { eventoACal_(r.ID); n++; });
   var CIEN = {
