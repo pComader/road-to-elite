@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.15.0',
+  VERSION: '0.15.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1344,6 +1344,11 @@ function coberturaSin_() {
 // ===================== INSTALACIÓN =====================
 /** Ejecutar desde el editor tras cada actualización: crea la copia semanal de vídeos (domingo 23:00) y el backup (domingo 23:30, Madrid) y comprueba accesos. */
 /** v0.12.1 · El registro de «configurar» se guarda en APP · CONFIG › ultimo_configurar: Claude lo lee del Sheet y no hace falta pegarlo. */
+/** v0.15.1 · Google a veces falla puntualmente al crear o borrar disparadores («error en el servidor»): se reintenta y, si sigue, se anota y se continúa. */
+function reintentar_(f, que) {
+  for (var i = 0; i < 4; i++) { try { return f(); } catch (e) { if (i === 3) { try { logc_('AVISO · ' + (que || 'operación') + ' no se pudo tras 4 intentos: ' + e); } catch (x) {} return null; } Utilities.sleep(1500 * (i + 1)); } }
+}
+function borrarDisp_(t) { return reintentar_(function () { ScriptApp.deleteTrigger(t); return true; }, 'borrar disparador ' + t.getHandlerFunction()); }
 var LOGC_ = [];
 function logc_(s) { Logger.log(s); LOGC_.push(String(s)); }
 function configurar() {
@@ -1354,23 +1359,23 @@ function configurar() {
 }
 function configurarSin_() {
   // Domingo: una sola tarea en cadena (cierre → vídeos → backup) en vez de tres con horarios cercanos.
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (['copiarVideosGabi', 'backupSemanal', 'cierreSemanal', 'domingoNoche'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('domingoNoche').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(15).inTimezone(CONFIG.ZONA).create();   // termina antes del informe de las 23:30
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['copiarVideosGabi', 'backupSemanal', 'cierreSemanal', 'domingoNoche'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('domingoNoche').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(22).nearMinute(15).inTimezone(CONFIG.ZONA).create(); }, 'disparador');   // termina antes del informe de las 23:30
   logc_('OK · Carpeta de backups: ' + DriveApp.getFolderById(CONFIG.BACKUPS_ID).getName());
   // Pestaña «APP · SEMANA EN BLOQUES»: mover/intercambiar desde el Sheet y repintarla al abrirlo
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (['alEditarHoja', 'alAbrirHoja'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('alEditarHoja').forSpreadsheet(CONFIG.SHEET_ID).onEdit().create();
-  ScriptApp.newTrigger('alAbrirHoja').forSpreadsheet(CONFIG.SHEET_ID).onOpen().create();
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarAvisos') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('revisarAvisos').timeBased().everyHours(1).create();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['alEditarHoja', 'alAbrirHoja'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('alEditarHoja').forSpreadsheet(CONFIG.SHEET_ID).onEdit().create(); }, 'disparador');
+  reintentar_(function () { return ScriptApp.newTrigger('alAbrirHoja').forSpreadsheet(CONFIG.SHEET_ID).onOpen().create(); }, 'disparador');
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarAvisos') borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('revisarAvisos').timeBased().everyHours(1).create(); }, 'disparador');
   // v0.9: Fabrik → plan el domingo a las 23:15 y Google Calendar cada hora
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (['cargarFabrikDomingo', 'sincronizarCalendario'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('cargarFabrikDomingo').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(15).inTimezone(CONFIG.ZONA).create();
-  ScriptApp.newTrigger('sincronizarCalendario').timeBased().everyHours(1).create();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['cargarFabrikDomingo', 'sincronizarCalendario'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('cargarFabrikDomingo').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(15).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
+  reintentar_(function () { return ScriptApp.newTrigger('sincronizarCalendario').timeBased().everyHours(1).create(); }, 'disparador');
   // v0.15: motor diario (Fabrik → APP · MOTOR WODS, Gemini) y backup completo de los jueves
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create();
-  ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
+  reintentar_(function () { return ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
