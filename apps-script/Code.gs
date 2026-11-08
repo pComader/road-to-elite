@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.14.0',
+  VERSION: '0.14.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -3709,6 +3709,21 @@ function adaptarMaterial_(txt, mat) {
   return { txt: out.join('\n'), cambios: n, ratio: total ? n / total : 0, conserva: notas.filter(function (x, i, a) { return a.indexOf(x) === i; }) };
 }
 
+/**
+ * v0.14.1 · Regla de Pablo (8/11): en el viaje, lo que no se hace con normalidad se compensa subiendo MUCHO la intensidad
+ * (no el volumen): menos descanso, más densidad, tempo y pausas en la fuerza con mancuerna, chaleco si lo hay y un final tipo P corto.
+ */
+function intensificarViaje_(txt, mat, seccion) {
+  var r = ['', '⚡ INTENSIDAD AL ALZA (viaje: compensa la falta de material y de CrossFit puro)'];
+  r.push('· Descansos −40–50 % y objetivo RPE 8–9 en todo el bloque.');
+  if (seccion === 'fuerza') r.push('· Fuerza con implemento ligero: tempo 4″ en la bajada + pausa 2″ abajo, 1½ reps o unilateral; última serie hasta RIR 1.');
+  if (seccion === 'metcon') r.push('· Metcon: misma duración con más densidad (sin pausas en los cambios) y la última ronda a tope.');
+  if (seccion === 'skills') r.push('· Skills: series cortas de máxima calidad con menos descanso; añade una variante más difícil (déficit, pausa, estricto).');
+  if (mat.chaleco) r.push('· Chaleco puesto en gimnásticos, saltos, burpees y carrera.');
+  r.push('· Final (5–6′, si el bloque no era ya intenso): 6 × 20″ ALL-OUT ' + (mat._correr ? 'sprint en cuesta' : mat.comba ? 'double unders' : 'burpees') + ' / 40″ suave.');
+  return txt + r.join('\n');
+}
+
 // ---------- huecos y colocación ----------
 /** slots: [{iso, turno, ok, cap, mat, correr:{libre,tempo,series}, tipo:'casa'|'viaje'}] */
 function colocar_(fila, slots, ocupado, durasPorIso, opts) {
@@ -3771,13 +3786,13 @@ function proponerViaje_(lunes, p) {
         : !(tipoSeccion_(r) === 'fuerza' && !sl.mat.barra) && ad.ratio <= 0.6;
       if (vale && (ocupado[sl.iso + sl.turno] || 0) + r._min <= sl.cap) {
         ocupado[sl.iso + sl.turno] = (ocupado[sl.iso + sl.turno] || 0) + r._min;
-        if (ad && ad.cambios) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: ad.txt, motivo: 'Adaptado a tu material (' + ad.cambios + ' cambios; conserva ' + ad.conserva.join(', ') + ')' });
-        else if (esCarreraFila_(r) && /R02/.test(r['CÓDIGOS']) && !sl.correr.series) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: '12′ fáciles\n20′ continuos a ritmo umbral (tempo)\n8′ suaves', motivo: 'Sin sitio para series: la calidad Z4 pasa a tempo continuo (misma zona)' });
+        if (ad && ad.cambios) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: intensificarViaje_(ad.txt, sl.mat, tipoSeccion_(r)), motivo: 'Adaptado a tu material con intensidad al alza (' + ad.cambios + ' cambios; conserva ' + ad.conserva.join(', ') + ')' });
+        else if (esCarreraFila_(r) && /R02/.test(r['CÓDIGOS']) && !sl.correr.series) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: '12′ fáciles\n20′ continuos a ritmo umbral (tempo), los últimos 4′ algo más rápidos\n8′ suaves', motivo: 'Sin sitio para series: la calidad Z4 pasa a tempo continuo (misma zona, final más rápido)' });
         return;
       }
     }
     var s = colocar_(r, slots, ocupado, duras);
-    if (s) cambios.push({ id: r.ID, accion: s.tipo === 'viaje' ? 'adaptar' : 'mover', iso: s.iso, turno: s.turno, contenido: s.tipo === 'viaje' && !esCarreraFila_(r) ? adaptarMaterial_(r.CONTENIDO, s.mat).txt : null, motivo: s.tipo === 'casa' ? 'Se compensa en casa (' + diaDe_(s.iso) + ', tope +40 %)' : 'Movido dentro del viaje a un hueco con material' });
+    if (s) cambios.push({ id: r.ID, accion: s.tipo === 'viaje' ? 'adaptar' : 'mover', iso: s.iso, turno: s.turno, contenido: s.tipo === 'viaje' && !esCarreraFila_(r) ? intensificarViaje_(adaptarMaterial_(r.CONTENIDO, s.mat).txt, s.mat, tipoSeccion_(r)) : null, motivo: s.tipo === 'casa' ? 'Se compensa en casa (' + diaDe_(s.iso) + ', tope +40 %)' : 'Movido dentro del viaje a un hueco con material' });
     else cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'No cabe sin pasar del +40 % ni juntar sesiones duras: a pendientes' });
   });
   (p.rutas || []).forEach(function (rt) { cambios.push({ accion: 'nuevo', iso: rt.iso, turno: rt.turno || 'AM', nuevo: { ORIGEN: 'VIAJE', 'TÍTULO': 'Ruta andando · Z1', CONTENIDO: 'Ruta a pie ' + (rt.min ? '≈' + rt.min + '′' : '') + ' a ritmo cómodo.\nCuenta como Z1 (no como Z2 de carrera). Al día siguiente, menos pierna.', MIN: rt.min || 90, INTENSIDAD: '🔵 Z1', 'CÓDIGOS': '' }, motivo: 'Ruta marcada en el viaje' }); });
