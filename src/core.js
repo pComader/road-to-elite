@@ -1690,6 +1690,34 @@
   }
   function cerrarHoja() { $scrim.hidden = true; $scrim.innerHTML = ''; if (S.recargarAlCerrar) { S.recargarAlCerrar = false; setTimeout(recargarApp, 50); } }
   $scrim.addEventListener('click', function (e) { if (e.target === $scrim || e.target.closest('[data-close]')) cerrarHoja(); });
+  // ---------- v0.16.2 · mantener pulsado un título [data-ver-blq] → ventana con todo el bloque (sin salir de donde estás) ----------
+  function bloqueParaVer(id) {
+    var r = (S.data && S.data.plan || []).filter(function (x) { return x.ID === id; })[0] || null, b = null, iso = '';
+    ((S.data && S.data.dias) || []).forEach(function (x) { (x.bloques || []).forEach(function (bb) { if ((bb.idPlan || bb.id) === id) { b = bb; iso = x.iso; } }); });
+    if (!r && !b) return null;
+    var cont = (r && r.CONTENIDO) || (b && (b.partes || []).map(function (p) { return (p.etiqueta ? p.etiqueta + '\n' : '') + (p.texto || (p.lineas || []).join('\n')); }).join('\n\n')) || '';
+    return { titulo: (r && (r['TÍTULO'] || r.BLOQUE)) || (b && b.titulo) || '', cuando: [iso ? fechaCorta(iso) : ((r && r.FECHA) || ''), (r && r.TURNO) || (b && b.turno) || ''].filter(Boolean).join(' · '),
+      meta: [(r && r.ORIGEN) || '', (r && r.INTENSIDAD) || '', (r && r.MIN) ? r.MIN + '′' : ''].filter(Boolean).join(' · '), cont: cont, porque: (r && r['POR QUÉ (cursiva)']) || '' };
+  }
+  function verBloque(id) {
+    var x = bloqueParaVer(id), pop = document.getElementById('blq-pop');
+    if (!pop) { pop = document.createElement('div'); pop.id = 'blq-pop'; pop.className = 'blq-pop'; document.body.appendChild(pop);
+      pop.addEventListener('click', function (e) { if (e.target === pop || e.target.closest('[data-blq-cerrar]')) pop.hidden = true; });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') pop.hidden = true; }); }
+    pop.innerHTML = '<div class="blq-card" role="dialog" aria-modal="true"><div class="row"><h3>' + esc(x ? x.titulo : 'Bloque') + '</h3><button class="btn-ghost" type="button" data-blq-cerrar>Cerrar</button></div>' +
+      (x ? (x.cuando || x.meta ? '<div class="hint">' + esc([x.cuando, x.meta].filter(Boolean).join(' · ')) + '</div>' : '') + '<div class="prose-n pre">' + esc(x.cont || '(sin contenido)') + '</div>' + (x.porque ? '<div class="hint"><i>' + esc(x.porque) + '</i></div>' : '')
+        : '<div class="hint">No encuentro el contenido de este bloque.</div>') + '</div>';
+    pop.hidden = false;
+  }
+  var lp = null, lpHecho = false;
+  document.addEventListener('pointerdown', function (e) {
+    lpHecho = false; var el = e.target.closest && e.target.closest('[data-ver-blq]'); if (!el) return;
+    lp = { x: e.clientX, y: e.clientY, t: setTimeout(function () { lp = null; lpHecho = true; if (navigator.vibrate) navigator.vibrate(15); verBloque(el.getAttribute('data-ver-blq')); }, 450) };
+  }, true);
+  ['pointerup', 'pointercancel'].forEach(function (ev) { document.addEventListener(ev, function () { if (lp) { clearTimeout(lp.t); lp = null; } }, true); });
+  document.addEventListener('pointermove', function (e) { if (lp && (Math.abs(e.clientX - lp.x) > 10 || Math.abs(e.clientY - lp.y) > 10)) { clearTimeout(lp.t); lp = null; } }, true);
+  document.addEventListener('click', function (e) { if (lpHecho) { lpHecho = false; e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener('contextmenu', function (e) { if (e.target.closest && e.target.closest('[data-ver-blq]')) e.preventDefault(); }, true);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$scrim.hidden) cerrarHoja(); });
 
   function abrirVideo(i) {
@@ -1894,7 +1922,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.12';
+  var WEB_VERSION = 'web 0.13';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

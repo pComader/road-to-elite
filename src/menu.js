@@ -722,8 +722,15 @@
         '<label>Huecos que te quedan (y minutos)</label><div id="ro-h">' + dr.map(function (x) { return '<div class="rv-dia"><b>' + etqDia(x.iso) + '</b>' + ['AM', 'PM'].map(function (t) {
           return '<label class="sh-b"><input type="checkbox" data-hk="' + x.iso + '|' + t + '"><span>' + t + '</span></label><input class="rv-min" inputmode="numeric" placeholder="min" data-hm="' + x.iso + '|' + t + '" value="' + (t === 'AM' ? 60 : 90) + '">'; }).join('') + '</div>'; }).join('') + '</div>' +
         '<label>Marca lo que NO has hecho (lo no marcado se da por hecho)</label><div class="ro-bl">' + bls.map(function (o) { var id = o.b.idPlan || o.b.id, h = hecho(o.b);
-          return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span>' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' +
-            (corre(o.b) ? '<select data-car="' + esc(id) + '"><option value="aparte">Si no la hice: aparte (≥6 h de la fuerza)</option><option value="metcon">Dentro del metcon (carrera o erg)</option><option value="no">Dejarla (Z2: +25 % la semana que viene)</option></select>' : '') + '</div>'; }).join('') + '</div>' +
+          var otros = bls.filter(function (q) { return (q.b.idPlan || q.b.id) !== id && !hecho(q.b); });
+          return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span data-ver-blq="' + esc(id) + '">' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' +
+            (corre(o.b) ? '<select data-car="' + esc(id) + '" hidden><option value="aparte">Si no la hice: aparte (≥6 h de la fuerza)</option><option value="metcon">Dentro del metcon (carrera o erg)</option><option value="no">Dejarla (Z2: +25 % la semana que viene)</option></select>' :
+              '<div class="ro-dest" data-dest-box="' + esc(id) + '" hidden><span class="hint">¿Qué hago con él?</span><select data-dest="' + esc(id) + '">' +
+              '<option value="auto">Intentar meterlo en los huecos que marque</option><option value="pendiente">Dejarlo pendiente para la semana que viene</option>' +
+              '<option value="hueco">En un día y turno concreto…</option><option value="integrar">Integrarlo con otro bloque…</option><option value="mega">Dentro del mega WOD</option></select>' +
+              '<select data-dest-h="' + esc(id) + '" hidden>' + dr.map(function (x) { return ['AM', 'PM'].map(function (t) { return '<option value="' + x.iso + '|' + t + '">' + etqDia(x.iso) + ' ' + t + '</option>'; }).join(''); }).join('') + '</select>' +
+              '<select data-dest-i="' + esc(id) + '" hidden>' + otros.map(function (q) { return '<option value="' + esc(q.b.idPlan || q.b.id) + '">' + etqDia(q.x.iso) + ' ' + (q.b.turno || '') + ' · ' + esc(q.b.titulo) + '</option>'; }).join('') + '</select></div>') + '</div>'; }).join('') + '</div>' +
+        '<div class="hint">Mantén pulsado un bloque para ver todo su contenido.</div>' +
         '<label for="ro-e">Añadir: escribe solo el estímulo (ej. «hspu») o diseña un bloque</label><div class="two"><input id="ro-e" placeholder="Estímulo"><button class="btn sm" type="button" id="ro-add">Añadir</button></div><div id="ro-n" class="dchips">' + (R.nuevos || []).map(function (n, i) { return '<span class="dchip">' + esc(n.estimulo || n.titulo) + '</span>'; }).join('') + '</div>' +
         '<details class="set"><summary>Diseñar un bloque a mano</summary><div class="set-body"><input id="ro-mt" placeholder="Título"><textarea id="ro-mc" rows="4" placeholder="Ejercicios"></textarea><input id="ro-mm" inputmode="numeric" placeholder="Minutos"><button class="btn sm" type="button" id="ro-madd">Añadir bloque</button></div></details>' +
         '<label>Tipo de sesión</label>' + segHtml('ro-tipo', [['A', 'A · Clásica'], ['B', 'B · Integrada (mega WOD)']], R.tipo || 'A') +
@@ -776,14 +783,23 @@
       document.getElementById('ro-chica').onchange = function () { document.getElementById('ro-chw').hidden = !this.checked; };
       document.getElementById('ro-add').onclick = function () { var e = val('ro-e'); if (!e) return; R.nuevos.push({ estimulo: e }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(e) + '</span>'); document.getElementById('ro-e').value = ''; };
       document.getElementById('ro-madd').onclick = function () { var t = val('ro-mt'), c = val('ro-mc'); if (!t && !c) return; R.nuevos.push({ titulo: t || 'Bloque nuevo', contenido: c, min: +val('ro-mm') || 15 }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(t || 'Bloque nuevo') + '</span>'); ['ro-mt', 'ro-mc', 'ro-mm'].forEach(function (i) { document.getElementById(i).value = ''; }); };
+      $app.querySelectorAll('[data-nh]').forEach(function (cb) { cb.onchange = function () { var id = cb.dataset.nh, bx = $app.querySelector('[data-dest-box="' + CSS.escape(id) + '"]'), cs = $app.querySelector('[data-car="' + CSS.escape(id) + '"]');
+        if (bx) bx.hidden = !cb.checked; if (cs) cs.hidden = !cb.checked; }; });
+      $app.querySelectorAll('[data-dest]').forEach(function (s) { s.onchange = function () { var id = s.dataset.dest;
+        $app.querySelector('[data-dest-h="' + CSS.escape(id) + '"]').hidden = s.value !== 'hueco'; $app.querySelector('[data-dest-i="' + CSS.escape(id) + '"]').hidden = s.value !== 'integrar'; }; });
       document.getElementById('rf').onsubmit = function (ev) {
         ev.preventDefault();
+        var destino = {}; $app.querySelectorAll('[data-dest]').forEach(function (s) { var id = s.dataset.dest, cb = $app.querySelector('[data-nh="' + CSS.escape(id) + '"]'); if (!cb || !cb.checked) return;
+          destino[id] = s.value === 'hueco' ? 'hueco|' + $app.querySelector('[data-dest-h="' + CSS.escape(id) + '"]').value : s.value === 'integrar' ? 'integrar|' + $app.querySelector('[data-dest-i="' + CSS.escape(id) + '"]').value : s.value; });
         var huecos = [].filter.call($app.querySelectorAll('[data-hk]'), function (c) { return c.checked; }).map(function (c) { var k = c.dataset.hk.split('|'); return { iso: k[0], turno: k[1], min: +($app.querySelector('[data-hm="' + c.dataset.hk + '"]').value) || 60 }; });
-        if (!huecos.length) { toast('Marca al menos un hueco'); return; }
+        var nh = [].filter.call($app.querySelectorAll('[data-nh]'), function (c) { return c.checked; }).map(function (c) { return c.dataset.nh; });
+        var necesitaHueco = (R.tipo === 'B') || (R.nuevos || []).length || nh.some(function (id) { var v = destino[id]; return !v || v === 'auto' || v === 'mega' || /^aparte|^metcon/.test(((($app.querySelector('[data-car="' + CSS.escape(id) + '"]') || {}).value) || '')); });
+        if (!huecos.length && necesitaHueco) { toast('Marca al menos un hueco (o elige otro destino para cada bloque)'); return; }
         var p = { huecos: huecos, noHechos: [].filter.call($app.querySelectorAll('[data-nh]'), function (c) { return c.checked; }).map(function (c) { return c.dataset.nh; }), nuevos: R.nuevos, carrera: {}, tipo: R.tipo || 'A' };
         $app.querySelectorAll('[data-car]').forEach(function (s) { p.carrera[s.dataset.car] = s.value; });
         if (!p.noHechos.length && !p.nuevos.length) { toast('Marca algún bloque no hecho o añade uno'); return; }
-        if (p.tipo === 'B') p.mega = { formato: valSeg('ro-f') || 'solo', minutos: +val('ro-min') || 45, chaleco: +val('ro-ch') || 0, material: leerChips('ro-mat'), barraMax: +String(val('ro-bx')).replace(',', '.') || 60, dbMax: +String(val('ro-dx')).replace(',', '.') || 22.5,
+        p.destino = destino;
+        if (p.tipo === 'B' || Object.keys(destino).some(function (k) { return destino[k] === 'mega'; })) p.mega = { formato: valSeg('ro-f') || 'solo', minutos: +val('ro-min') || 45, chaleco: +val('ro-ch') || 0, material: leerChips('ro-mat'), barraMax: +String(val('ro-bx')).replace(',', '.') || 60, dbMax: +String(val('ro-dx')).replace(',', '.') || 22.5,
           chica: document.getElementById('ro-chica').checked ? { barra: val('ro-cb'), db: val('ro-cd'), sandbag: val('ro-cs') } : null, cashout: document.getElementById('ro-cash').checked, deseo: val('ro-de') };
         enviar(p);
       };
@@ -808,7 +824,7 @@
     html += P.cambios.filter(function (c) { return c.accion !== 'sustituir'; }).map(function (c) {
       var desde = c.desdeIso ? etqDia(c.desdeIso) + ' ' + (c.desdeTurno || '') : '', a = c.iso ? etqDia(c.iso) + ' ' + (c.turno || '') : '';
       var cont = c.contenido || (c.nuevo && c.nuevo.CONTENIDO) || '';
-      return '<div class="xb rp-' + c.accion + '"><div class="xb-h"><span class="tag">' + (ACC_REEST[c.accion] || c.accion) + '</span><b class="xb-t">' + esc(c.titulo || '') + '</b></div>' +
+      return '<div class="xb rp-' + c.accion + '"><div class="xb-h"><span class="tag">' + (ACC_REEST[c.accion] || c.accion) + '</span><b class="xb-t"' + (c.id ? ' data-ver-blq="' + esc(c.id) + '"' : '') + '>' + esc(c.titulo || '') + '</b></div>' +
         '<div class="xb-p">' + (desde ? '<span>' + esc(desde) + '</span>' : '') + (a ? '<span>→ <b>' + esc(a) + '</b></span>' : '') + '</div><div class="hint">' + esc(c.motivo || '') + '</div>' +
         (cont ? '<details class="alt"><summary>Ver contenido</summary><div class="exp-body"><div class="prose-n pre">' + esc(cont) + '</div></div></details>' : '') +
         (c.accion !== 'nuevo-pendiente' ? '<select class="rp-sel" data-k="' + c.k + '">' + opts + '</select>' : '') + '</div>';

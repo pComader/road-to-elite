@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.16.1',
+  VERSION: '0.16.2',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -3866,6 +3866,31 @@ function proponerReorg_(lunes, p) {
     if (esZ2Fila_(r)) cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'Z2 no hecha: la semana que viene +' + Math.round(r._min * 0.25) + '′ (+25 %) en la Z2' });
     else cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'Carrera no hecha: a pendientes' });
   });
+  // v0.16.2 · destino elegido por bloque: auto (huecos) · pendiente (semana que viene) · hueco|iso|turno · integrar|idOtro · mega
+  var dest = p.destino || {}, megaSel = [], integ = {};
+  resto = resto.filter(function (r) {
+    var k = String(dest[r.ID] || 'auto').split('|'), tit = r['TÍTULO'] || r.BLOQUE || '';
+    if (k[0] === 'pendiente') { cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'Lo dejas para la semana que viene' }); return false; }
+    if (k[0] === 'hueco' && k[1]) { cambios.push({ id: r.ID, accion: 'mover', iso: k[1], turno: k[2] === 'AM' ? 'AM' : 'PM', motivo: 'Donde elegiste (' + diaDe_(k[1]).toLowerCase() + ' ' + (k[2] === 'AM' ? 'AM' : 'PM') + ')' }); return false; }
+    if (k[0] === 'integrar' && k[1]) {
+      var t = todas.filter(function (x) { return x.ID === k[1] && !no[x.ID]; })[0];
+      if (t) { (integ[t.ID] = integ[t.ID] || { t: t, bl: [] }).bl.push(r); return false; }
+      avisos.push('No encuentro el bloque con el que integrar «' + tit + '»: lo meto en los huecos.'); return true;
+    }
+    if (k[0] === 'mega' && p.tipo !== 'B') { megaSel.push(r); return false; }
+    return true;
+  });
+  Object.keys(integ).forEach(function (tid) {
+    var I = integ[tid], t = I.t, extra = I.bl.reduce(function (a, r) { return a + r._min; }, 0), cap = CAP_TURNO_[t._turno] || 120, recorta = t._min + extra > cap;
+    var cont = String(t.CONTENIDO || '') + I.bl.map(function (r) { return '\n\n+ INTEGRADO · ' + (r['TÍTULO'] || r.BLOQUE) + ' (no hecho el ' + diaDe_(r._iso).toLowerCase() + ')' + (recorta ? ' · al 50 % para no pasar de ' + cap + '′' : '') + '\n' + (recorta ? mitadVolumen_(r.CONTENIDO).txt : (r.CONTENIDO || '')); }).join('');
+    cambios.push({ id: tid, accion: 'adaptar', iso: t._iso, turno: t._turno, contenido: cont, motivo: 'Integra ' + I.bl.map(function (r) { return '«' + (r['TÍTULO'] || r.BLOQUE) + '»'; }).join(', ') + (recorta ? ' al 50 % (la sesión pasaría de ' + cap + '′)' : '') });
+  });
+  if (megaSel.length) {
+    var hm = huecos[0];
+    if (!hm) avisos.push('Para meter bloques en el mega WOD marca al menos un hueco.');
+    else { var mgS = megaWod_(megaSel, p.mega || { formato: 'solo', material: ['box'] }, w, cubiertas, Math.min(hm.min, (p.mega || {}).minutos || 45)); hm.usado += +mgS.MIN || 45;
+      cambios.push({ accion: 'nuevo', iso: hm.iso, turno: hm.turno, nuevo: mgS, motivo: 'Mega WOD con lo que elegiste' }); }
+  }
   if (p.tipo === 'B') {
     var h0 = huecos[0]; if (!h0) return { cambios: cambios, avisos: ['Marca al menos un hueco.'], resumen: 'Sin huecos' };
     var mega = megaWod_(resto.concat(metconExtra), p.mega || {}, w, cubiertas, Math.min(h0.min, (p.mega || {}).minutos || h0.min));
