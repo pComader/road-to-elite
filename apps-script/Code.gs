@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.15.1',
+  VERSION: '0.16.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -25,7 +25,8 @@ var CONFIG = {
   SHEET_ID: '1q_DbqA4VWLb-1CUuT8ZDGt-yMfiy__YeoT9-4V2IEJ4',      // Road to Elite · Training Coverage (único sitio donde se escribe)
   FABRIK_ID: '1DRBQteuUHesG2gMODigDBTr5LK5PHMsqRIdHpCtT82g',     // FABRIK PROGRAM · SOLO LECTURA
   PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · SOLO LECTURA (copia semanal de vídeos)
-  BACKUPS_ID: '1X2gFr5Wd-HfI5JsMcfiKscCu5GPXO-aS',             // Drive: APP / Configuración / Backups
+  BACKUPS_ID: '1X2gFr5Wd-HfI5JsMcfiKscCu5GPXO-aS',
+  BD_WOD_ID: '1FfIO-LR5_DutRo6SUHWyAhM5qWItMemWpnV6iQRs-RY',   // Drive: 2DO CEREBRO / … / APP / Base_de_datos_WOD (compartida con la app de Gabi: Road To Elite solo escribe en sus pestañas «MOTOR · …»)             // Drive: APP / Configuración / Backups
   ZONA: 'Europe/Madrid',
   CACHE_SEG: 300
 };
@@ -48,7 +49,8 @@ function doGet() {
 function doPost(e) {
   try {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (body.agente) return json_(accionAgente_(body));   // v0.15: agente del PC (token propio, solo sus 5 acciones)
+    if (body.agente) return json_(accionAgente_(body));
+    if (body.bd) return json_(accionBd_(body));         // v0.16: lectura de la base de datos de WODs por otras apps (token de lectura)   // v0.15: agente del PC (token propio, solo sus 5 acciones)
     var user = verificarUsuario_(body.idToken);
     if (!user.ok) return json_(user);
     var a = body.action, t0 = Date.now();
@@ -210,7 +212,7 @@ function fabrik_() { return SpreadsheetApp.openById(CONFIG.FABRIK_ID); }
 function programApp_() { return SpreadsheetApp.openById(CONFIG.PROGRAMAPP_ID); }
 
 function hojaMia_(nombre) {
-  var sh = miLibro_().getSheetByName(nombre);
+  var sh = (ESQ_BD_[nombre] ? bdWods_() : miLibro_()).getSheetByName(nombre);
   if (!sh) throw new Error('Falta la pestaña ' + nombre);
   return sh;
 }
@@ -1103,10 +1105,10 @@ function menuSemanaBloques() { pintarHojaSemana_(leerConfig_().semana_bloques ||
 function colLetra_(n) { var s = ''; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
 /** Crea o completa las pestañas de la app con su formato. No borra datos. */
-function prepararHojas() {
-  var ss = miLibro_();
-  Object.keys(ESQUEMA).forEach(function (nombre, k) {
-    var E = ESQUEMA[nombre], sh = ss.getSheetByName(nombre);
+function prepararHojas() { prepararEsquema_(miLibro_(), ESQUEMA); }
+function prepararEsquema_(ss, ESQ) {
+  Object.keys(ESQ).forEach(function (nombre, k) {
+    var E = ESQ[nombre], sh = ss.getSheetByName(nombre);
     if (!sh) sh = ss.insertSheet(nombre);
     var tiene = sh.getLastColumn() ? sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0].map(function (h) { return String(h).trim(); }) : [];
     var cab;
@@ -1117,7 +1119,7 @@ function prepararHojas() {
       .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
     sh.setFrozenRows(1);
     if (E.congelarCol) sh.setFrozenColumns(E.congelarCol);
-    sh.setTabColor('#ff7a1a');
+    sh.setTabColor(E.color || '#ff7a1a');
     var filas = Math.max(sh.getMaxRows() - 1, 1);
     sh.getRange(2, 1, filas, cab.length).setVerticalAlignment('top').setWrap(true);
     cab.forEach(function (h, j) { var w = E.anchos[E.cab.indexOf(h)]; if (w) sh.setColumnWidth(j + 1, w); });
@@ -1139,7 +1141,7 @@ function prepararHojas() {
     });
     sh.setConditionalFormatRules(reglas);
   });
-  Logger.log('OK · Pestañas preparadas: ' + Object.keys(ESQUEMA).join(', '));
+  Logger.log('OK · Pestañas preparadas: ' + Object.keys(ESQ).join(', '));
 }
 
 /** Al editar a mano APP · PLAN: rellena DÍA a partir de FECHA y pone un ID si falta. (Trigger simple: no necesita instalarse.) */
@@ -1372,12 +1374,13 @@ function configurarSin_() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['cargarFabrikDomingo', 'sincronizarCalendario'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
   reintentar_(function () { return ScriptApp.newTrigger('cargarFabrikDomingo').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(15).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('sincronizarCalendario').timeBased().everyHours(1).create(); }, 'disparador');
-  // v0.15: motor diario (Fabrik → APP · MOTOR WODS, Gemini) y backup completo de los jueves
+  // v0.15: motor diario (Fabrik → MOTOR · ANÁLISIS, Gemini) y backup completo de los jueves
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
   reintentar_(function () { return ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
+  try { logc_('OK · Base de datos de WODs: ' + prepararBd_()); } catch (e) { logc_('AVISO · Base de datos de WODs: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
   logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
@@ -2865,7 +2868,8 @@ function onOpen() {
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
     .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
     .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
-    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Agente del PC · ver token', 'menuTokenAgente').addToUi();
+    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
+    .addItem('Base de datos WODs · token de lectura para otras apps', 'menuTokenBd').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
 function menuCargarFabrikActual() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(lunesDe_(hoyIso_())))); }
@@ -4141,21 +4145,23 @@ function reestActiva_(lunes) {
   return listar_(HOJAS.REEST).filter(function (r) { return celdaIso_(r.LUNES) === l && r.ESTADO === 'Aplicada'; }).map(function (r) { return { id: r.ID, modo: r.MODO, resumen: r.RESUMEN }; });
 }
 
-// ===================== v0.15 · MOTOR GUIADO POR MOTOR_GUIA.md · APP · MOTOR WODS · GEMINI · AGENTE DEL PC · BACKUP DE LOS JUEVES =====================
+// ===================== v0.15 · MOTOR GUIADO POR MOTOR_GUIA.md · MOTOR · ANÁLISIS · GEMINI · AGENTE DEL PC · BACKUP DE LOS JUEVES =====================
 /*
  * - MOTOR_GUIA.md (Drive, CONFIG › motor_guia_id): sus tablas «## TABLA · …» mandan sobre los movimientos, formatos, pesos e interferencias
  *   del motor. Si no se puede leer, se usa la copia de este código (MOTOR_GUIA_BASE_).
- * - APP · MOTOR WODS (oculta): cada metcon de Fabrik y de competición descompuesto (formato, ventanas, estructura, pesos, interferencias)
+ * - MOTOR · ANÁLISIS (oculta): cada metcon de Fabrik y de competición descompuesto (formato, ventanas, estructura, pesos, interferencias)
  *   + CIENCIA (Claude / Gemini) + CONCEPTOS (Ollama, desde el PC). El motor copia las estructuras que más se parecen a lo que pides.
  * - «Estímulos que quiero»: metconGuiado_ (bloque nuevo, extras) y megaWod_ (Reestructurar B).
  * - Backup de los jueves (Drive) + copia en el PC por el agente; si a las 16:00 no está: correo, aviso en la app y ventana en el PC.
  */
-HOJAS.MOTOR = 'APP · MOTOR WODS';
-ESQUEMA[HOJAS.MOTOR] = {
+HOJAS.MOTOR = 'MOTOR · ANÁLISIS';
+var ESQ_BD_ = {};
+ESQ_BD_[HOJAS.MOTOR] = {
   cab: ['ID', 'FUENTE', 'FECHA', 'NOMBRE', 'TEXTO', 'FORMATO', 'MIN', 'VENTANAS', 'ESTRUCTURA', 'MOVIMIENTOS', 'PATRONES', 'PESOS', 'INTERFERENCIAS',
-    'OBJETIVO / ESTÍMULO', 'LIMITANTES', 'RPE', 'CIENCIA', 'CONCEPTOS (Ollama)', 'ANALIZADO POR', 'HASH', 'ACTUALIZADO'],
-  anchos: [90, 95, 90, 220, 320, 90, 50, 160, 200, 200, 130, 140, 260, 240, 220, 50, 380, 260, 120, 90, 120],
-  fechas: ['FECHA'], negrita: 'NOMBRE', listas: { FUENTE: ['Fabrik', 'Competición', 'Guardado', 'Manual'] }
+    'OBJETIVO / ESTÍMULO', 'LIMITANTES', 'RPE', 'CIENCIA', 'CONCEPTOS (Ollama)', 'ANALIZADO POR', 'HASH', 'ACTUALIZADO', 'PROCEDENCIA', 'PERMISO', 'VERSIÓN GUÍA', 'IDIOMA'],
+  anchos: [90, 95, 90, 220, 320, 90, 50, 160, 200, 200, 130, 140, 260, 240, 220, 50, 380, 260, 120, 90, 120, 150, 95, 80, 55],
+  fechas: ['FECHA'], negrita: 'NOMBRE', color: '#8b5cf6', listas: { FUENTE: ['Fabrik', 'Competición', 'Guardado', 'Manual'], PERMISO: ['personal', 'compartible'] },
+  colores: [['PERMISO', '^compartible$', '#dcfce7', '#14532d']]
 };
 
 // ---------- 1 · La guía ----------
@@ -4327,8 +4333,9 @@ function filasEnHoja_(nombre, filas) {
 function alimentarMotor_(nSemanas) {
   var ya = {}, nuevas = [];
   listar_(HOJAS.MOTOR).forEach(function (r) { if (r.HASH) ya[r.HASH] = 1; });
-  var est = estructura_(fabrik_()), tope = sumarDias(lunesDe_(hoyIso_()), 7);
-  est.semanas.filter(function (s) { return s.iso && s.iso <= tope; }).slice(-(nSemanas || 2)).forEach(function (s) {
+  var est = null, tope = sumarDias(lunesDe_(hoyIso_()), 7);
+  try { est = estructura_(fabrik_()); } catch (e) { Logger.log('Motor · Fabrik no legible: ' + e); }
+  (est ? est.semanas : []).filter(function (s) { return s.iso && s.iso <= tope; }).slice(-(nSemanas || 2)).forEach(function (s) {
     var F; try { F = semanaBase_(s, est); } catch (e) { Logger.log('Motor · semana ' + s.nombre + ': ' + e); return; }
     (F.dias || []).forEach(function (d) {
       (d.bloques || []).forEach(function (b) {
@@ -4338,7 +4345,7 @@ function alimentarMotor_(nSemanas) {
         var w = b.wod || {};
         var a = analizarWod_(txt, { objetivo: w.objetivo, modalidad: [w.modalidad, w.formato].filter(Boolean).join(' · '), rpe: b.rpe || d.rpe, limitantes: w.limitantes, carga: w.carga });
         nuevas.push(Object.assign(a, { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Fabrik', FECHA: d.iso ? isoAFecha(d.iso) : '', NOMBRE: (s.nombre + ' · ' + d.nombre + ' · ' + (b.titulo || 'METCON')).slice(0, 160),
-          TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }));
+          TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }, metaBd_('Fabrik (programación de Gabi)', 'personal')));
       });
     });
   });
@@ -4346,8 +4353,9 @@ function alimentarMotor_(nSemanas) {
     if (!r.CONTENIDO) return;
     var h = hashTxt_(r.CONTENIDO); if (ya[h]) return; ya[h] = 1;
     nuevas.push(Object.assign(analizarWod_(r.CONTENIDO, {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Guardado', FECHA: r['FECHA ORIGEN'] || '', NOMBRE: String(r.NOMBRE || 'WOD').slice(0, 160),
-      TEXTO: String(r.CONTENIDO).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }));
+      TEXTO: String(r.CONTENIDO).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }, metaBd_('Guardado en la app', 'personal')));
   });
+  try { competicionesBd_(ya).forEach(function (o) { nuevas.push(o); }); } catch (e) { Logger.log('Motor · competiciones de la base de datos: ' + e); }
   return filasEnHoja_(HOJAS.MOTOR, nuevas);
 }
 /** Filas que pegas a mano (o que añade Claude) solo con NOMBRE y TEXTO: se analizan solas. */
@@ -4358,6 +4366,7 @@ function reanalizarMotor_() {
     var a = analizarWod_(r.TEXTO, {});
     a.HASH = hashTxt_(r.TEXTO); if (!r.ID) a.ID = 'MW-' + a.HASH.slice(0, 8); if (!r.FUENTE) a.FUENTE = 'Manual';
     a['ANALIZADO POR'] = autores_(r['ANALIZADO POR'], 'Motor'); a.ACTUALIZADO = ahora_();
+    if (!r.PERMISO) Object.assign(a, metaBd_(r.PROCEDENCIA || 'Pegado a mano', 'personal'));
     actualizarFila_(HOJAS.MOTOR, r._fila, a); n++;
   });
   return n;
@@ -4387,7 +4396,7 @@ function sembrarMotorWods_() {
   var ya = {}; listar_(HOJAS.MOTOR).forEach(function (r) { if (r.HASH) ya[r.HASH] = 1; });
   var nuevas = MOTOR_SEMILLAS_.filter(function (s) { return !ya[hashTxt_(s[1])]; }).map(function (s) {
     var h = hashTxt_(s[1]);
-    return Object.assign(analizarWod_(s[1], {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Competición', NOMBRE: s[0], TEXTO: s[1], CIENCIA: s[2], HASH: h, 'ANALIZADO POR': 'Motor · Claude', ACTUALIZADO: ahora_() });
+    return Object.assign(analizarWod_(s[1], {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Competición', NOMBRE: s[0], TEXTO: s[1], CIENCIA: s[2], HASH: h, 'ANALIZADO POR': 'Motor · Claude', ACTUALIZADO: ahora_() }, metaBd_('Competición pública / benchmark', 'compartible'));
   });
   return filasEnHoja_(HOJAS.MOTOR, nuevas);
 }
@@ -4429,7 +4438,8 @@ function motorDiario() {
   try { est.push('nuevos ' + alimentarMotor_(2)); } catch (e) { est.push('alimentar FALLO ' + e); }
   try { est.push('reanalizados ' + reanalizarMotor_()); } catch (e) { est.push('reanalizar FALLO ' + e); }
   try { est.push('Gemini ' + geminiExplicar_(8)); } catch (e) { est.push('Gemini FALLO ' + String(e).slice(0, 120)); }
-  ponerConfig_('ultimo_motor', hoyTxt_() + ' · ' + est.join(' · '), 'Resultado de la tarea diaria del motor (APP · MOTOR WODS)');
+  try { est.push('JSON ' + exportarBdJson_().wods + ' WODs'); } catch (e) { est.push('JSON FALLO ' + String(e).slice(0, 120)); }
+  ponerConfig_('ultimo_motor', hoyTxt_() + ' · ' + est.join(' · '), 'Resultado de la tarea diaria del motor (MOTOR · ANÁLISIS)');
 }
 
 // ---------- 5 · «Estímulos que quiero» y metcon a medida ----------
@@ -4480,7 +4490,7 @@ function repsTxt_(m, f) {
   if (m.unidad === 'm') { var mt = v >= 100 ? Math.max(100, Math.round(v / 100) * 100) : Math.max(5, Math.round(v / 5) * 5); return mt + ' m ' + m.n; }
   return Math.max(1, Math.round(v)) + ' ' + m.n;
 }
-/** El WOD de APP · MOTOR WODS que más se parece a lo pedido (≥3 puntos). */
+/** El WOD de MOTOR · ANÁLISIS que más se parece a lo pedido (≥3 puntos). */
 function refMotor_(lista, D, fk) {
   var filas; try { filas = listar_(HOJAS.MOTOR); } catch (e) { return null; }
   var ks = lista.map(function (m) { return m.k; }), ps = lista.map(function (m) { return m.patron; });
@@ -4616,7 +4626,7 @@ function metconGuiado_(deseo, o) {
   var ciencia = [F.sistema ? F.nombre + ': sistema ' + F.sistema + (F.zona ? ' (' + F.zona + ')' : '') + '.' : '']
     .concat(ord.pares.filter(function (p) { return p.r.ciencia; }).slice(0, 3).map(function (p) { return p.a.n + ' → ' + p.b.n + ': ' + p.r.ciencia; }))
     .concat(ref && ref.ciencia ? ['Del WOD de referencia «' + ref.nombre + '»: ' + String(ref.ciencia).slice(0, 400)] : []).filter(Boolean).join('\n');
-  var porque = 'Pediste: «' + String(deseo || '').trim() + '». ' + (ref ? 'Estructura inspirada en «' + ref.nombre + '» (' + ref.fuente + ', APP · MOTOR WODS). ' : '') +
+  var porque = 'Pediste: «' + String(deseo || '').trim() + '». ' + (ref ? 'Estructura inspirada en «' + ref.nombre + '» (' + ref.fuente + ', MOTOR · ANÁLISIS (Base_de_datos_WOD)). ' : '') +
     (F.cuando ? F.nombre + ': ' + F.cuando.charAt(0).toLowerCase() + F.cuando.slice(1) + '. ' : '') +
     (movs.some(function (m) { return D.movs.indexOf(m) < 0; }) ? 'Añadido por tus carencias: ' + movs.filter(function (m) { return D.movs.indexOf(m) < 0; }).map(function (m) { return m.n.toLowerCase(); }).join(', ') + '.' : '');
   return {
@@ -4664,7 +4674,7 @@ function estructuraMd_(fecha) {
     '- **Web** (GitHub Pages, repo `pComader/road-to-elite`): PWA que habla con el servidor de Apps Script (`doPost` → `accion_`). Solo entra ' + CONFIG.EMAIL_PERMITIDO + ' (token de Firebase verificado).',
     '- **Servidor** (Apps Script): lee FABRIK PROGRAM (solo lectura), escribe en este Sheet (Training Coverage) y en Google Calendar (solo lo aprobado).',
     '- **Semana:** domingo 22:15 cierre + ajuste de carrera + vídeos + copia del Sheet → 23:15 carga Fabrik → confirmar semana → «Cargar extras» (metas, carrera, refuerzos, pendientes, metcon a medida) → aprobar (correo de estímulos).',
-    '- **Motor:** las tablas de MOTOR_GUIA.md (movimientos, formatos, pesos, interferencias) + APP · MOTOR WODS (metcons de Fabrik y competición analizados; ciencia de Claude/Gemini; conceptos de Ollama).',
+    '- **Motor:** las tablas de MOTOR_GUIA.md (movimientos, formatos, pesos, interferencias) + MOTOR · ANÁLISIS (Base_de_datos_WOD) (metcons de Fabrik y competición analizados; ciencia de Claude/Gemini; conceptos de Ollama).',
     '- **Reestructurar:** viaje (intensidad al alza), reorganización (clásica o mega WOD) y competi (online/física).',
     '- **Backups:** domingo copia del Sheet (Drive) · jueves ' + BACKUP_HORA_ + ':00 backup completo (xlsx + este .md + guía + código) en Drive › Backups › «APP Road to Elite · jueves»; el agente del PC lo copia a E:\\2DO CEREBRO\\BackUPS\\APP Road to Elite. Si a las ' + (BACKUP_HORA_ + BACKUP_MARGEN_H_) + ':00 falta algo: correo, aviso en la app y ventana en el PC.', '');
   L.push('## Pestañas', '', '| Pestaña | Visible | Filas | Columnas |', '|---|---|---|---|');
@@ -4693,6 +4703,11 @@ function backupJueves() {
   var md = estructuraMd_(fecha);
   blobs.push(Utilities.newBlob(md, 'text/markdown', 'Road_to_Elite_ESTRUCTURA_' + fecha + '.md'));
   blobs.push(Utilities.newBlob(guiaTexto_(), 'text/markdown', 'MOTOR_GUIA.md'));
+  try {
+    var bx = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + bdWodsId_() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    if (bx.getResponseCode() === 200) blobs.push(bx.getBlob().setName('Base_de_datos_WOD_' + fecha + '.xlsx')); else notas.push('BD HTTP ' + bx.getResponseCode());
+    blobs.push(Utilities.newBlob(JSON.stringify(datosBdJson_(), null, 1), 'application/json', 'motor_wods_' + fecha + '.json'));
+  } catch (e) { notas.push('BD: ' + e); }
   try {
     var gh = UrlFetchApp.fetch('https://codeload.github.com/pComader/road-to-elite/zip/refs/heads/main', { muteHttpExceptions: true });
     if (gh.getResponseCode() === 200) blobs.push(gh.getBlob().setName('codigo_road-to-elite_main.zip')); else notas.push('código HTTP ' + gh.getResponseCode());
@@ -4788,7 +4803,7 @@ function prepararMotor_() {
     ponerConfig_('motor_guia_id', g.getId(), 'ID en Drive de MOTOR_GUIA.md (la guía que sigue el motor; edítala y se relee en 6 h o con configurar)');
   }
   CacheService.getScriptCache().remove('guia_md_v15'); GUIA_MEMO_ = null;
-  if (!cf.gemini_modelo) ponerConfig_('gemini_modelo', 'gemini-2.5-flash', 'Modelo de Gemini para la CIENCIA de APP · MOTOR WODS (clave en Propiedades › GEMINI_KEY; nivel gratuito)');
+  if (!cf.gemini_modelo) ponerConfig_('gemini_modelo', 'gemini-2.5-flash', 'Modelo de Gemini para la CIENCIA de MOTOR · ANÁLISIS (clave en Propiedades › GEMINI_KEY; nivel gratuito)');
   if (!cf.backup_desde) ponerConfig_('backup_desde', hoyIso_(), 'Desde cuándo se exige el backup de los jueves');
   var r = ['guía ' + guiaMotor_().movs.length + ' movimientos · ' + Object.keys(guiaMotor_().formatos).length + ' formatos · ' + guiaMotor_().interf.length + ' interferencias'];
   r.push('semillas ' + sembrarMotorWods_());
@@ -4806,5 +4821,111 @@ function menuTokenAgente() {
   SpreadsheetApp.getUi().alert('Token del agente del PC', 'Cópialo y pégalo cuando te lo pida «instalar.bat».\nNo lo compartas con nadie (tampoco con Claude):\n\n' + t, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
+// ===================== v0.16 · BASE DE DATOS DE WODs COMPARTIDA (Base_de_datos_WOD) =====================
+/*
+ * El análisis del motor vive en Base_de_datos_WOD (Drive), en las pestañas «MOTOR · ANÁLISIS» y «MOTOR · LÉEME».
+ * Esa hoja la rellena también la app de Gabi (pestañas «Ciclo …», una por competición, «Resultados archivados», INICIO):
+ * Road To Elite NUNCA escribe, renombra ni borra esas pestañas; de las de competición solo LEE (son WODs públicos).
+ * Cada fila lleva PROCEDENCIA y PERMISO: «personal» (programación de Fabrik, tus WODs) o «compartible» (competiciones públicas, benchmarks).
+ * Otras apps: JSON en Drive (motor_wods.json, junto a la hoja) o API de solo lectura con su token (solo filas «compartible»).
+ */
+HOJAS.MOTOR_LEEME = 'MOTOR · LÉEME';
+var BD_ = null;
+function bdWodsId_() { var id = ''; try { id = leerConfig_().bd_wods_id; } catch (e) {} return String(id || CONFIG.BD_WOD_ID).trim(); }
+function bdWods_() { if (!BD_) BD_ = SpreadsheetApp.openById(bdWodsId_()); return BD_; }
+var VERSION_GUIA_ = '';
+function versionGuia_() { if (!VERSION_GUIA_) VERSION_GUIA_ = 'g-' + hashTxt_(guiaTexto_()).slice(0, 6); return VERSION_GUIA_; }
+function metaBd_(procedencia, permiso) { return { PROCEDENCIA: procedencia, PERMISO: permiso, 'VERSIÓN GUÍA': versionGuia_(), IDIOMA: 'es' }; }
+function esPestanaGabi_(n) { return n === 'INICIO' || /^Ciclo /.test(n) || n === 'Resultados archivados'; }
+/** WODs de las pestañas de competición que escribe la app de Gabi (solo lectura; nivel RX, o el primero si no hay RX). */
+function competicionesBd_(ya) {
+  var out = [];
+  bdWods_().getSheets().forEach(function (sh) {
+    var n = sh.getName(); if (esPestanaGabi_(n) || /^MOTOR ·/.test(n) || sh.getLastRow() < 4) return;
+    var v = sh.getRange(3, 1, sh.getLastRow() - 2, Math.max(1, sh.getLastColumn())).getDisplayValues(), cab = v[0].map(function (h) { return String(h).trim(); });
+    var c = function (h) { return cab.indexOf(h); };
+    if (c('METCON') < 0 || c('NIVEL') < 0) return;
+    var porWod = {};
+    v.slice(1).forEach(function (r) { var k = r[c('WOD')] + '|' + r[c('NOMBRE')]; if (!r[c('METCON')]) return; if (!porWod[k] || /^RX$/i.test(r[c('NIVEL')])) porWod[k] = r; });
+    Object.keys(porWod).forEach(function (k) {
+      var r = porWod[k], txt = r[c('METCON')], h = hashTxt_(txt); if (ya[h]) return; ya[h] = 1;
+      out.push(Object.assign(analizarWod_(txt, {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Competición', FECHA: r[c('FECHA')] || '', NOMBRE: (n + ' · WOD ' + r[c('WOD')] + ' · ' + r[c('NOMBRE')] + ' (' + r[c('NIVEL')] + ')').slice(0, 160),
+        TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }, metaBd_('Competición pública (' + n + ')', 'compartible')));
+    });
+  });
+  return out;
+}
+var LEEME_BD_ = [
+  ['🧠 MOTOR · base de datos de WODs analizados (Road To Elite)'],
+  [''],
+  ['• MOTOR · ANÁLISIS la escribe el servidor de Road To Elite. La app de Gabi no la toca (y Road To Elite no toca las pestañas de la app de Gabi: INICIO, «Ciclo …», competiciones, Resultados archivados).'],
+  ['• Cada fila = un WOD descompuesto: formato, minutos, ventanas, estructura, movimientos, patrones, pesos e INTERFERENCIAS (según MOTOR_GUIA.md), objetivo y limitantes.'],
+  ['• CIENCIA: Claude (semillas) y Gemini (cada madrugada). CONCEPTOS: Ollama, desde el agente del PC. ANALIZADO POR dice quién ha pasado por cada fila.'],
+  ['• Fuentes: Fabrik (a diario), WODs guardados en la app, las pestañas de competición de esta hoja (solo lectura) y lo que pegues aquí abajo (NOMBRE + TEXTO; el resto se rellena solo).'],
+  ['• PERMISO: «personal» = programación de Fabrik / tuya (no sale de tus apps sin permiso de Gabi) · «compartible» = competiciones públicas y benchmarks.'],
+  ['• Otras apps: motor_wods.json (en esta misma carpeta de Drive, se renueva cada día) o la API de solo lectura de Road To Elite con su token (menú del Sheet de Road To Elite). Solo devuelve filas «compartible».'],
+  ['• No cambies el nombre de las pestañas «MOTOR · …» ni de sus columnas. Puedes añadir filas, corregir celdas y cambiar PERMISO.']
+];
+function prepararBd_() {
+  if (!leerConfig_().bd_wods_id) ponerConfig_('bd_wods_id', CONFIG.BD_WOD_ID, 'Base_de_datos_WOD (Drive): el motor escribe en sus pestañas «MOTOR · …»; la app de Gabi escribe las suyas');
+  var ss = bdWods_(), r = [];
+  prepararEsquema_(ss, ESQ_BD_);
+  var le = ss.getSheetByName(HOJAS.MOTOR_LEEME) || ss.insertSheet(HOJAS.MOTOR_LEEME);
+  le.clear(); le.getRange(1, 1, LEEME_BD_.length, 1).setValues(LEEME_BD_); le.getRange(1, 1).setFontWeight('bold').setFontSize(14); le.setColumnWidth(1, 1000); le.setTabColor('#8b5cf6');
+  // migración desde la pestaña oculta de la v0.15 (APP · MOTOR WODS del Sheet de Road To Elite)
+  var vieja = miLibro_().getSheetByName('APP · MOTOR WODS');
+  if (vieja) {
+    var n = vieja.getLastRow() - 1, movidas = 0;
+    if (n > 0) {
+      var cabV = cabeceras_(vieja), datos = vieja.getRange(2, 1, n, cabV.length).getValues(), ya = {};
+      listar_(HOJAS.MOTOR).forEach(function (x) { if (x.HASH) ya[x.HASH] = 1; });
+      var filas = datos.map(function (row) { var o = {}; cabV.forEach(function (h, j) { o[h] = row[j]; }); return o; })
+        .filter(function (o) { return o.HASH && !ya[o.HASH]; })
+        .map(function (o) { return Object.assign(o, metaBd_(o.FUENTE === 'Fabrik' ? 'Fabrik (programación de Gabi)' : o.FUENTE === 'Competición' ? 'Competición pública / benchmark' : 'Guardado en la app', o.FUENTE === 'Competición' ? 'compartible' : 'personal')); });
+      movidas = filasEnHoja_(HOJAS.MOTOR, filas);
+      if (listar_(HOJAS.MOTOR).length >= n) { miLibro_().deleteSheet(vieja); r.push('migradas ' + movidas + ' filas y borrada APP · MOTOR WODS'); }
+      else r.push('AVISO: migración incompleta, APP · MOTOR WODS se conserva');
+    } else { miLibro_().deleteSheet(vieja); r.push('APP · MOTOR WODS vacía, borrada'); }
+  }
+  // permiso por defecto en filas antiguas
+  var sinPermiso = listar_(HOJAS.MOTOR).filter(function (x) { return !x.PERMISO; });
+  sinPermiso.forEach(function (x) { actualizarFila_(HOJAS.MOTOR, x._fila, metaBd_(x.FUENTE === 'Competición' ? 'Competición pública / benchmark' : 'Fabrik (programación de Gabi)', x.FUENTE === 'Competición' ? 'compartible' : 'personal')); });
+  if (!PROPS.getProperty('BD_LECTURA_TOKEN')) PROPS.setProperty('BD_LECTURA_TOKEN', Utilities.getUuid().replace(/-/g, ''));
+  r.push(ss.getName() + ' · ' + listar_(HOJAS.MOTOR).length + ' WODs');
+  return r.join(' · ');
+}
+function datosBdJson_() {
+  var cab = ESQ_BD_[HOJAS.MOTOR].cab.filter(function (h) { return h !== 'HASH'; });
+  return { esquema: 'road-to-elite/motor-wods', version: 1, generado: new Date().toISOString(), servidor: CONFIG.VERSION, guia: versionGuia_(), columnas: cab,
+    wods: listar_(HOJAS.MOTOR).map(function (r) { var o = {}; cab.forEach(function (h) { if (r[h] !== '' && r[h] != null) o[h] = r[h]; }); return o; }) };
+}
+/** motor_wods.json junto a Base_de_datos_WOD (se sobrescribe). Para cualquier otra app que tenga tu Drive. */
+function exportarBdJson_() {
+  var d = datosBdJson_(), txt = JSON.stringify(d, null, 1), carpeta = DriveApp.getFileById(bdWodsId_()).getParents().next(), it = carpeta.getFilesByName('motor_wods.json');
+  if (it.hasNext()) it.next().setContent(txt); else carpeta.createFile('motor_wods.json', txt, 'application/json');
+  return { wods: d.wods.length };
+}
+/** API de solo lectura para otras apps: { bd: token, action: 'bd_wods' | 'bd_guia', desde?: 'dd/mm/aaaa…' }. Solo filas «compartible». */
+function accionBd_(body) {
+  var tok = PROPS.getProperty('BD_LECTURA_TOKEN'), cache = CacheService.getScriptCache(), fallos = +(cache.get('bd_fallos') || 0);
+  if (fallos > 30) return { ok: false, error: 'bloqueado' };
+  if (!tok || String(body.bd) !== tok) { cache.put('bd_fallos', String(fallos + 1), 3600); return { ok: false, error: 'no_autorizado' }; }
+  if (body.action === 'bd_guia') return { ok: true, guia: guiaTexto_(), version: versionGuia_() };
+  if (body.action !== 'bd_wods') return { ok: false, error: 'accion_no_permitida' };
+  var d = datosBdJson_();
+  d.wods = d.wods.filter(function (w) { return w.PERMISO === 'compartible'; });
+  return Object.assign({ ok: true }, d);
+}
+function menuTokenBd() {
+  var t = PROPS.getProperty('BD_LECTURA_TOKEN') || '(ejecuta configurar)';
+  SpreadsheetApp.getUi().alert('Token de lectura · base de datos de WODs', 'Para otras apps (solo lectura, solo filas «compartible»):\nPOST a la URL del servidor con { "bd": "<token>", "action": "bd_wods" }\n\n' + t, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+function menuNuevoTokenAgente() {
+  var ui = SpreadsheetApp.getUi();
+  if (ui.alert('Cambiar el token del agente', 'El agente de cualquier PC con el token antiguo deja de funcionar hasta que vuelvas a ejecutar instalar.bat con el nuevo. ¿Seguro?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  PROPS.setProperty('AGENTE_TOKEN', Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 12));
+  menuTokenAgente();
+}
+
 // Copia de MOTOR_GUIA.md (docs/MOTOR_GUIA.md del repositorio): se usa si la de Drive no se puede leer y para crearla la primera vez.
-var MOTOR_GUIA_BASE_ = "# MOTOR_GUIA · Road To Elite\n\nGuía que sigue el motor que genera los entrenamientos (metcons a medida, mega WOD, extras con «Estímulos que quiero»).\n\n- **Las tablas `## TABLA · …` las lee el servidor de verdad.** Si cambias una fila, cambia lo que genera el motor, sin tocar código.\n  - Mantén las columnas y el formato `| a | b |`.\n  - Los alias van separados por comas, en mayúsculas o minúsculas (da igual) y sin tildes obligatorias.\n  - Una fila que empieza por `#` se ignora.\n- **El texto de «Claves» lo leemos Claude y Gemini** para diseñar, revisar y explicar.\n- La copia de trabajo vive en Google Drive (`MOTOR_GUIA.md`, junto a los backups). El servidor la relee cada 6 h o al ejecutar `configurar`.\n- Fuentes:\n  - `Rendimiento_Hibrido_GuiaDefinitiva_md.md` (manual v2.0);\n  - las notas de coach de Fabrik: MODALIDAD, OBJETIVO, LIMITANTES;\n  - las claves de CrossFit acordadas en el proyecto «Road To Elite».\n\n## TABLA · FORMATOS\n\n| CLAVE | NOMBRE | MIN | MAX | VENTANA | SISTEMA | ZONA | RPE | REPS x | CUÁNDO | ESTRATEGIA |\n|---|---|---|---|---|---|---|---|---|---|---|\n| SPRINT | For time corto | 3 | 8 | cap | glucolítico | Z6–Z7 | 9 | 0.8 | Sprint de competición, 2–3 movimientos, cargas medias | Salida fuerte; tandas grandes desde el principio; transiciones de menos de 3″ |\n| AMRAP_C | AMRAP corto | 6 | 10 | continuo | glucolítico | Z5–Z6 | 8–9 | 1 | Potencia con fatiga, pocas transiciones | 85–90 % desde la ronda 1 y tandas fijas |\n| AMRAP | AMRAP medio | 11 | 20 | continuo | mixto (umbral) | Z4–Z5 | 7–8 | 1.2 | Ritmo sostenido con interferencia | Ronda 1 al 80 %; mira el tiempo por ronda y no lo dejes caer más de un 10 % |\n| AMRAP_L | AMRAP largo | 21 | 40 | continuo | aeróbico | Z3 | 6–7 | 1.4 | Capacidad aeróbica, movimientos de baja demanda técnica | Sin picos; misma carrera o erg por ronda (como pide Fabrik) |\n| FOR_TIME | For time con cap | 8 | 20 | cap | mixto | Z4–Z6 | 8 | 1.2 | Gestión de WOD, chipper corto o rondas | No te vayas en el primer tercio; acelera en el último |\n| CHIPPER | Chipper | 15 | 30 | cap | mixto-aeróbico | Z3–Z5 | 7–8 | 1.5 | Muchos apartados; administrar para llegar con energía al final | Cada apartado al 75–80 %; el último es el que suma |\n| ESCALERA | 21-15-9 / ascendente | 6 | 15 | cap | glucolítico | Z5–Z6 | 8–9 | 1 | Movimientos de la misma familia con interferencia directa | Rompe antes del fallo: 21 = 12+9, 15 = 8+7, 9 = seguidas |\n| EMOM | EMOM | 10 | 30 | 60″ | mixto | Z4–Z5 | 7–8 | 0.5 | Densidad y calidad técnica en fatiga; alterna minutos | Trabajo de 35–45″ y descanso de 15–25″; si pasas de 50″, baja reps |\n| EVERY | Every 3–4′ (P1) | 12 | 30 | 3–4′ (60–90″ ON) | potencia con fatiga | Z6–Z8 | 9 | 0.7 | Potencia con fatiga: series al 90 % con recuperación casi completa | Cada serie al 90 %; si la caída pasa del 10 %, para |\n| INTERVALOS | Trabajo:descanso | 12 | 30 | 2:1 · 1:1 · 1:2 | umbral / VO₂ | Z5–Z7 | 8–9 | 0.7 | Ergos + gimnásticos; P4 umbral/pico | Mismo ritmo en todas las series; la última igual que la primera |\n| VENTANAS | Heavy en ventanas | 10 | 20 | E2–3′ | fuerza en fatiga | — | 8–9 | 0.4 | Halterofilia o fuerza pesada tras erg o gimnásticos | Ventana 1 ligera, ventana 2 exigente (estilo Fabrik); calidad antes que velocidad |\n| SINCRO | Pareja o equipo | 15 | 60 | variable | mixto | Z4–Z6 | 8 | 1.6 | Mega WOD o equipo | Reparto por fuerzas; el más fuerte en el movimiento limitante |\n\n## TABLA · MOVIMIENTOS\n\n`PATRÓN`:\n- OLY = olímpico\n- OH = empuje vertical / por encima de la cabeza\n- SENT = sentadilla\n- BISAGRA\n- TIRON = tirón gimnástico\n- EMPUJE_G = empuje gimnástico\n- SALTO\n- MONO = erg o carrera\n- CORE\n- ACARREO\n- CUERPO = peso corporal\n\n`CARGA` (etiquetas del motor): PIERNA · HOMBRO · AGARRE · CORE · IMPACTO · SNC · GLUC · AERO.\n\n`1RM DE`: la marca de APP · MARCAS de la que sale el peso, con su factor, por ejemplo «FRONT SQUAT 0.8». Si no tienes esa marca, se usa KG ♂ RX.\n\n| CLAVE | NOMBRE | ALIAS | MATERIAL | ALTERNATIVA | PATRÓN | CARGA | UNIDAD | REPS | KG ♂ RX | KG ♀ RX | 1RM DE | CÓDIGO |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| THRUSTER | THRUSTERS | thruster, thrusters | barra | db | OH | PIERNA, HOMBRO, GLUC | reps | 12 | 43 | 29 | FRONT SQUAT 0.75 | T02 |\n| STOH | SHOULDER TO OVERHEAD | stoh, s2oh, shoulder to overhead, push press, push jerk, jerk | barra | db | OH | HOMBRO | reps | 12 | 61 | 43 | PUSH JERK 1 | M07 |\n| SNATCH | POWER SNATCH | snatch, power snatch, arrancada | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 8 | 43 | 29 | SNATCH 1 | |\n| SQ_SNATCH | SQUAT SNATCH | squat snatch | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 6 | 43 | 29 | SNATCH 1 | |\n| HANG_SN | HANG POWER SNATCH | hang snatch, hang power snatch | barra | db | OLY | SNC, HOMBRO | reps | 8 | 43 | 29 | SNATCH 1 | C04 |\n| OHS | OVERHEAD SQUAT | ohs, overhead squat | barra | db | OH | HOMBRO, PIERNA, CORE | reps | 10 | 43 | 29 | SNATCH 1 | |\n| DB_SNATCH | DB SNATCH (alternos) | db snatch, dumbbell snatch | db | kb | OLY | HOMBRO, GLUC | reps | 16 | 22.5 | 15 | | |\n| DB_C2OH | DB HANG CLEAN TO OVERHEAD | c2oh, clean to overhead, db hang clean to overhead | db | kb | OH | HOMBRO, PIERNA | reps | 12 | 22.5 | 15 | | |\n| OH_LUNGE | DB OVERHEAD WALKING LUNGE | oh lunge, overhead lunge, lunge oh | db | sandbag | OH | HOMBRO, PIERNA, CORE | m | 15 | 22.5 | 15 | | |\n| CLEAN | POWER CLEAN | clean, power clean, cargada | barra | db | OLY | SNC, PIERNA, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | |\n| SQ_CLEAN | SQUAT CLEAN | squat clean | barra | db | OLY | SNC, PIERNA | reps | 8 | 61 | 43 | CLEAN 1 | |\n| HANG_CL | HANG POWER CLEAN | hang clean, hang power clean | barra | db | OLY | SNC, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | C04 |\n| FRONT_SQ | FRONT SQUAT | front squat | barra | db | SENT | PIERNA, CORE | reps | 12 | 61 | 43 | FRONT SQUAT 1 | C02 |\n| DEADLIFT | DEADLIFT | deadlift, peso muerto | barra | kb | BISAGRA | PIERNA, AGARRE, CORE | reps | 10 | 102 | 70 | DEADLIFT 1 | |\n| WALLBALL | WALL BALLS | wall ball, wallball, wall balls | slamball | | OH | PIERNA, HOMBRO, GLUC | reps | 20 | 9 | 6 | | |\n| DU | DOUBLE UNDERS | du, dus, double under, double unders, comba | comba | | SALTO | IMPACTO, GLUC | reps | 50 | | | | C01 |\n| BURPEE | BURPEES | burpee, burpees | | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BOB | BURPEES OVER THE BAR | burpee over the bar, bar facing burpee, bfb | barra | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| LAT_BURPEE | LATERAL BURPEES OVER DB | lateral burpee, burpee over db | db | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BJO | BOX JUMP OVERS | box jump, box jump over, bjo, cajon | cajon | | SALTO | PIERNA, IMPACTO | reps | 12 | | | | W07 |\n| C2B | CHEST TO BAR | c2b, chest to bar | rack_dominadas | | TIRON | AGARRE, HOMBRO | reps | 12 | | | | M01 |\n| PULLUP | PULL-UPS | pull up, pull-up, dominadas | rack_dominadas | | TIRON | AGARRE | reps | 15 | | | | |\n| T2B | TOES TO BAR | t2b, toes to bar | rack_dominadas | | CORE | AGARRE, CORE | reps | 15 | | | | |\n| BMU | BAR MUSCLE UPS | bmu, bar muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 6 | | | | M48 |\n| RMU | RING MUSCLE UPS | rmu, ring muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 5 | | | | M49 |\n| HSPU | HSPU | hspu, handstand push up, pino flexion | hspu | | EMPUJE_G | HOMBRO | reps | 10 | | | | W31 |\n| HSWALK | HANDSTAND WALK | hs walk, handstand walk, pino andando | hspu | | EMPUJE_G | HOMBRO, CORE | m | 15 | | | | |\n| WALLWALK | WALL WALKS | wall walk | hspu | | EMPUJE_G | HOMBRO, CORE | reps | 5 | | | | |\n| ROPE | ROPE CLIMBS | rope, rope climb, cuerda | cuerda | | TIRON | AGARRE | reps | 3 | | | | M36 |\n| GHD | GHD SIT-UPS | ghd | box | | CORE | CORE | reps | 15 | | | | |\n| KBS | KB SWINGS | kb swing, kettlebell swing, swing | kb | db | BISAGRA | AGARRE, GLUC | reps | 20 | 24 | 16 | | |\n| DEVIL | DEVIL PRESS | devil press | db | | OLY | HOMBRO, GLUC | reps | 10 | 22.5 | 15 | | |\n| SANDBAG | SANDBAG CLEANS | sandbag, sandbag clean | sandbag | | OLY | PIERNA, CORE | reps | 10 | 70 | 45 | | M57 |\n| SB_LUNGE | SANDBAG LUNGES | sandbag lunge, lunges hyrox | sandbag_hyrox | db | SENT | PIERNA | m | 20 | 20 | 10 | | |\n| LUNGE | DB WALKING LUNGES | lunge, lunges, zancadas | db | | SENT | PIERNA | reps | 16 | 22.5 | 15 | | |\n| SLED | SLED PUSH 15 m | sled, trineo | trineo | | ACARREO | PIERNA, GLUC | reps | 2 | | | | M38 |\n| FARMER | FARMER CARRY | farmer, farmers carry | db | kb | ACARREO | AGARRE, CORE | m | 40 | 32 | 24 | | |\n| GUSANO | WORM CLEANS + CARRY 20 m | gusano, worm | gusano | | ACARREO | PIERNA, CORE | reps | 6 | | | | |\n| LODGE | SANDBAG OVER LODGE | lodge, over the wall | lodge_lanzar | | OLY | PIERNA, HOMBRO | reps | 8 | | | | M57 |\n| LODGE_JUMP | JUMP OVER LODGE | jump over lodge, jump over | lodge_saltar | | SALTO | PIERNA, IMPACTO | reps | 10 | | | | W07 |\n| ROW | ROW | row, remo, rower | ergos | | MONO | AERO, GLUC | cal | 15 | | | | |\n| SKI | SKIERG | ski, skierg | ergos | | MONO | AERO, HOMBRO | cal | 15 | | | | |\n| ASSAULT | ASSAULT BIKE | assault, air bike, airbike, echo, assault bike | ergos | | MONO | AERO, GLUC, PIERNA | cal | 15 | | | | |\n| BIKE | BIKE ERG | bike erg, bikeerg | ergos | | MONO | AERO, PIERNA | cal | 20 | | | | |\n| RUN | RUN | run, carrera, correr, running | _correr | | MONO | AERO, IMPACTO | m | 400 | | | | |\n\n## TABLA · PATRONES\n\nPalabras sueltas del campo «Estímulos que quiero» que no nombran un movimiento sino una familia. El motor añade el movimiento de esa familia que más falta (según APP · METAS) y que tu material permite.\n\n| PALABRA | PATRÓN | CARGA |\n|---|---|---|\n| oh, overhead, por encima | OH | HOMBRO |\n| empuje, push | OH | HOMBRO |\n| tiron, pull, gimnasticos | TIRON | AGARRE |\n| agarre, grip | TIRON | AGARRE |\n| pierna, legs | SENT | PIERNA |\n| bisagra, cadena posterior | BISAGRA | PIERNA |\n| halterofilia, oly, olimpico | OLY | SNC |\n| saltos, salto, plio | SALTO | IMPACTO |\n| core, abdomen | CORE | CORE |\n| acarreo, carry | ACARREO | AGARRE |\n| erg, ergos, monoestructural | MONO | AERO |\n\n## TABLA · INTERFERENCIAS\n\n- `A` y `B`: CLAVE de movimiento o PATRÓN; `*` = cualquiera.\n- `TIPO`:\n  - `buscada`: el motor los pone seguidos en ese orden porque es la interferencia de competición que se quiere entrenar;\n  - `complementaria`: alternarlos da densidad sin que uno limite al otro;\n  - `evitar`: no los pone seguidos salvo que lo pidas.\n- `ORDEN`: `A>B` (A antes que B) o `A<>B` (da igual).\n\n| A | B | TIPO | ORDEN | EFECTO BUSCADO | CIENCIA |\n|---|---|---|---|---|---|\n| RUN | THRUSTER | buscada | A>B | Correr y llegar a la barra con cuádriceps pre-fatigado y la respiración alta, como en competición e HYROX | Tras la carrera el lactato y la ventilación están altos: el thruster exige estabilizar el tronco con alta demanda respiratoria. Entrena el aclarado de H⁺ en el músculo que sigue trabajando y la eficiencia del bracing con hiperventilación. |\n| ASSAULT | OH | buscada | A>B | Estabilidad de hombro y core por encima de la cabeza con la frecuencia cardiaca muy alta | La air bike recluta piernas y brazos a la vez y dispara la FC y el CO₂. Bloquear por encima de la cabeza así obliga al control motor (manguito, serrato, core) a funcionar con fatiga sistémica: es lo que limita en competición. |\n| ASSAULT | SQ_SNATCH | buscada | A>B | Squat snatch bajo interferencia directa de la air bike (objetivo literal de Fabrik) | La precisión del segundo tirón y la recepción profunda se degradan con fatiga cardiorrespiratoria. Practicarlo con cargas medias consolida el patrón (aprendizaje motor en fatiga) sin el riesgo de hacerlo pesado. |\n| ASSAULT | BMU | buscada | A>B | BMU con fatiga cardiorrespiratoria (Fabrik) | El kipping depende del timing; con FC alta se pierde coordinación. Entrenarlo así mejora la economía del gesto cuando importa. |\n| DU | THRUSTER | buscada | A<>B | Limitante respiratorio alto (Fabrik: «thruster + DU») | Los DU mantienen la FC alta con bajo coste muscular. El thruster suma carga de pierna y hombro, y entre los dos fuerzan la tolerancia ventilatoria. |\n| RUN | T2B | buscada | A>B | Sostener eficiencia de T2B tras la carrera; usar la carrera para bajar pulsaciones (Fabrik) | Pacing estratégico: regular la intensidad de la carrera para llegar al gimnástico limitante con FC más baja. Aprende a usar lo monoestructural como recuperación activa. |\n| ROW | WALLBALL | buscada | A>B | Erg sostenido y después un movimiento de baja demanda coordinativa (Fabrik) | Tras el remo el gasto cardiaco sigue alto. El wall ball, poco técnico, permite seguir en umbral sin que la técnica limite: estímulo aeróbico-glucolítico sostenido. |\n| BURPEE | BJO | buscada | A<>B | Gestión de WOD: llegar con energía al apartado final (burpee box jump over, Fabrik) | Combina impacto y extensión de cadera con alta demanda metabólica. Administrar los apartados previos entrena la distribución de esfuerzo (pacing). |\n| MONO | VENTANAS | buscada | A>B | Fuerza o heavy en fatiga: levantar pesado después del erg | Tras un esfuerzo glucolítico la fosfocreatina está parcialmente vaciada. Levantar pesado así entrena la expresión de fuerza con fatiga metabólica (PAPE limitado; el estímulo es la tolerancia). |\n| SKI | C2B | buscada | A>B | Limitante de hombro y dorsal: tirón doble (Fabrik: C2B + ski) | Los dos tiran con dorsal y tríceps largo: la fatiga local se acumula y obliga a romper series. Útil si la meta es resistencia de tirón. |\n| OH | TIRON | complementaria | A<>B | Densidad: empuje vertical y tirón alternos (Fran, 24.3) | Agonistas y antagonistas alternos: mientras uno trabaja el otro se recupera. Más trabajo total por minuto con menos fallo local. |\n| T2B | OH | complementaria | A<>B | Core flexor y empuje vertical alternos | Patrones distintos: permiten densidad sin solapar fatiga local. |\n| LUNGE | RUN | buscada | A>B | Transición de pierna estilo HYROX | Las zancadas fatigan cuádriceps y glúteo excéntricamente, y la carrera posterior exige economía con el músculo fatigado (específico de HYROX). |\n| SLED | RUN | buscada | A>B | Sled y después carrera (HYROX) | El trineo es concéntrico pesado con alta demanda glucolítica. Correr después entrena el «compromised running». |\n| SANDBAG | RUN | buscada | A<>B | Carga incómoda y carrera | La carga asimétrica pide core y respiración contra presión intraabdominal; la carrera exige recuperarse en movimiento. |\n| C2B | T2B | evitar | A<>B | Doble agarre seguido | Los flexores del antebrazo se fatigan y caen las dos series. Solo si quieres resistencia de agarre (escribe «agarre»). |\n| PULLUP | T2B | evitar | A<>B | Doble agarre seguido | Igual que arriba. |\n| DEADLIFT | ROW | evitar | A<>B | Cadena posterior y lumbar doble en volumen | El erector espinal acumula fatiga y la técnica del peso muerto se resiente. Sepáralos con otro movimiento. |\n| WALLBALL | THRUSTER | evitar | A<>B | Mismo patrón seguido (sentadilla + empuje) | Mono-fatiga: limita el volumen total sin un estímulo nuevo. Solo si buscas «pierna/hombro» al límite. |\n| HSPU | STOH | evitar | A<>B | Doble empuje vertical | El tríceps y el deltoides anterior fallan pronto; si se busca, que sea con reps bajas. |\n| OLY | BURPEE | buscada | A<>B | Halterofilia con pulsaciones altas | Mantener la técnica de la barra con FC alta: interferencia típica de los WODs de competición en la fase de realización. |\n\n## TABLA · PESOS\n\nRango de carga en % del 1RM según el formato. El motor usa la marca del ejercicio (o la de `1RM DE`) y redondea a 2,5 kg.\n\n| FORMATO | % MIN | % MAX | NOTA |\n|---|---|---|---|\n| SPRINT | 60 | 75 | Cargas medias que permitan tandas grandes |\n| AMRAP_C | 55 | 70 | |\n| AMRAP | 45 | 60 | |\n| AMRAP_L | 35 | 50 | Barra ligera: no es el objetivo (Fabrik: «no buscamos una barra exigente») |\n| FOR_TIME | 50 | 65 | |\n| CHIPPER | 40 | 55 | |\n| ESCALERA | 55 | 70 | |\n| EMOM | 55 | 70 | |\n| EVERY | 60 | 75 | P1: cargas que permitan el 90 % de intensidad |\n| INTERVALOS | 45 | 60 | |\n| VENTANAS | 75 | 88 | Ventana 1 al mínimo y ventana 2 al máximo |\n| SINCRO | 45 | 60 | Equipo: −10–15 % frente a individual |\n\n## TABLA · REGLAS\n\n| CLAVE | VALOR | EXPLICACIÓN |\n|---|---|---|\n| max_movs | 4 | Movimientos por parte (con el erg incluido) |\n| transicion_min | 2 | Minutos de transición entre partes del mega WOD |\n| erg_cada_ronda | 1 | Con «intercalar X», X va entre todas las rondas |\n| min_metcon | 12 | Minutos por defecto de un metcon a medida si no los pones |\n| max_metcon | 40 | Tope de minutos de un metcon a medida |\n| sesiones_duras_48h | 1 | Las sesiones duras (P1–P4, metcon RPE ≥8) se separan 48 h |\n| tope_compensacion | 40 | % máximo de volumen extra al compensar |\n| reps_equipo | 0.75 | Factor de reps por atleta en pareja o equipo |\n\n## Claves de CrossFit (Road To Elite)\n\n- **Interferencia con intención:** Fabrik programa la interferencia como objetivo, por ejemplo:\n  - «squat snatch bajo interferencia directa de air bike»;\n  - «BMU bajo fatiga cardiorrespiratoria»;\n  - «T2B bajo fatiga tras la carrera».\n\n  El motor debe reproducir ese tipo de pares, no evitarlos, cuando el objetivo es competir.\n- **Fichas de Fabrik:** cada metcon trae\n  - WOD MATERIAL, INTENSIDAD (RPE) y CARGA;\n  - MODALIDAD y MODALIDAD WOD;\n  - OBJETIVO;\n  - LIMITANTE muscular, técnico, respiratorio y estratégico.\n\n  Son la etiqueta de cada WOD en `APP · MOTOR WODS` y lo que el motor imita.\n- **«Respeta %»:**\n  - la carga media es media;\n  - en metcon largo, la barra no debe ser lo que determine el WOD;\n  - en ventanas, la 1 ligera y la 2 exigente.\n- **Pacing:** empezar exigente pero repetible; registrar si la caída viene del aire, el agarre, el hombro o las transiciones (manual §6.4).\n- **Realización (semanas 9–12):**\n  - interferencia máxima;\n  - gimnásticos y barra con pulsaciones altas;\n  - erg mezclado con barra y gimnásticos;\n  - heavys aislados y en metcon;\n  - accesorios en mantenimiento.\n- **Z6–Z8 (P1–P4):**\n  - pocos minutos y de máxima calidad;\n  - P1: every 3–4′ al 90 % con descanso casi completo;\n  - P4: umbral en impares y pico en pares;\n  - si un metcon de Fabrik ya es de esa familia (4 bloques estables), cuenta como el estímulo de la semana.\n- **Segundo P integrado (R04):**\n  - thrusters, DU, STOH, front squat, burpees, hang snatch/clean y C2B/BMU en fatiga, con erg o carrera;\n  - nunca a menos de 48 h de otra sesión dura.\n- **Viaje:** lo que no siga la programación sube la intensidad:\n  - densidad;\n  - tempo;\n  - chaleco;\n  - final tipo P con sprints de 20″.\n- **Carencias:** salen de APP · METAS (peso = prioridad × lo que falta). El motor prioriza los movimientos de las metas menos cubiertas que tu material permite.\n\n## Claves del manual de rendimiento híbrido (resumen para el motor)\n\n- **Concurrente:**\n  - separa la fuerza pesada y la carrera de calidad ≥6 h, o mejor en días distintos;\n  - la Z2 no interfiere si es suave de verdad.\n- **48 h entre sesiones duras.** Tope semanal de minutos por turno: AM 75′, PM 120′.\n- **Taper:** −41–60 % de volumen sin bajar intensidad ni frecuencia.\n- **Competición física:**\n  - fuera P1–P4 y extras;\n  - 72–48 h antes, volumen medio-bajo con intensidad alta;\n  - 48–24 h antes, repaso;\n  - 24 h antes, descanso.\n- **Combustible:** 6–8 g/kg de hidratos el día previo a una carga alta; 1–2 g/kg 2–3 h antes de competir.\n";
+var MOTOR_GUIA_BASE_ = "# MOTOR_GUIA · Road To Elite\n\nGuía que sigue el motor que genera los entrenamientos (metcons a medida, mega WOD, extras con «Estímulos que quiero»).\n\n- **Las tablas `## TABLA · …` las lee el servidor de verdad.** Si cambias una fila, cambia lo que genera el motor, sin tocar código.\n  - Mantén las columnas y el formato `| a | b |`.\n  - Los alias van separados por comas, en mayúsculas o minúsculas (da igual) y sin tildes obligatorias.\n  - Una fila que empieza por `#` se ignora.\n- **El texto de «Claves» lo leemos Claude y Gemini** para diseñar, revisar y explicar.\n- La copia de trabajo vive en Google Drive (`MOTOR_GUIA.md`, junto a los backups). El servidor la relee cada 6 h o al ejecutar `configurar`.\n- Fuentes:\n  - `Rendimiento_Hibrido_GuiaDefinitiva_md.md` (manual v2.0);\n  - las notas de coach de Fabrik: MODALIDAD, OBJETIVO, LIMITANTES;\n  - las claves de CrossFit acordadas en el proyecto «Road To Elite».\n\n## TABLA · FORMATOS\n\n| CLAVE | NOMBRE | MIN | MAX | VENTANA | SISTEMA | ZONA | RPE | REPS x | CUÁNDO | ESTRATEGIA |\n|---|---|---|---|---|---|---|---|---|---|---|\n| SPRINT | For time corto | 3 | 8 | cap | glucolítico | Z6–Z7 | 9 | 0.8 | Sprint de competición, 2–3 movimientos, cargas medias | Salida fuerte; tandas grandes desde el principio; transiciones de menos de 3″ |\n| AMRAP_C | AMRAP corto | 6 | 10 | continuo | glucolítico | Z5–Z6 | 8–9 | 1 | Potencia con fatiga, pocas transiciones | 85–90 % desde la ronda 1 y tandas fijas |\n| AMRAP | AMRAP medio | 11 | 20 | continuo | mixto (umbral) | Z4–Z5 | 7–8 | 1.2 | Ritmo sostenido con interferencia | Ronda 1 al 80 %; mira el tiempo por ronda y no lo dejes caer más de un 10 % |\n| AMRAP_L | AMRAP largo | 21 | 40 | continuo | aeróbico | Z3 | 6–7 | 1.4 | Capacidad aeróbica, movimientos de baja demanda técnica | Sin picos; misma carrera o erg por ronda (como pide Fabrik) |\n| FOR_TIME | For time con cap | 8 | 20 | cap | mixto | Z4–Z6 | 8 | 1.2 | Gestión de WOD, chipper corto o rondas | No te vayas en el primer tercio; acelera en el último |\n| CHIPPER | Chipper | 15 | 30 | cap | mixto-aeróbico | Z3–Z5 | 7–8 | 1.5 | Muchos apartados; administrar para llegar con energía al final | Cada apartado al 75–80 %; el último es el que suma |\n| ESCALERA | 21-15-9 / ascendente | 6 | 15 | cap | glucolítico | Z5–Z6 | 8–9 | 1 | Movimientos de la misma familia con interferencia directa | Rompe antes del fallo: 21 = 12+9, 15 = 8+7, 9 = seguidas |\n| EMOM | EMOM | 10 | 30 | 60″ | mixto | Z4–Z5 | 7–8 | 0.5 | Densidad y calidad técnica en fatiga; alterna minutos | Trabajo de 35–45″ y descanso de 15–25″; si pasas de 50″, baja reps |\n| EVERY | Every 3–4′ (P1) | 12 | 30 | 3–4′ (60–90″ ON) | potencia con fatiga | Z6–Z8 | 9 | 0.7 | Potencia con fatiga: series al 90 % con recuperación casi completa | Cada serie al 90 %; si la caída pasa del 10 %, para |\n| INTERVALOS | Trabajo:descanso | 12 | 30 | 2:1 · 1:1 · 1:2 | umbral / VO₂ | Z5–Z7 | 8–9 | 0.7 | Ergos + gimnásticos; P4 umbral/pico | Mismo ritmo en todas las series; la última igual que la primera |\n| VENTANAS | Heavy en ventanas | 10 | 20 | E2–3′ | fuerza en fatiga | — | 8–9 | 0.4 | Halterofilia o fuerza pesada tras erg o gimnásticos | Ventana 1 ligera, ventana 2 exigente (estilo Fabrik); calidad antes que velocidad |\n| SINCRO | Pareja o equipo | 15 | 60 | variable | mixto | Z4–Z6 | 8 | 1.6 | Mega WOD o equipo | Reparto por fuerzas; el más fuerte en el movimiento limitante |\n\n## TABLA · MOVIMIENTOS\n\n`PATRÓN`:\n- OLY = olímpico\n- OH = empuje vertical / por encima de la cabeza\n- SENT = sentadilla\n- BISAGRA\n- TIRON = tirón gimnástico\n- EMPUJE_G = empuje gimnástico\n- SALTO\n- MONO = erg o carrera\n- CORE\n- ACARREO\n- CUERPO = peso corporal\n\n`CARGA` (etiquetas del motor): PIERNA · HOMBRO · AGARRE · CORE · IMPACTO · SNC · GLUC · AERO.\n\n`1RM DE`: la marca de APP · MARCAS de la que sale el peso, con su factor, por ejemplo «FRONT SQUAT 0.8». Si no tienes esa marca, se usa KG ♂ RX.\n\n| CLAVE | NOMBRE | ALIAS | MATERIAL | ALTERNATIVA | PATRÓN | CARGA | UNIDAD | REPS | KG ♂ RX | KG ♀ RX | 1RM DE | CÓDIGO |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| THRUSTER | THRUSTERS | thruster, thrusters | barra | db | OH | PIERNA, HOMBRO, GLUC | reps | 12 | 43 | 29 | FRONT SQUAT 0.75 | T02 |\n| STOH | SHOULDER TO OVERHEAD | stoh, s2oh, shoulder to overhead, push press, push jerk, jerk | barra | db | OH | HOMBRO | reps | 12 | 61 | 43 | PUSH JERK 1 | M07 |\n| SNATCH | POWER SNATCH | snatch, power snatch, arrancada | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 8 | 43 | 29 | SNATCH 1 | |\n| SQ_SNATCH | SQUAT SNATCH | squat snatch | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 6 | 43 | 29 | SNATCH 1 | |\n| HANG_SN | HANG POWER SNATCH | hang snatch, hang power snatch | barra | db | OLY | SNC, HOMBRO | reps | 8 | 43 | 29 | SNATCH 1 | C04 |\n| OHS | OVERHEAD SQUAT | ohs, overhead squat | barra | db | OH | HOMBRO, PIERNA, CORE | reps | 10 | 43 | 29 | SNATCH 1 | |\n| DB_SNATCH | DB SNATCH (alternos) | db snatch, dumbbell snatch | db | kb | OLY | HOMBRO, GLUC | reps | 16 | 22.5 | 15 | | |\n| DB_C2OH | DB HANG CLEAN TO OVERHEAD | c2oh, clean to overhead, db hang clean to overhead | db | kb | OH | HOMBRO, PIERNA | reps | 12 | 22.5 | 15 | | |\n| OH_LUNGE | DB OVERHEAD WALKING LUNGE | oh lunge, overhead lunge, lunge oh | db | sandbag | OH | HOMBRO, PIERNA, CORE | m | 15 | 22.5 | 15 | | |\n| CLEAN | POWER CLEAN | clean, power clean, cargada | barra | db | OLY | SNC, PIERNA, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | |\n| SQ_CLEAN | SQUAT CLEAN | squat clean | barra | db | OLY | SNC, PIERNA | reps | 8 | 61 | 43 | CLEAN 1 | |\n| HANG_CL | HANG POWER CLEAN | hang clean, hang power clean | barra | db | OLY | SNC, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | C04 |\n| FRONT_SQ | FRONT SQUAT | front squat | barra | db | SENT | PIERNA, CORE | reps | 12 | 61 | 43 | FRONT SQUAT 1 | C02 |\n| DEADLIFT | DEADLIFT | deadlift, peso muerto | barra | kb | BISAGRA | PIERNA, AGARRE, CORE | reps | 10 | 102 | 70 | DEADLIFT 1 | |\n| WALLBALL | WALL BALLS | wall ball, wallball, wall balls | slamball | | OH | PIERNA, HOMBRO, GLUC | reps | 20 | 9 | 6 | | |\n| DU | DOUBLE UNDERS | du, dus, double under, double unders, comba | comba | | SALTO | IMPACTO, GLUC | reps | 50 | | | | C01 |\n| BURPEE | BURPEES | burpee, burpees | | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BOB | BURPEES OVER THE BAR | burpee over the bar, bar facing burpee, bfb | barra | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| LAT_BURPEE | LATERAL BURPEES OVER DB | lateral burpee, burpee over db | db | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BJO | BOX JUMP OVERS | box jump, box jump over, bjo, cajon | cajon | | SALTO | PIERNA, IMPACTO | reps | 12 | | | | W07 |\n| C2B | CHEST TO BAR | c2b, chest to bar | rack_dominadas | | TIRON | AGARRE, HOMBRO | reps | 12 | | | | M01 |\n| PULLUP | PULL-UPS | pull up, pull-up, dominadas | rack_dominadas | | TIRON | AGARRE | reps | 15 | | | | |\n| T2B | TOES TO BAR | t2b, toes to bar | rack_dominadas | | CORE | AGARRE, CORE | reps | 15 | | | | |\n| BMU | BAR MUSCLE UPS | bmu, bar muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 6 | | | | M48 |\n| RMU | RING MUSCLE UPS | rmu, ring muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 5 | | | | M49 |\n| HSPU | HSPU | hspu, handstand push up, pino flexion | hspu | | EMPUJE_G | HOMBRO | reps | 10 | | | | W31 |\n| HSWALK | HANDSTAND WALK | hs walk, handstand walk, pino andando | hspu | | EMPUJE_G | HOMBRO, CORE | m | 15 | | | | |\n| WALLWALK | WALL WALKS | wall walk | hspu | | EMPUJE_G | HOMBRO, CORE | reps | 5 | | | | |\n| ROPE | ROPE CLIMBS | rope, rope climb, cuerda | cuerda | | TIRON | AGARRE | reps | 3 | | | | M36 |\n| GHD | GHD SIT-UPS | ghd | box | | CORE | CORE | reps | 15 | | | | |\n| KBS | KB SWINGS | kb swing, kettlebell swing, swing | kb | db | BISAGRA | AGARRE, GLUC | reps | 20 | 24 | 16 | | |\n| DEVIL | DEVIL PRESS | devil press | db | | OLY | HOMBRO, GLUC | reps | 10 | 22.5 | 15 | | |\n| SANDBAG | SANDBAG CLEANS | sandbag, sandbag clean | sandbag | | OLY | PIERNA, CORE | reps | 10 | 70 | 45 | | M57 |\n| SB_LUNGE | SANDBAG LUNGES | sandbag lunge, lunges hyrox | sandbag_hyrox | db | SENT | PIERNA | m | 20 | 20 | 10 | | |\n| LUNGE | DB WALKING LUNGES | lunge, lunges, zancadas | db | | SENT | PIERNA | reps | 16 | 22.5 | 15 | | |\n| SLED | SLED PUSH 15 m | sled, trineo | trineo | | ACARREO | PIERNA, GLUC | reps | 2 | | | | M38 |\n| FARMER | FARMER CARRY | farmer, farmers carry | db | kb | ACARREO | AGARRE, CORE | m | 40 | 32 | 24 | | |\n| GUSANO | WORM CLEANS + CARRY 20 m | gusano, worm | gusano | | ACARREO | PIERNA, CORE | reps | 6 | | | | |\n| LODGE | SANDBAG OVER LODGE | lodge, over the wall | lodge_lanzar | | OLY | PIERNA, HOMBRO | reps | 8 | | | | M57 |\n| LODGE_JUMP | JUMP OVER LODGE | jump over lodge, jump over | lodge_saltar | | SALTO | PIERNA, IMPACTO | reps | 10 | | | | W07 |\n| ROW | ROW | row, remo, rower | ergos | | MONO | AERO, GLUC | cal | 15 | | | | |\n| SKI | SKIERG | ski, skierg | ergos | | MONO | AERO, HOMBRO | cal | 15 | | | | |\n| ASSAULT | ASSAULT BIKE | assault, air bike, airbike, echo, assault bike | ergos | | MONO | AERO, GLUC, PIERNA | cal | 15 | | | | |\n| BIKE | BIKE ERG | bike erg, bikeerg | ergos | | MONO | AERO, PIERNA | cal | 20 | | | | |\n| RUN | RUN | run, carrera, correr, running | _correr | | MONO | AERO, IMPACTO | m | 400 | | | | |\n\n## TABLA · PATRONES\n\nPalabras sueltas del campo «Estímulos que quiero» que no nombran un movimiento sino una familia. El motor añade el movimiento de esa familia que más falta (según APP · METAS) y que tu material permite.\n\n| PALABRA | PATRÓN | CARGA |\n|---|---|---|\n| oh, overhead, por encima | OH | HOMBRO |\n| empuje, push | OH | HOMBRO |\n| tiron, pull, gimnasticos | TIRON | AGARRE |\n| agarre, grip | TIRON | AGARRE |\n| pierna, legs | SENT | PIERNA |\n| bisagra, cadena posterior | BISAGRA | PIERNA |\n| halterofilia, oly, olimpico | OLY | SNC |\n| saltos, salto, plio | SALTO | IMPACTO |\n| core, abdomen | CORE | CORE |\n| acarreo, carry | ACARREO | AGARRE |\n| erg, ergos, monoestructural | MONO | AERO |\n\n## TABLA · INTERFERENCIAS\n\n- `A` y `B`: CLAVE de movimiento o PATRÓN; `*` = cualquiera.\n- `TIPO`:\n  - `buscada`: el motor los pone seguidos en ese orden porque es la interferencia de competición que se quiere entrenar;\n  - `complementaria`: alternarlos da densidad sin que uno limite al otro;\n  - `evitar`: no los pone seguidos salvo que lo pidas.\n- `ORDEN`: `A>B` (A antes que B) o `A<>B` (da igual).\n\n| A | B | TIPO | ORDEN | EFECTO BUSCADO | CIENCIA |\n|---|---|---|---|---|---|\n| RUN | THRUSTER | buscada | A>B | Correr y llegar a la barra con cuádriceps pre-fatigado y la respiración alta, como en competición e HYROX | Tras la carrera el lactato y la ventilación están altos: el thruster exige estabilizar el tronco con alta demanda respiratoria. Entrena el aclarado de H⁺ en el músculo que sigue trabajando y la eficiencia del bracing con hiperventilación. |\n| ASSAULT | OH | buscada | A>B | Estabilidad de hombro y core por encima de la cabeza con la frecuencia cardiaca muy alta | La air bike recluta piernas y brazos a la vez y dispara la FC y el CO₂. Bloquear por encima de la cabeza así obliga al control motor (manguito, serrato, core) a funcionar con fatiga sistémica: es lo que limita en competición. |\n| ASSAULT | SQ_SNATCH | buscada | A>B | Squat snatch bajo interferencia directa de la air bike (objetivo literal de Fabrik) | La precisión del segundo tirón y la recepción profunda se degradan con fatiga cardiorrespiratoria. Practicarlo con cargas medias consolida el patrón (aprendizaje motor en fatiga) sin el riesgo de hacerlo pesado. |\n| ASSAULT | BMU | buscada | A>B | BMU con fatiga cardiorrespiratoria (Fabrik) | El kipping depende del timing; con FC alta se pierde coordinación. Entrenarlo así mejora la economía del gesto cuando importa. |\n| DU | THRUSTER | buscada | A<>B | Limitante respiratorio alto (Fabrik: «thruster + DU») | Los DU mantienen la FC alta con bajo coste muscular. El thruster suma carga de pierna y hombro, y entre los dos fuerzan la tolerancia ventilatoria. |\n| RUN | T2B | buscada | A>B | Sostener eficiencia de T2B tras la carrera; usar la carrera para bajar pulsaciones (Fabrik) | Pacing estratégico: regular la intensidad de la carrera para llegar al gimnástico limitante con FC más baja. Aprende a usar lo monoestructural como recuperación activa. |\n| ROW | WALLBALL | buscada | A>B | Erg sostenido y después un movimiento de baja demanda coordinativa (Fabrik) | Tras el remo el gasto cardiaco sigue alto. El wall ball, poco técnico, permite seguir en umbral sin que la técnica limite: estímulo aeróbico-glucolítico sostenido. |\n| BURPEE | BJO | buscada | A<>B | Gestión de WOD: llegar con energía al apartado final (burpee box jump over, Fabrik) | Combina impacto y extensión de cadera con alta demanda metabólica. Administrar los apartados previos entrena la distribución de esfuerzo (pacing). |\n| MONO | VENTANAS | buscada | A>B | Fuerza o heavy en fatiga: levantar pesado después del erg | Tras un esfuerzo glucolítico la fosfocreatina está parcialmente vaciada. Levantar pesado así entrena la expresión de fuerza con fatiga metabólica (PAPE limitado; el estímulo es la tolerancia). |\n| SKI | C2B | buscada | A>B | Limitante de hombro y dorsal: tirón doble (Fabrik: C2B + ski) | Los dos tiran con dorsal y tríceps largo: la fatiga local se acumula y obliga a romper series. Útil si la meta es resistencia de tirón. |\n| OH | TIRON | complementaria | A<>B | Densidad: empuje vertical y tirón alternos (Fran, 24.3) | Agonistas y antagonistas alternos: mientras uno trabaja el otro se recupera. Más trabajo total por minuto con menos fallo local. |\n| T2B | OH | complementaria | A<>B | Core flexor y empuje vertical alternos | Patrones distintos: permiten densidad sin solapar fatiga local. |\n| LUNGE | RUN | buscada | A>B | Transición de pierna estilo HYROX | Las zancadas fatigan cuádriceps y glúteo excéntricamente, y la carrera posterior exige economía con el músculo fatigado (específico de HYROX). |\n| SLED | RUN | buscada | A>B | Sled y después carrera (HYROX) | El trineo es concéntrico pesado con alta demanda glucolítica. Correr después entrena el «compromised running». |\n| SANDBAG | RUN | buscada | A<>B | Carga incómoda y carrera | La carga asimétrica pide core y respiración contra presión intraabdominal; la carrera exige recuperarse en movimiento. |\n| C2B | T2B | evitar | A<>B | Doble agarre seguido | Los flexores del antebrazo se fatigan y caen las dos series. Solo si quieres resistencia de agarre (escribe «agarre»). |\n| PULLUP | T2B | evitar | A<>B | Doble agarre seguido | Igual que arriba. |\n| DEADLIFT | ROW | evitar | A<>B | Cadena posterior y lumbar doble en volumen | El erector espinal acumula fatiga y la técnica del peso muerto se resiente. Sepáralos con otro movimiento. |\n| WALLBALL | THRUSTER | evitar | A<>B | Mismo patrón seguido (sentadilla + empuje) | Mono-fatiga: limita el volumen total sin un estímulo nuevo. Solo si buscas «pierna/hombro» al límite. |\n| HSPU | STOH | evitar | A<>B | Doble empuje vertical | El tríceps y el deltoides anterior fallan pronto; si se busca, que sea con reps bajas. |\n| OLY | BURPEE | buscada | A<>B | Halterofilia con pulsaciones altas | Mantener la técnica de la barra con FC alta: interferencia típica de los WODs de competición en la fase de realización. |\n\n## TABLA · PESOS\n\nRango de carga en % del 1RM según el formato. El motor usa la marca del ejercicio (o la de `1RM DE`) y redondea a 2,5 kg.\n\n| FORMATO | % MIN | % MAX | NOTA |\n|---|---|---|---|\n| SPRINT | 60 | 75 | Cargas medias que permitan tandas grandes |\n| AMRAP_C | 55 | 70 | |\n| AMRAP | 45 | 60 | |\n| AMRAP_L | 35 | 50 | Barra ligera: no es el objetivo (Fabrik: «no buscamos una barra exigente») |\n| FOR_TIME | 50 | 65 | |\n| CHIPPER | 40 | 55 | |\n| ESCALERA | 55 | 70 | |\n| EMOM | 55 | 70 | |\n| EVERY | 60 | 75 | P1: cargas que permitan el 90 % de intensidad |\n| INTERVALOS | 45 | 60 | |\n| VENTANAS | 75 | 88 | Ventana 1 al mínimo y ventana 2 al máximo |\n| SINCRO | 45 | 60 | Equipo: −10–15 % frente a individual |\n\n## TABLA · REGLAS\n\n| CLAVE | VALOR | EXPLICACIÓN |\n|---|---|---|\n| max_movs | 4 | Movimientos por parte (con el erg incluido) |\n| transicion_min | 2 | Minutos de transición entre partes del mega WOD |\n| erg_cada_ronda | 1 | Con «intercalar X», X va entre todas las rondas |\n| min_metcon | 12 | Minutos por defecto de un metcon a medida si no los pones |\n| max_metcon | 40 | Tope de minutos de un metcon a medida |\n| sesiones_duras_48h | 1 | Las sesiones duras (P1–P4, metcon RPE ≥8) se separan 48 h |\n| tope_compensacion | 40 | % máximo de volumen extra al compensar |\n| reps_equipo | 0.75 | Factor de reps por atleta en pareja o equipo |\n\n## Claves de CrossFit (Road To Elite)\n\n- **Interferencia con intención:** Fabrik programa la interferencia como objetivo, por ejemplo:\n  - «squat snatch bajo interferencia directa de air bike»;\n  - «BMU bajo fatiga cardiorrespiratoria»;\n  - «T2B bajo fatiga tras la carrera».\n\n  El motor debe reproducir ese tipo de pares, no evitarlos, cuando el objetivo es competir.\n- **Fichas de Fabrik:** cada metcon trae\n  - WOD MATERIAL, INTENSIDAD (RPE) y CARGA;\n  - MODALIDAD y MODALIDAD WOD;\n  - OBJETIVO;\n  - LIMITANTE muscular, técnico, respiratorio y estratégico.\n\n  Son la etiqueta de cada WOD en `MOTOR · ANÁLISIS (Base_de_datos_WOD)` y lo que el motor imita.\n- **«Respeta %»:**\n  - la carga media es media;\n  - en metcon largo, la barra no debe ser lo que determine el WOD;\n  - en ventanas, la 1 ligera y la 2 exigente.\n- **Pacing:** empezar exigente pero repetible; registrar si la caída viene del aire, el agarre, el hombro o las transiciones (manual §6.4).\n- **Realización (semanas 9–12):**\n  - interferencia máxima;\n  - gimnásticos y barra con pulsaciones altas;\n  - erg mezclado con barra y gimnásticos;\n  - heavys aislados y en metcon;\n  - accesorios en mantenimiento.\n- **Z6–Z8 (P1–P4):**\n  - pocos minutos y de máxima calidad;\n  - P1: every 3–4′ al 90 % con descanso casi completo;\n  - P4: umbral en impares y pico en pares;\n  - si un metcon de Fabrik ya es de esa familia (4 bloques estables), cuenta como el estímulo de la semana.\n- **Segundo P integrado (R04):**\n  - thrusters, DU, STOH, front squat, burpees, hang snatch/clean y C2B/BMU en fatiga, con erg o carrera;\n  - nunca a menos de 48 h de otra sesión dura.\n- **Viaje:** lo que no siga la programación sube la intensidad:\n  - densidad;\n  - tempo;\n  - chaleco;\n  - final tipo P con sprints de 20″.\n- **Carencias:** salen de APP · METAS (peso = prioridad × lo que falta). El motor prioriza los movimientos de las metas menos cubiertas que tu material permite.\n\n## Claves del manual de rendimiento híbrido (resumen para el motor)\n\n- **Concurrente:**\n  - separa la fuerza pesada y la carrera de calidad ≥6 h, o mejor en días distintos;\n  - la Z2 no interfiere si es suave de verdad.\n- **48 h entre sesiones duras.** Tope semanal de minutos por turno: AM 75′, PM 120′.\n- **Taper:** −41–60 % de volumen sin bajar intensidad ni frecuencia.\n- **Competición física:**\n  - fuera P1–P4 y extras;\n  - 72–48 h antes, volumen medio-bajo con intensidad alta;\n  - 48–24 h antes, repaso;\n  - 24 h antes, descanso.\n- **Combustible:** 6–8 g/kg de hidratos el día previo a una carga alta; 1–2 g/kg 2–3 h antes de competir.\n";
