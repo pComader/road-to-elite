@@ -89,11 +89,17 @@ try {
       $modelo = if ($cfg.ollama_modelo) { $cfg.ollama_modelo } else { $tags.models[0].name }
       $w = Api @{ action = 'agente_wods'; max = $max }
       foreach ($x in $w.wods) {
-        $prompt = "Eres analista de CrossFit y HYROX. Extrae entre 6 y 12 conceptos clave de este WOD para una base de datos que asocia estímulos e interferencias. " +
-          "Devuelve SOLO una lista en español separada por ';', sin explicaciones ni numeración. Incluye: sistema energético y zona, patrones de movimiento, limitante (muscular, técnico, respiratorio o estratégico), " +
-          "la interferencia principal (qué movimiento fatiga a cuál), la estrategia de ritmo y a qué carencia de un atleta sirve.`n`nWOD (" + $x.fuente + ' · ' + $x.nombre + "):`n" + $x.texto +
-          "`n`nAnálisis del motor: formato " + $x.formato + ' · movimientos ' + $x.movimientos + ' · interferencias ' + $x.interferencias + ' · ' + $x.objetivo + "`nCiencia: " + $x.ciencia
-        $body = @{ model = $modelo; prompt = $prompt; stream = $false; options = @{ temperature = 0.2; num_predict = 400 } } | ConvertTo-Json -Depth 4
+        $prompt = "Eres fisiólogo del ejercicio y analista de CrossFit y HYROX. Analiza SOLO lo que dice este WOD; si un dato no se deduce, escribe 'no consta'. " +
+          "Responde en español con EXACTAMENTE estas 8 claves, en este orden, separadas por ' ; ' y en una sola línea, sin explicaciones ni markdown:`n" +
+          "sistema: <ATP-PC | glucolítico | mixto | aeróbico> ; zona: <Z1–Z8> ; patrones: <empuje vertical, tirón, sentadilla, bisagra, olímpico, salto, monoestructural, core, acarreo> ; " +
+          "limitante: <muscular (zona) | técnico (movimiento) | respiratorio | estratégico> ; interferencia: <qué movimiento fatiga a cuál y por qué> ; ritmo: <estrategia en pocas palabras> ; " +
+          "mejora: <qué carencia del atleta entrena> ; palabras clave: <5–8 términos cortos>`n`n" +
+          "Vocabulario correcto: el peso muerto es una bisagra (no una sentadilla); los double unders son un salto (no una bisagra); el remo, la bici, el ski y la carrera son monoestructurales.`n`n" +
+          "WOD (" + $x.fuente + ' · ' + $x.nombre + "):`n" + $x.texto +
+          "`n`nAnálisis del motor (fiable): formato " + $x.formato + ' · movimientos ' + $x.movimientos + ' · interferencias ' + $x.interferencias + ' · ' + $x.objetivo + "`nCiencia (fiable): " + $x.ciencia
+        $cuerpoO = @{ model = $modelo; prompt = $prompt; stream = $false; options = @{ temperature = 0.1; num_predict = 350 } }
+        if ($modelo -match '^(qwen3|deepseek-r1)') { $cuerpoO['think'] = $false }
+        $body = $cuerpoO | ConvertTo-Json -Depth 4
         $r = Invoke-WebRequest -Uri ($base + '/api/generate') -Method Post -Body ($utf8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -UseBasicParsing -TimeoutSec 900
         $res = ([Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json).response
         $conc = (($res -replace '(?s)<think>.*?</think>', '') -replace '\s+', ' ').Trim()

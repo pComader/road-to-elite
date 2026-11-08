@@ -38,3 +38,17 @@ Están en `%APPDATA%\RoadToElite\config.json`:
 ## Otro PC
 
 Si cambias de PC o lo pierdes, sigue `OTRO_PC.md`. El agente no depende de tu cuenta: solo necesita la URL del servidor y el token.
+
+## Mejor modelo de Ollama (gratis)
+
+Ejecuta `mejorar modelo Ollama.bat`:
+
+1. Mira tu tarjeta gráfica y tu memoria.
+2. Propone el modelo gratuito más capaz que cabe en tu PC:
+   - ≥20 GB de VRAM: gemma3:27b;
+   - ≥12 GB de VRAM: qwen3:14b;
+   - ≥8 GB de VRAM, o 32 GB de RAM sin gráfica NVIDIA: qwen3:8b;
+   - menos: qwen3:4b o qwen3:1.7b.
+3. Solo lo descarga si respondes S, y deja el agente usándolo.
+
+No borra nada.
