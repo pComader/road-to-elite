@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.13.0',
+  VERSION: '0.14.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -127,6 +127,10 @@ function accion_(a, body, user) {
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'hoja_semana': return json_({ ok: true, filas: pintarHojaSemana_(body.lunes) });
       case 'enviar_resumen': return json_({ ok: true, enviado: enviarResumenSemana_(body.lunes) });
+      case 'reest_proponer': return json_({ ok: true, propuesta: conMemo_(function () { return reestProponer_(body.modo, body.lunes, body.params || {}); }) });
+      case 'reest_aplicar': var ra = reestAplicar_(body.id, body.ajustes); refrescarResumen_(); return json_({ ok: true, aplicado: ra, semana: semanaCompleta_(body.lunes) });
+      case 'reest_deshacer': reestDeshacer_(body.id); refrescarResumen_(); return json_({ ok: true, semana: semanaCompleta_(body.lunes) });
+      case 'reest_material': var rm = reestMaterial_(body.lunes, body.iso, body.turno, body.material || []); return json_({ ok: true, bloque: rm, semana: semanaCompleta_(body.lunes) });
       case 'extras_curso': return json_({ ok: true, extras: conMemo_(function () { return extrasCurso_(body.lunes); }) });
       case 'biblioteca': return json_({ ok: true, biblioteca: biblioteca_() });
       case 'bloque_quitar': quitarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -357,6 +361,7 @@ function semanaCompletaSin_(semana) {
   };
   var out = Object.assign(base, extrasSemana_(lunes, base));
   try { out.clave = claveSemana_(lunes, base.plan); } catch (e) { out.clave = {}; }
+  try { out.reest = reestActiva_(lunes); } catch (e) { out.reest = []; }
   try { var pk = pesoKg_(); out.combustible = {}; for (var k = 0; k < 7; k++) { var dk = sumarDias(lunes, k); out.combustible[dk] = combustibleDia_(dk, pk); } } catch (e) { out.combustible = {}; }
   return out;
 }
@@ -3584,3 +3589,516 @@ function enviarResumenSemana_(lunes) {
   return true;
 }
 function menuEnviarResumen() { var l = lunesDe_(hoyIso_()); enviarResumenSemana_(l); SpreadsheetApp.getActive().toast('Enviado a ' + CONFIG.EMAIL_PERMITIDO, 'Road To Elite', 4); }
+
+// ===================== v0.14 · REESTRUCTURAR: VIAJE · REORGANIZACIÓN · COMPETI =====================
+/**
+ * Especificación: doc del proyecto «claude/reestructurar-especificacion.md» (8/11/2026).
+ * Flujo: reest_proponer (simula, guarda la propuesta) → Pablo revisa y mueve → reest_aplicar → (reest_deshacer).
+ * El plan original no se borra: los bloques afectados pasan a SUSTITUIDO con REESTRUCTURA = id y ESTADO PREVIO;
+ * los bloques nuevos llevan REESTRUCTURA = id. La app enseña «Original | Adaptada» por día.
+ */
+HOJAS.REEST = 'APP · REESTRUCTURA';
+ESQUEMA['APP · REESTRUCTURA'] = {
+  cab: ['ID', 'LUNES', 'MODO', 'ESTADO', 'RESUMEN', 'PARAMS', 'PROPUESTA', 'CREADA', 'APLICADA'],
+  anchos: [80, 95, 110, 100, 420, 200, 200, 120, 120], fechas: ['LUNES'],
+  listas: { MODO: ['Viaje', 'Reorganización', 'Competi'], ESTADO: ['Propuesta', 'Aplicada', 'Deshecha', 'Descartada'] }
+};
+ESQUEMA['APP · PLAN'].cab.push('REESTRUCTURA', 'ESTADO PREVIO'); ESQUEMA['APP · PLAN'].anchos.push(90, 100);
+var HORA_TURNO_ = { AM: 9, PM: 18 };
+var CAP_TURNO_ = { AM: 75, PM: 120 };
+var EST_ACTIVO_ = /^(PROGRAMADO|BORRADOR)$/;
+
+// ---------- utilidades ----------
+function minFila_(r) {
+  var m = parseFloat(String(r.MIN || '').replace(',', '.'));
+  if (m > 0) return m;
+  var t = norm((r['TÍTULO'] || '') + ' ' + (r.BLOQUE || ''));
+  return /METCON|WOD/.test(t) ? 20 : norm(r.ORIGEN) === 'FABRIK' ? 18 : 12;
+}
+function esDura_(r) {
+  if (/R01|R02|R03|R04|W04/.test(r['CÓDIGOS'] || '')) return true;
+  var rpe = parseInt(String(r.INTENSIDAD || '').replace(/[^\d]/g, ''), 10) || 0;
+  return /METCON|WOD/.test(norm(r['TÍTULO'] || '')) && rpe >= 8;
+}
+function esCarreraFila_(r) { return /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03|V01)\b/.test(r['CÓDIGOS'] || ''); }
+function esZ2Fila_(r) { return /\b(W01|W02)\b/.test(r['CÓDIGOS'] || ''); }
+function tipoSeccion_(r) {
+  var t = norm((r['TÍTULO'] || '') + ' ' + (r.BLOQUE || '') + ' ' + String(r.CONTENIDO || '').slice(0, 200));
+  if (esCarreraFila_(r)) return 'carrera';
+  if (/METCON|WOD|AMRAP|FOR TIME|EMOM|R01|R04|Z6/.test(t) || /R01|R04/.test(r['CÓDIGOS'] || '')) return 'metcon';
+  if (/SNATCH|CLEAN|JERK|SQUAT|DEADLIFT|STRENGTH|STRENGHT|WEIGHTLIFTING|PRESS|FUERZA/.test(t)) return 'fuerza';
+  if (/SKILL|TECNIC|GIMNAST|HANDSTAND|PINO|RMU|MUSCLE|HSPU|DOUBLE UNDER|TRIPLE/.test(t)) return 'skills';
+  if (/MOVILIDAD|MOBILITY|CALENTAMIENTO|WARM|ACTIVA/.test(t)) return 'calentamiento';
+  return 'accesorio';
+}
+/** Prioridad de un bloque: Fabrik principal y P/Calidad primero; luego lo que más falta (metas). */
+function prioridadFila_(r, w) {
+  var p = codigosDe_(r['CÓDIGOS']).reduce(function (a, c) { return a + (w[c] || 0); }, 0);
+  var sec = tipoSeccion_(r);
+  if (norm(r.ORIGEN) === 'FABRIK') p += sec === 'fuerza' ? 3 : sec === 'metcon' ? 2.5 : 1.5;
+  if (/R01|W04|R02|R03/.test(r['CÓDIGOS'] || '')) p += 3;
+  if (esZ2Fila_(r)) p += 2;
+  if (sec === 'accesorio') p -= 0.5;
+  return p;
+}
+function horaDe_(iso, turno) { return new Date(iso + 'T' + (HORA_TURNO_[turno] < 10 ? '0' : '') + HORA_TURNO_[turno] + ':00:00').getTime(); }
+function filasSemanaActivas_(lunes) {
+  var fin = sumarDias(lunes, 6), hechos = {};
+  listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.HECHO === 'Sí') hechos[r.ID_PLAN] = 1; });
+  return listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && EST_ACTIVO_.test(r.ESTADO); })
+    .map(function (r) { r._iso = celdaIso_(r.FECHA); r._turno = r.TURNO === 'AM' ? 'AM' : 'PM'; r._hecho = !!hechos[r.ID]; r._min = minFila_(r); return r; });
+}
+/** Mitad del volumen manteniendo la intensidad: series, rondas, minutos de EMOM/AMRAP y AxB. */
+function mitadVolumen_(txt) {
+  var cambio = false, h = function (n) { cambio = true; return Math.max(1, Math.round(n / 2)); };
+  var out = String(txt || '').split('\n').map(function (l) {
+    return l.replace(/(\d+)(\s*)(SETS?|RONDAS?|ROUNDS?|SERIES)\b/gi, function (m, n, s, u) { return h(+n) + s + u; })
+      .replace(/(X\s*)(\d+)(\s*SETS?)/gi, function (m, a, n, b) { return a + h(+n) + b; })
+      .replace(/\b(EMOM|AMRAP|E2MOM|E3MOM)\s*(\d+)\s*([′'])/gi, function (m, f, n, q) { return f + ' ' + h(+n) + q; })
+      .replace(/^(\s*)(\d+)\s*[X×]\s*(\d+)/i, function (m, s, a, b) { return s + h(+a) + '×' + b; });
+  }).join('\n');
+  return { txt: (cambio ? '' : '⚖ HAZ LA MITAD DE SERIES O RONDAS, MISMA INTENSIDAD\n') + out, cambio: cambio };
+}
+
+// ---------- material y equivalencias (viaje y mega WOD) ----------
+var MATERIALES_ = [
+  ['box', 'Tengo un box (todo)'], ['hspu', 'Pared para HSPU'], ['pino', 'Espacio para pino / HSW'], ['rack_completo', 'Rack gimnásticos completo (anillas, barra)'],
+  ['rack_dominadas', 'Solo barra de dominadas (kipping, T2B)'], ['rack_estricto', 'Solo dominadas y T2B estrictos'], ['chaleco', 'Chaleco de peso'], ['comba', 'Comba'],
+  ['kb', 'Kettlebells'], ['barra', 'Barra olímpica y discos'], ['db', 'Mancuernas'], ['sandbag_hyrox', 'Sandbag HYROX'], ['sandbag', 'Sandbag'], ['cajon', 'Cajón'],
+  ['slamball', 'Slamball / balón'], ['cuerda', 'Cuerda para trepar'], ['fondos', 'Algo para fondos'], ['ergos', 'Ergómetros (bike, remo, ski)'], ['trineo', 'Trineo'], ['yugo', 'Yugo']
+];
+/** Reglas: si la línea pide algo que no tienes, se sustituye manteniendo el estímulo. Cada una dice qué conserva. */
+var EQUIV_ = [
+  { re: /RING MUSCLE|RMU|BAR MUSCLE|BMU/, ok: ['rack_completo'], sub: function (m) { return m.rack_dominadas ? 'CHEST TO BAR + 2 FONDOS por rep' : 'BURPEE + 3 PUSH-UPS EXPLOSIVAS por rep'; }, conserva: 'tirón + empuje en fatiga' },
+  { re: /CHEST TO BAR|C2B|PULL.?UPS?|TOES TO BAR|T2B|TOES TO RING/, ok: ['rack_completo', 'rack_dominadas'], sub: function (m) { return m.rack_estricto ? 'VERSIÓN ESTRICTA (mitad de reps)' : 'V-UPS + REMO INVERTIDO EN MESA (mismas reps)'; }, conserva: 'tirón y core' },
+  { re: /HSPU|HANDSTAND PUSH/, ok: ['hspu'], sub: function (m) { return 'PIKE PUSH-UPS EN DÉFICIT (pies elevados)' + (m.chaleco ? ' con chaleco' : ''); }, conserva: 'empuje vertical' },
+  { re: /HANDSTAND WALK|HSW|HANDSTAND HOLD|PINO|WALL WALK/, ok: ['pino', 'hspu'], sub: function () { return 'BEAR CRAWL + PLANCHA ESCAPULAR'; }, conserva: 'hombro en carga y control' },
+  { re: /THRUSTER|FRONT SQUAT|BACK SQUAT|OVERHEAD SQUAT|OHS|SNATCH|CLEAN|JERK|DEADLIFT|PUSH PRESS|STRICT PRESS|SHOULDER TO OVERHEAD|STOH|BARBELL|BENCH/, ok: ['barra'],
+    sub: function (m, l) { var imp = m.db ? 'DB' : m.kb ? 'KB' : m.sandbag || m.sandbag_hyrox ? 'SANDBAG' : null;
+      if (!imp) return 'JUMP SQUATS + BURPEES (mismas reps)' + (m.chaleco ? ' con chaleco' : '');
+      return imp + ' ' + (/THRUSTER/.test(l) ? 'THRUSTERS' : /SNATCH/.test(l) ? 'SNATCH' : /CLEAN/.test(l) ? 'CLEAN' : /JERK|PRESS|STOH|SHOULDER/.test(l) ? 'PUSH PRESS' : /DEADLIFT/.test(l) ? 'DEADLIFT' : 'FRONT SQUAT') + ' (carga a RPE equivalente; los % no aplican)'; }, conserva: 'patrón y potencia, no la carga' },
+  { re: /WALL ?BALL|WB\b/, ok: ['slamball'], sub: function (m) { return m.db || m.kb ? 'THRUSTERS LIGEROS CON ' + (m.db ? 'DB' : 'KB') : 'AIR SQUAT + PUSH-UP JUMP'; }, conserva: 'sentadilla + empuje' },
+  { re: /DOUBLE UNDER|(^|[^A-Z])DUS?([^A-Z]|$)|SINGLE UNDER|CROSSOVER|HEAVY ROPE/, ok: ['comba'], sub: function () { return 'POGO JUMPS LATERALES (mismo nº de saltos)'; }, conserva: 'tobillo reactivo y ritmo' },
+  { re: /BOX JUMP|BOX STEP|BJO|STEP.?UP/, ok: ['cajon'], sub: function () { return 'BROAD JUMPS / TUCK JUMPS (mismas reps)'; }, conserva: 'salto' },
+  { re: /ROPE CLIMB|LEGLESS/, ok: ['cuerda'], sub: function (m) { return m.rack_completo || m.rack_dominadas ? 'DOMINADAS CON TOALLA (3 por subida)' : 'REMO INVERTIDO + HOLLOW'; }, conserva: 'agarre y tirón' },
+  { re: /SANDBAG/, ok: ['sandbag', 'sandbag_hyrox'], sub: function (m) { return m.db || m.kb ? (m.db ? 'DB' : 'KB') + ' A UN HOMBRO' : 'BURPEES'; }, conserva: 'carga asimétrica' },
+  { re: /SLAM ?BALL/, ok: ['slamball'], sub: function () { return 'BURPEES (mismas reps)'; }, conserva: 'triple extensión' },
+  { re: /ROW|SKIERG|(^|[^A-Z])SKI([^A-Z]|$)|BIKE|ASSAULT|ECHO|BIKEERG|(^|[^A-Z])CAL([^A-Z]|$)/, ok: ['ergos'], sub: function (m) { return m._correr ? '200 M RUN por cada 15 cal' : 'BURPEES (1 por cada 2 cal) o JUMPING JACKS'; }, conserva: 'motor' },
+  { re: /SLED|TRINEO|YOKE|YUGO/, ok: ['trineo', 'yugo'], sub: function () { return 'SPRINT EN CUESTA 15″ o BEAR CRAWL'; }, conserva: 'empuje de cadera' },
+  { re: /(^|[^A-Z])DIPS?([^A-Z]|$)|FONDOS/, ok: ['fondos', 'rack_completo'], sub: function () { return 'PUSH-UPS DECLINADAS'; }, conserva: 'empuje' },
+  { re: /GHD/, ok: ['box'], sub: function () { return 'V-UPS + SUPERMAN'; }, conserva: 'core' },
+  { re: /(^|[^A-Z])RUN([^A-Z]|$)|CARRERA/, ok: ['_correr'], sub: function () { return 'BURPEE BROAD JUMPS (1 por cada 20 m)'; }, conserva: 'motor' }
+];
+function mapaMaterial_(lista, correr) { var m = {}; (lista || []).forEach(function (k) { m[k] = true; }); if (correr) m._correr = true; if (m.box) MATERIALES_.forEach(function (x) { m[x[0]] = true; });
+  if (m.rack_completo) { m.rack_dominadas = true; m.rack_estricto = true; } if (m.rack_dominadas) m.rack_estricto = true; if (m.gusano2 || m.gusano3 || m.gusano4) m.gusano = true; return m; }
+/** Adapta el texto de un bloque al material. Devuelve el texto, cuántas líneas cambian y qué se pierde. */
+function adaptarMaterial_(txt, mat) {
+  var lineas = String(txt || '').split('\n'), n = 0, total = 0, notas = [];
+  var out = lineas.map(function (l) {
+    var L = norm(l); if (!L.trim() || /^[A-Z](\.\d)?\s*·/.test(L)) return l;
+    total++;
+    for (var i = 0; i < EQUIV_.length; i++) {
+      var e = EQUIV_[i]; if (!e.re.test(L)) continue;
+      if (e.ok.some(function (k) { return mat[k]; })) return l;
+      n++; notas.push(e.conserva);
+      var reps = (l.match(/^\s*([\d\/\.\-]+\s*(cal|m|M)?)/) || [])[1] || '';
+      return (reps ? reps.trim() + ' ' : '') + e.sub(mat, L) + '   ‹en vez de: ' + l.trim() + '›';
+    }
+    return l;
+  });
+  return { txt: out.join('\n'), cambios: n, ratio: total ? n / total : 0, conserva: notas.filter(function (x, i, a) { return a.indexOf(x) === i; }) };
+}
+
+// ---------- huecos y colocación ----------
+/** slots: [{iso, turno, ok, cap, mat, correr:{libre,tempo,series}, tipo:'casa'|'viaje'}] */
+function colocar_(fila, slots, ocupado, durasPorIso, opts) {
+  opts = opts || {};
+  var dura = esDura_(fila), cand = slots.filter(function (s) {
+    if (!s.ok || (opts.desde && horaDe_(s.iso, s.turno) < opts.desde)) return false;
+    if ((ocupado[s.iso + s.turno] || 0) + fila._min > s.cap) return false;
+    if (esCarreraFila_(fila)) { if (s.tipo === 'viaje' && !(s.correr && (s.correr.libre || s.correr.tempo || s.correr.series))) return false;
+      if (/W04|R02|R03|V01/.test(fila['CÓDIGOS'] || '') && s.tipo === 'viaje' && !(s.correr.series || (/R02/.test(fila['CÓDIGOS']) && s.correr.tempo))) return false; }
+    if (s.tipo === 'viaje' && tipoSeccion_(fila) === 'fuerza' && !s.mat.barra && !s.mat.box) return false;
+    if (dura) { var malo = Object.keys(durasPorIso).some(function (d) { return Math.abs((new Date(d) - new Date(s.iso)) / 864e5) < 2; }); if (malo && !opts.forzar) return false; }   // nunca dos duras el mismo día ni a <48 h
+    return true;
+  });
+  cand.sort(function (a, b) {
+    var pa = (a.iso === fila._iso ? -3 : 0) + (a.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(a.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (a.turno === fila._turno ? -0.5 : 0);
+    var pb = (b.iso === fila._iso ? -3 : 0) + (b.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(b.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (b.turno === fila._turno ? -0.5 : 0);
+    return pa - pb;
+  });
+  var s = cand[0]; if (!s) return null;
+  ocupado[s.iso + s.turno] = (ocupado[s.iso + s.turno] || 0) + fila._min;
+  if (dura) durasPorIso[s.iso] = 1;
+  return s;
+}
+function cargaBase_(filas) { var o = {}; filas.forEach(function (r) { o[r._iso + r._turno] = (o[r._iso + r._turno] || 0) + r._min; }); return o; }
+
+// ---------- 1 · VIAJE ----------
+/**
+ * p = { desde, hasta, dias: { iso: { AM: 'libre'|'imposible'|'desplazamiento', PM: … } }, material: [claves], excepciones: { 'iso|AM': [claves] },
+ *       correr: { libre, tempo, series }, correrDias: { 'iso|AM': true }, rutas: [{ iso, turno, min }], domingoCompleto: true }
+ */
+function proponerViaje_(lunes, p) {
+  var filas = filasSemanaActivas_(lunes).filter(function (r) { return !r._hecho && r._iso >= hoyIso_(); });
+  var base = cargaBase_(filas), w = pesoCarencias_(lunes), slots = [], cambios = [], avisos = [];
+  for (var k = 0; k < 7; k++) {
+    var iso = sumarDias(lunes, k); if (iso < hoyIso_()) continue;
+    ['AM', 'PM'].forEach(function (t) {
+      var enViaje = iso >= p.desde && iso <= p.hasta, d = (p.dias || {})[iso] || {}, est = enViaje ? (d[t] || 'libre') : 'casa';
+      var mat = mapaMaterial_(((p.excepciones || {})[iso + '|' + t]) || p.material, (p.correrDias || {})[iso + '|' + t]);
+      var b = base[iso + t] || 0, cap = enViaje ? CAP_TURNO_[t] : (b ? Math.max(b * 1.4, b + 20) : CAP_TURNO_[t]);
+      if (!enViaje && k === 6 && !b && p.domingoCompleto !== false) cap = 150;
+      slots.push({ iso: iso, turno: t, ok: est === 'libre' || est === 'casa', cap: cap, mat: enViaje ? mat : mapaMaterial_(['box'], true), correr: enViaje ? ((p.correrDias || {})[iso + '|' + t] ? p.correr || {} : {}) : { libre: 1, tempo: 1, series: 1 }, tipo: enViaje ? 'viaje' : 'casa' });
+    });
+  }
+  var ocupado = {}, duras = {};
+  filas.forEach(function (r) { if (!(r._iso >= p.desde && r._iso <= p.hasta)) { ocupado[r._iso + r._turno] = (ocupado[r._iso + r._turno] || 0) + r._min; if (esDura_(r)) duras[r._iso] = 1; } });
+  var afect = filas.filter(function (r) { return r._iso >= p.desde && r._iso <= p.hasta; }).sort(function (a, b) { return prioridadFila_(b, w) - prioridadFila_(a, w); });
+  // domingo completo: el día de viaje con más Fabrik que no se puede hacer va entero al domingo
+  var dom = sumarDias(lunes, 6), sDom = slots.filter(function (s) { return s.iso === dom && s.tipo === 'casa' && s.turno === 'PM'; })[0];
+  if (sDom && p.domingoCompleto !== false && !(base[dom + 'PM'] || base[dom + 'AM'])) {
+    var porDia = {}; afect.forEach(function (r) { if (norm(r.ORIGEN) === 'FABRIK') { var sl = slots.filter(function (s) { return s.iso === r._iso && s.turno === r._turno; })[0]; if (!sl || !sl.ok || !sl.mat.barra) (porDia[r._iso] = porDia[r._iso] || []).push(r); } });
+    var mejor = Object.keys(porDia).sort(function (a, b) { return porDia[b].length - porDia[a].length; })[0];
+    if (mejor) porDia[mejor].forEach(function (r) { cambios.push({ id: r.ID, accion: 'mover', iso: dom, turno: 'PM', motivo: 'Día completo de ' + diaDe_(mejor) + ' al domingo (no se puede hacer en el viaje)' }); ocupado[dom + 'PM'] = (ocupado[dom + 'PM'] || 0) + r._min; r._hecho = true; });
+  }
+  afect.forEach(function (r) {
+    if (r._hecho) return;
+    var sl = slots.filter(function (s) { return s.iso === r._iso && s.turno === r._turno; })[0];
+    if (sl && sl.ok && sl.tipo === 'viaje') {
+      var ad = esCarreraFila_(r) ? null : adaptarMaterial_(r.CONTENIDO, sl.mat);
+      var vale = esCarreraFila_(r) ? (sl.correr.libre || sl.correr.tempo || sl.correr.series) && !(/W04|R03|V01/.test(r['CÓDIGOS']) && !sl.correr.series && !(/R02/.test(r['CÓDIGOS']) && sl.correr.tempo))
+        : !(tipoSeccion_(r) === 'fuerza' && !sl.mat.barra) && ad.ratio <= 0.6;
+      if (vale && (ocupado[sl.iso + sl.turno] || 0) + r._min <= sl.cap) {
+        ocupado[sl.iso + sl.turno] = (ocupado[sl.iso + sl.turno] || 0) + r._min;
+        if (ad && ad.cambios) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: ad.txt, motivo: 'Adaptado a tu material (' + ad.cambios + ' cambios; conserva ' + ad.conserva.join(', ') + ')' });
+        else if (esCarreraFila_(r) && /R02/.test(r['CÓDIGOS']) && !sl.correr.series) cambios.push({ id: r.ID, accion: 'adaptar', iso: sl.iso, turno: sl.turno, contenido: '12′ fáciles\n20′ continuos a ritmo umbral (tempo)\n8′ suaves', motivo: 'Sin sitio para series: la calidad Z4 pasa a tempo continuo (misma zona)' });
+        return;
+      }
+    }
+    var s = colocar_(r, slots, ocupado, duras);
+    if (s) cambios.push({ id: r.ID, accion: s.tipo === 'viaje' ? 'adaptar' : 'mover', iso: s.iso, turno: s.turno, contenido: s.tipo === 'viaje' && !esCarreraFila_(r) ? adaptarMaterial_(r.CONTENIDO, s.mat).txt : null, motivo: s.tipo === 'casa' ? 'Se compensa en casa (' + diaDe_(s.iso) + ', tope +40 %)' : 'Movido dentro del viaje a un hueco con material' });
+    else cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'No cabe sin pasar del +40 % ni juntar sesiones duras: a pendientes' });
+  });
+  (p.rutas || []).forEach(function (rt) { cambios.push({ accion: 'nuevo', iso: rt.iso, turno: rt.turno || 'AM', nuevo: { ORIGEN: 'VIAJE', 'TÍTULO': 'Ruta andando · Z1', CONTENIDO: 'Ruta a pie ' + (rt.min ? '≈' + rt.min + '′' : '') + ' a ritmo cómodo.\nCuenta como Z1 (no como Z2 de carrera). Al día siguiente, menos pierna.', MIN: rt.min || 90, INTENSIDAD: '🔵 Z1', 'CÓDIGOS': '' }, motivo: 'Ruta marcada en el viaje' }); });
+  // vuelta progresiva: el primer día en casa sin la sesión más dura si se puede
+  var vuelta = sumarDias(p.hasta, 1); if (vuelta <= sumarDias(lunes, 6)) avisos.push('Primer día de vuelta (' + diaDe_(vuelta) + '): si llegas cansado del viaje, baja un 10–20 % la sesión más pesada.');
+  return { cambios: cambios, avisos: avisos, resumen: 'Viaje ' + isoAFecha(p.desde).slice(0, 5) + '–' + isoAFecha(p.hasta).slice(0, 5) + ': ' + cambios.filter(function (c) { return c.accion === 'adaptar'; }).length + ' adaptados, ' + cambios.filter(function (c) { return c.accion === 'mover'; }).length + ' a casa, ' + cambios.filter(function (c) { return c.accion === 'pendiente'; }).length + ' a pendientes' };
+}
+
+// ---------- 2 · REORGANIZACIÓN ----------
+/** Bloque desde un estímulo escrito («hspu»): el código del catálogo que más falta y encaja. */
+function bloqueDeEstimulo_(txt, w) {
+  var cat = catalogo_(), q = norm(txt), cands = Object.keys(cat).filter(function (c) {
+    var r = cat[c]; return r.CONTENIDO && (norm(r.NOMBRE).indexOf(q) >= 0 || q.indexOf(norm(c)) >= 0 || (reSeguro_(r['DETECTAR (regex)']) && reSeguro_(r['DETECTAR (regex)']).test(q)));
+  }).sort(function (a, b) { return (w[b] || 0) - (w[a] || 0); });
+  var c = cands[0]; if (!c) return null;
+  var r = cat[c];
+  return { ORIGEN: 'REORGANIZADO', 'TÍTULO': r.NOMBRE, CONTENIDO: r.CONTENIDO, MIN: r.MIN || 12, INTENSIDAD: r.INTENSIDAD, 'CÓDIGOS': c, 'POR QUÉ (cursiva)': r['POR QUÉ (cursiva)'] || '', 'CIENCIA (técnica · fisiología · biología)': r['CIENCIA (técnica · fisiología · biología)'] || '' };
+}
+/**
+ * p = { huecos: [{ iso, turno, min }], noHechos: [ids], nuevos: [{ estimulo } | { titulo, contenido, min }], carrera: { id: 'aparte'|'no'|'metcon' },
+ *       tipo: 'A'|'B', mega: { formato: 'solo'|'pareja'|'equipo3'|'equipo4', material: [], barraMax, dbMax, chica: { barra, db, sandbag }, chaleco: n, minutos } }
+ */
+function proponerReorg_(lunes, p) {
+  var todas = filasSemanaActivas_(lunes), w = pesoCarencias_(lunes), cambios = [], avisos = [];
+  var no = {}; (p.noHechos || []).forEach(function (id) { no[id] = 1; });
+  var pend = todas.filter(function (r) { return no[r.ID]; });
+  (p.nuevos || []).forEach(function (n) {
+    var o = n.estimulo ? bloqueDeEstimulo_(n.estimulo, w) : { ORIGEN: 'REORGANIZADO', 'TÍTULO': n.titulo || 'Bloque nuevo', CONTENIDO: n.contenido || '', MIN: n.min || 15, 'CÓDIGOS': '' };
+    if (o) { o.ID = '_n' + pend.length; o._nuevo = true; o._iso = hoyIso_(); o._turno = 'PM'; o._min = minFila_(o); pend.push(o); }
+    else avisos.push('No encuentro un estímulo para «' + n.estimulo + '»: escríbelo de otra forma o diséñalo a mano.');
+  });
+  // lo ya trabajado esta semana resta prioridad (metas semanales ya cubiertas)
+  var cubiertas = {}; avanceMetas_('Semana', periodoSemana_(lunes), cacheMetas_()).forEach(function (m) { if (m.pReal >= 1) codigosDe_(m.codigos).forEach(function (c) { cubiertas[c] = 1; }); });
+  pend.forEach(function (r) { r._prio = prioridadFila_(r, w) * (codigosDe_(r['CÓDIGOS']).some(function (c) { return cubiertas[c]; }) ? 0.4 : 1); });
+  pend.sort(function (a, b) { return b._prio - a._prio; });
+  pend.forEach(function (r) { if (!r._nuevo) cambios.push({ id: r.ID, accion: 'sustituir', motivo: 'No hecho: se reorganiza' }); });
+  // carrera
+  var carreras = pend.filter(esCarreraFila_), resto = pend.filter(function (r) { return !esCarreraFila_(r); });
+  var huecos = (p.huecos || []).map(function (h) { return { iso: h.iso, turno: h.turno, min: +h.min || CAP_TURNO_[h.turno], usado: 0, bloques: [] }; }).sort(function (a, b) { return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : a.turno < b.turno ? -1 : 1; });
+  var metconExtra = [];
+  carreras.forEach(function (r) {
+    var dec = (p.carrera || {})[r.ID] || 'aparte';
+    if (dec === 'aparte') {
+      var h = huecos.filter(function (x) { return x.turno === 'AM' && x.min - x.usado >= r._min && huecos.some(function (y) { return y.iso === x.iso && y.turno === 'PM'; }); })[0] || huecos.filter(function (x) { return x.min - x.usado >= r._min; })[0];
+      if (h) { h.usado += r._min; cambios.push({ id: r.ID, accion: 'mover', iso: h.iso, turno: h.turno, motivo: 'Carrera aparte' + (h.turno === 'AM' ? ' por la mañana (≥6 h de la fuerza de la tarde)' : '') }); return; }
+      dec = esZ2Fila_(r) ? 'no' : 'metcon';
+    }
+    if (dec === 'metcon') { metconExtra.push(r); return; }
+    if (esZ2Fila_(r)) cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'Z2 no hecha: la semana que viene +' + Math.round(r._min * 0.25) + '′ (+25 %) en la Z2' });
+    else cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'Carrera no hecha: a pendientes' });
+  });
+  if (p.tipo === 'B') {
+    var h0 = huecos[0]; if (!h0) return { cambios: cambios, avisos: ['Marca al menos un hueco.'], resumen: 'Sin huecos' };
+    var mega = megaWod_(resto.concat(metconExtra), p.mega || {}, w, cubiertas, Math.min(h0.min, (p.mega || {}).minutos || h0.min));
+    cambios.push({ accion: 'nuevo', iso: h0.iso, turno: h0.turno, nuevo: mega, motivo: 'Mega WOD con lo pendiente' });
+  } else {
+    // Tipo A: por hueco, calentamiento → skills → fuerza → metcon
+    var orden = ['calentamiento', 'skills', 'fuerza', 'metcon', 'accesorio'];
+    resto.forEach(function (r) {
+      var h = huecos.filter(function (x) { return x.min - x.usado - 10 >= r._min; })[0];
+      if (!h) { if (!r._nuevo) cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'No cabe en el tiempo disponible (prioridad más baja)' }); else avisos.push('«' + r['TÍTULO'] + '» no cabe en el tiempo marcado.'); return; }
+      h.usado += r._min; h.bloques.push(r);
+    });
+    huecos.forEach(function (h) {
+      if (!h.bloques.length) return;
+      var sec = {}; h.bloques.forEach(function (r) { var t = tipoSeccion_(r); (sec[t] = sec[t] || []).push(r); });
+      var faltaCalent = Object.keys(w).filter(function (c) { return /W10|W33|W32|W15/.test(c) && w[c] > 0; });
+      var cal = ['CALENTAMIENTO ACTIVO · 10–12′', '2 rondas: 200 m trote o 250 m remo · 10 PVC pass-through · 8 cat-cow · 10 air squat · 5 inchworm + push-up']
+        .concat(faltaCalent.length ? ['+ ya atacando lo pendiente: ' + faltaCalent.map(function (c) { return (catalogo_()[c] || {}).NOMBRE || c; }).join(', ') + ' (sin fatiga)'] : []);
+      (sec.calentamiento || []).forEach(function (r) { cal.push('+ ' + r['TÍTULO'] + ': ' + String(r.CONTENIDO || '').split('\n')[0]); });
+      cambios.push({ accion: 'nuevo', iso: h.iso, turno: h.turno, nuevo: { ORIGEN: 'REORGANIZADO', 'TÍTULO': 'A · Calentamiento activo', CONTENIDO: cal.join('\n'), MIN: 12, 'CÓDIGOS': '' }, motivo: 'Sesión clásica' });
+      ['skills', 'fuerza', 'metcon', 'accesorio'].forEach(function (t, i) {
+        var bl = sec[t]; if (!bl || !bl.length) return;
+        var cont = bl.map(function (r) { return '— ' + (r['TÍTULO'] || r.BLOQUE) + ' —\n' + (r.CONTENIDO || ''); }).join('\n\n');
+        if (t === 'metcon' && metconExtra.length) cont += '\n\n+ CARRERA PENDIENTE DENTRO DEL METCON: añade 400 m RUN al inicio de cada ronda (o 20/16 cal de erg si no hay sitio para correr).\nCuenta como carrera en fatiga, no como Z2.';
+        cambios.push({ accion: 'nuevo', iso: h.iso, turno: h.turno, nuevo: { ORIGEN: 'REORGANIZADO', 'TÍTULO': String.fromCharCode(66 + i) + ' · ' + { skills: 'Skills', fuerza: 'Fuerza', metcon: 'Metcon', accesorio: 'Accesorios' }[t] + ' · ' + bl.map(function (r) { return r['TÍTULO'] || r.BLOQUE; }).join(' + ').slice(0, 80),
+          CONTENIDO: cont, MIN: bl.reduce(function (a, r) { return a + r._min; }, 0), INTENSIDAD: bl[0].INTENSIDAD || '', 'CÓDIGOS': bl.map(function (r) { return r['CÓDIGOS']; }).filter(Boolean).join('|'),
+          'POR QUÉ (cursiva)': 'Recupera lo no hecho de la semana, ordenado por tus carencias: ' + bl.map(function (r) { return r['TÍTULO'] || r.BLOQUE; }).join(', ') + '.' }, motivo: 'Sesión clásica' });
+      });
+      if (metconExtra.length && !sec.metcon) cambios.push({ accion: 'nuevo', iso: h.iso, turno: h.turno, nuevo: { ORIGEN: 'REORGANIZADO', 'TÍTULO': 'Cierre · ergómetro Z2 15′', CONTENIDO: '15′ de ergómetro suave (Z2, conversación).\nRecupera parte del endurance pendiente.', MIN: 15, 'CÓDIGOS': 'W03', INTENSIDAD: '🔵 Z2' }, motivo: 'Carrera pendiente → ergómetro' });
+    });
+    // aviso semana siguiente: pierna el domingo y pierna el lunes
+    var dom = sumarDias(lunes, 6), lunSig = sumarDias(lunes, 7);
+    if (huecos.some(function (h) { return h.iso === dom && h.bloques.some(function (r) { return cargasFila_(r).indexOf('PIERNA') >= 0; }); }) && listar_(HOJAS.PLAN).some(function (r) { return celdaIso_(r.FECHA) === lunSig && cargasFila_(r).indexOf('PIERNA') >= 0; }))
+      avisos.push('Ojo: el domingo cargas pierna y el lunes Fabrik también: baja un 20 % la pierna del domingo.');
+  }
+  return { cambios: cambios, avisos: avisos, resumen: 'Reorganización ' + (p.tipo === 'B' ? 'integrada (mega WOD)' : 'clásica') + ': ' + pend.length + ' bloques pendientes · ' + cambios.filter(function (c) { return c.accion === 'pendiente'; }).length + ' a pendientes' };
+}
+
+// ---------- mega WOD (tipo B) ----------
+var MOV_MEGA_ = [
+  { re: /THRUSTER/, n: 'THRUSTERS', mat: 'barra', alt: 'db', reps: 12, carga: 'barra', c: 'T02' }, { re: /DOUBLE UNDER|(^|[^A-Z])DUS?([^A-Z]|$)/, n: 'DOUBLE UNDERS', mat: 'comba', reps: 50, c: 'C01' },
+  { re: /STOH|SHOULDER TO OVERHEAD|JERK|PUSH PRESS/, n: 'SHOULDER TO OVERHEAD', mat: 'barra', alt: 'db', reps: 12, carga: 'barra', c: 'M07' }, { re: /FRONT SQUAT/, n: 'FRONT SQUATS', mat: 'barra', alt: 'db', reps: 12, carga: 'barra', c: 'C02' },
+  { re: /BURPEE/, n: 'BURPEES OVER THE BAR', mat: '', reps: 12, c: 'C03' }, { re: /HANG|SNATCH|CLEAN/, n: 'HANG POWER CLEANS', mat: 'barra', alt: 'db', reps: 10, carga: 'barra', c: 'C04' },
+  { re: /CHEST TO BAR|C2B/, n: 'CHEST TO BAR', mat: 'rack_dominadas', reps: 12, c: 'M01' }, { re: /BAR MUSCLE|BMU/, n: 'BAR MUSCLE UPS', mat: 'rack_completo', reps: 6, c: 'M48' },
+  { re: /RING MUSCLE|RMU/, n: 'RING MUSCLE UPS', mat: 'rack_completo', reps: 5, c: 'M49' }, { re: /HSPU/, n: 'HSPU', mat: 'hspu', reps: 10, c: 'W31' },
+  { re: /TOES TO BAR|T2B/, n: 'TOES TO BAR', mat: 'rack_dominadas', reps: 15, c: '' }, { re: /WALL ?BALL/, n: 'WALL BALLS', mat: 'slamball', reps: 20, c: '' },
+  { re: /BOX/, n: 'BOX JUMP OVERS', mat: 'cajon', reps: 12, c: 'W07' }, { re: /SANDBAG/, n: 'SANDBAG CLEANS', mat: 'sandbag', reps: 10, carga: 'sandbag', c: 'M57' },
+  { re: /SLAM/, n: 'SLAMBALLS', mat: 'slamball', reps: 15, c: 'M57' }, { re: /ROPE/, n: 'ROPE CLIMBS', mat: 'cuerda', reps: 3, c: 'M36' },
+  { re: /SLED|TRINEO/, n: 'SLED PUSH 15 m', mat: 'trineo', reps: 2, c: 'M38' }, { re: /YOKE|YUGO/, n: 'YOKE CARRY 15 m', mat: 'yugo', reps: 2, c: '' },
+  { re: /LUNGE/, n: 'DB WALKING LUNGES', mat: 'db', reps: 16, carga: 'db', c: '' },
+  { re: /GUSANO|WORM/, n: 'WORM (GUSANO) CLEANS + CARRY 20 m', mat: 'gusano', reps: 6, c: '', equipo: true }, { re: /LODGE|OVER THE WALL/, n: 'SANDBAG OVER LODGE', mat: 'lodge_lanzar', reps: 8, c: 'M57', equipo: true },
+  { re: /JUMP OVER/, n: 'JUMP OVER LODGE', mat: 'lodge_saltar', reps: 10, c: 'W07', equipo: true }, { re: /DEADLIFT/, n: 'DEADLIFTS', mat: 'barra', reps: 10, carga: 'barra', c: '' }
+];
+var ERG_MEGA_ = [['ergos', 'cal ASSAULT BIKE'], ['ergos', 'cal ROW'], ['ergos', 'cal SKI'], ['_correr', 'm RUN']];
+var FORMATOS_EQUIPO_ = {
+  solo: ['', '', '', ''],
+  pareja: ['SINCRO (los dos a la vez)', 'ACUMULADO (repartid como queráis)', 'RELEVO: uno trabaja, otro descansa', 'LOS DOS (cada uno sus reps)'],
+  equipo3: ['SINCRO DE 3', '2 TRABAJAN · 1 DESCANSA (rotad)', 'ACUMULADO DE EQUIPO', 'TODO EL EQUIPO'],
+  equipo4: ['SINCRO 2 + 2', '3 TRABAJAN · 1 DESCANSA (rotad)', 'ACUMULADO DE EQUIPO', 'TODO EL EQUIPO']
+};
+function megaWod_(pend, o, w, cubiertas, minutos) {
+  var mat = mapaMaterial_(o.material || [], (o.material || []).indexOf('_correr') >= 0 || (o.material || []).indexOf('correr') >= 0);
+  var n = { solo: 1, pareja: 2, equipo3: 3, equipo4: 4 }[o.formato || 'solo'] || 1, fm = FORMATOS_EQUIPO_[o.formato || 'solo'] || FORMATOS_EQUIPO_.solo;
+  var txt = pend.map(function (r) { return norm((r['TÍTULO'] || '') + '\n' + (r.CONTENIDO || '')); }).join('\n');
+  var tiene = function (m) { return !m.mat || mat[m.mat] || (m.alt && mat[m.alt]); };
+  // movimientos: primero los que salen en lo pendiente; luego los de más carencia y aún no cubiertos esta semana
+  var movs = MOV_MEGA_.filter(function (m) { return m.re.test(txt) && tiene(m); });
+  MOV_MEGA_.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m) && m.c && !cubiertas[m.c]; }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); }).forEach(function (m) { if (movs.length < 8) movs.push(m); });
+  if (n > 1) MOV_MEGA_.filter(function (m) { return m.equipo && mat[m.mat] && movs.indexOf(m) < 0; }).forEach(function (m) { movs.splice(1, 0, m); });   // material de equipo marcado: entra
+  if (movs.length < 4) MOV_MEGA_.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m); }).slice(0, 4 - movs.length).forEach(function (m) { movs.push(m); });
+  var ergs = ERG_MEGA_.filter(function (e) { return mat[e[0]]; }); if (!ergs.length) ergs = [['', 'BURPEES (en vez de erg)']];
+  var bar = +o.barraMax || 60, db = +o.dbMax || 22.5, ch = o.chica || null;
+  var carga = function (m) {
+    if (m.carga === 'barra' && mat.barra) return ' (' + Math.min(bar, /CLEAN|DEADLIFT/.test(m.n) ? 70 : 50) + ' kg' + (ch && ch.barra ? ' / ♀ ' + ch.barra + ' kg' : '') + ')';
+    if ((m.carga === 'barra' && !mat.barra && mat.db) || m.carga === 'db') return ' (DB ' + Math.min(db, 22.5) + ' kg' + (ch && ch.db ? ' / ♀ ' + ch.db + ' kg' : '') + ')';
+    if (m.carga === 'sandbag') return ' (sandbag' + (ch && ch.sandbag ? ' / ♀ ' + ch.sandbag + ' kg' : '') + ')';
+    return '';
+  };
+  var nombre = function (m) { return (m.carga === 'barra' && !mat.barra && mat.db ? 'DB ' : '') + m.n + carga(m); };
+  var r = function (m, f) { return Math.round(m.reps * f * (n > 1 ? n * 0.75 : 1)); };
+  var T = Math.max(30, Math.min(75, +minutos || 45)), partes = [], usado = 0, k = 0;
+  var fuerza = pend.filter(function (x) { return tipoSeccion_(x) === 'fuerza'; });
+  if (fuerza.length && mat.barra) { var mF = Math.round(T * 0.18); partes.push('BUY-IN PESADO · EMOM ' + mF + '′\n' + (n > 1 ? 'Alternando: ' : '') + '1–2 ' + norm(fuerza[0]['TÍTULO'] || 'LEVANTAMIENTO').replace(/^\d+:\s*/, '') + ' al 80–88 % (lo pendiente de fuerza, sin diluirlo)'); usado += mF + 2; }
+  var bloquesMin = [];
+  var restante = T - usado - (o.cashout ? 15 : 0);
+  var nb = restante >= 50 ? 4 : restante >= 35 ? 3 : 2, dur = Math.floor(restante / nb) - 2;
+  for (var b = 0; b < nb; b++) {
+    var a = movs[(k++) % movs.length], c = movs[(k++) % movs.length], e = ergs[b % ergs.length], fmt = fm[b % fm.length];
+    var conf = n > 1 ? '\nMaterial: ' + (n === 2 ? (b % 2 ? '1 barra + 2 DB' : '2 barras') : n === 3 ? (b % 2 ? '2 barras + 1 erg' : '1 barra + 2 DB + 1 erg') : (b % 2 ? '2 barras + 2 DB' : '2 ergs + 2 barras')) : '';
+    var ergTxt = /RUN/.test(e[1]) ? (200 * n) + ' m RUN' : /BURPEES/.test(e[1]) ? (10 * n) + ' BURPEES' : (15 * n) + '/' + (12 * n) + ' ' + e[1];
+    var tipos = [
+      'PARTE ' + (b + 1) + ' · AMRAP ' + dur + '′' + (fmt ? ' · ' + fmt : '') + conf + '\n' + ergTxt + '\n' + r(a, 1) + ' ' + nombre(a) + '\n' + r(c, 1) + ' ' + nombre(c),
+      'PARTE ' + (b + 1) + ' · EVERY 4′ × ' + Math.max(2, Math.floor(dur / 4)) + (fmt ? ' · ' + fmt : '') + ' (P1: 60–75″ al 90 %)' + conf + '\n' + ergTxt + '\n' + r(a, 0.7) + ' ' + nombre(a) + '\n' + r(c, 0.7) + ' ' + nombre(c),
+      'PARTE ' + (b + 1) + ' · FOR TIME · cap ' + dur + '′' + (fmt ? ' · ' + fmt : '') + conf + '\n21-15-9\n' + nombre(a) + '\n' + nombre(c) + '\n+ ' + ergTxt + ' entre rondas',
+      'PARTE ' + (b + 1) + ' · EMOM ' + dur + '′' + (fmt ? ' · ' + fmt : '') + ' (P4: impar umbral / par pico)' + conf + '\nMIN IMPAR: ' + ergTxt.replace(/^\d+/, function (x) { return Math.round(+x * 0.8); }) + '\nMIN PAR: ' + r(a, 0.6) + ' ' + nombre(a) + ' + ' + r(c, 0.5) + ' ' + nombre(c)
+    ];
+    partes.push(tipos[b % 4]); bloquesMin.push(dur);
+  }
+  if (o.cashout) partes.push('CASH-OUT · 15′ ergómetro Z2 suave (recupera parte del endurance pendiente; cuenta como ergo Z2)');
+  var chal = +o.chaleco > 0 ? '\nChaleco: ' + o.chaleco + (o.chaleco > 1 ? ' atletas' : ' atleta') + ' en burpees, saltos, gimnásticos y carrera (no con barra por encima de la cabeza).' : '';
+  var cods = movs.map(function (m) { return m.c; }).filter(Boolean).concat(pend.map(function (x) { return x['CÓDIGOS']; }).filter(Boolean)).join('|').split('|').filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  return {
+    ORIGEN: 'REORGANIZADO', 'TÍTULO': 'MEGA WOD · ' + T + '′ · ' + ({ solo: 'individual', pareja: 'en pareja', equipo3: 'equipo de 3', equipo4: 'equipo de 4' }[o.formato || 'solo']),
+    CONTENIDO: partes.join('\n\n— 2′ de transición —\n\n') + chal + '\n\nMARCADOR: total de reps de los AMRAP + tiempo de los FOR TIME.\nRITMO: el primer bloque al 80 %, sube en los siguientes; las partes P1/P4 sí al 90 %.',
+    MIN: T, INTENSIDAD: '🔴 Mega WOD', 'CÓDIGOS': cods.join('|'),
+    'POR QUÉ (cursiva)': 'Integra lo pendiente de la semana (' + pend.map(function (x) { return x['TÍTULO'] || x.BLOQUE; }).slice(0, 6).join(', ') + ') y lo que más te falta y aún no has hecho esta semana, en formato de competición. Lo ya cubierto en la semana no se repite.',
+    'CIENCIA (técnica · fisiología · biología)': 'Alterna partes por encima de umbral (P1/P4: H⁺ y aclarado de lactato) con partes sostenidas: adaptaciones centrales (gasto cardiaco) y periféricas (tampón, capilares). La fuerza pendiente va al principio y en fresco para no diluir su estímulo neural (manual §16).'
+  };
+}
+
+// ---------- 3 · COMPETI ----------
+/**
+ * p = { tipo: 'online'|'fisica', iso, turno, dias: [iso…], wod: 'texto' }
+ * Online: 24 h antes descanso (Z2 suave como mucho) · 24–48 h −50 % protegiendo lo implicado · no se suprimen P ni extras: se recolocan.
+ * Física: se suprimen P1–P4 y extras · 72–48 h volumen medio-bajo intensidad alta · 48–24 h repaso con volumen mínimo · 24 h descanso.
+ * Después: 24 h mínimas; lo quitado se compensa el resto de la semana (día siguiente a la grabación como mucho +40 %).
+ */
+function proponerCompeti_(lunes, p) {
+  var filas = filasSemanaActivas_(lunes).filter(function (r) { return !r._hecho; }), w = pesoCarencias_(lunes), cambios = [], avisos = [];
+  var dias = p.tipo === 'fisica' ? (p.dias || []).slice().sort() : [p.iso];
+  var t0 = horaDe_(dias[0], p.tipo === 'fisica' ? 'AM' : (p.turno || 'AM')), t1 = horaDe_(dias[dias.length - 1], p.tipo === 'fisica' ? 'PM' : (p.turno || 'AM')) + 3 * 36e5;
+  var implic = p.wod ? cargasDe_(norm(p.wod), '') : [];
+  var base = cargaBase_(filas), slots = [];
+  for (var k = 0; k < 7; k++) { var iso = sumarDias(lunes, k); ['AM', 'PM'].forEach(function (t) { var b = base[iso + t] || 0; slots.push({ iso: iso, turno: t, ok: true, cap: b ? b * 1.4 : CAP_TURNO_[t], mat: mapaMaterial_(['box'], true), correr: { libre: 1, tempo: 1, series: 1 }, tipo: 'casa' }); }); }
+  var ocupado = {}, duras = {}, aRecolocar = [];
+  filas.forEach(function (r) { var h = horaDe_(r._iso, r._turno), dt = (t0 - h) / 36e5; if (dt > 48 || h > t1 + 24 * 36e5) { ocupado[r._iso + r._turno] = (ocupado[r._iso + r._turno] || 0) + r._min; if (esDura_(r)) duras[r._iso] = 1; } });
+  filas.forEach(function (r) {
+    var h = horaDe_(r._iso, r._turno), dt = (t0 - h) / 36e5, despues = (h - t1) / 36e5, extra = norm(r.ORIGEN) !== 'FABRIK', z2 = esZ2Fila_(r) || /W03/.test(r['CÓDIGOS'] || '');
+    if (p.tipo === 'fisica' && extra && !z2) { cambios.push({ id: r.ID, accion: 'suprimir', motivo: 'Semana de competición física: fuera P1–P4 y extras (manual §17.3)' }); return; }
+    if (h >= t0 && h <= t1) { if (p.tipo === 'fisica') cambios.push({ id: r.ID, accion: 'suprimir', motivo: 'Día de competición' }); else aRecolocar.push(r); return; }
+    if (dt > 0 && dt <= 24) {
+      if (z2 && r._min <= 40) { cambios.push({ id: r.ID, accion: 'adaptar', iso: r._iso, turno: r._turno, contenido: 'Z2 MUY SUAVE 20–30′ (o descanso) + 15′ de estiramientos y movilidad.\nNada de intensidad.', motivo: '24 h antes: descanso, como mucho Z2 suave' }); return; }
+      if (p.tipo === 'fisica') { cambios.push({ id: r.ID, accion: 'suprimir', motivo: '24 h antes de competir: descanso' }); return; }
+      aRecolocar.push(r); return;
+    }
+    if (dt > 24 && dt <= 48) {
+      if (p.tipo === 'fisica') { cambios.push({ id: r.ID, accion: 'suprimir', motivo: '48–24 h antes: solo repaso de movimientos (se sustituye)' }); return; }
+      if (esDura_(r)) { aRecolocar.push(r); return; }
+      var proteger = !implic.length || cargasFila_(r).some(function (c) { return implic.indexOf(c) >= 0; });
+      if (proteger && !z2) { var mv = mitadVolumen_(r.CONTENIDO); cambios.push({ id: r.ID, accion: 'adaptar', iso: r._iso, turno: r._turno, contenido: mv.txt, motivo: '48–24 h antes: −50 % de volumen' + (implic.length ? ' (protege ' + implic.join(', ').toLowerCase() + ')' : '') });
+        aRecolocar.push(Object.assign({}, r, { _comp: true, _min: Math.round(r._min / 2) })); }
+      return;
+    }
+    if (dt > 48 && dt <= 72 && p.tipo === 'fisica' && !z2) { var mv2 = mitadVolumen_(r.CONTENIDO); cambios.push({ id: r.ID, accion: 'adaptar', iso: r._iso, turno: r._turno, contenido: mv2.txt + '\n\nINTENSIDAD ALTA: mantén las cargas y los ritmos.', motivo: '72–48 h antes: volumen medio-bajo, intensidad alta' }); return; }
+    if (despues > 0 && despues <= 24 && !z2) { aRecolocar.push(r); return; }
+  });
+  // recolocar después (y +24 h); el día después de grabar como mucho +40 %
+  var desde = t1 + 24 * 36e5;
+  aRecolocar.sort(function (a, b) { return prioridadFila_(b, w) - prioridadFila_(a, w); }).forEach(function (r) {
+    var s = colocar_(r, slots, ocupado, duras, { desde: desde });
+    if (r._comp) {
+      if (s) cambios.push({ accion: 'nuevo', iso: s.iso, turno: s.turno, nuevo: Object.assign({}, r, { ORIGEN: 'COMPENSACIÓN', 'TÍTULO': 'Compensación · 50 % de «' + (r['TÍTULO'] || r.BLOQUE) + '»', CONTENIDO: mitadVolumen_(r.CONTENIDO).txt, MIN: r._min, ID: '' }), motivo: 'Volumen recortado antes de competir, devuelto después' });
+      else cambios.push({ accion: 'nuevo-pendiente', titulo: 'Compensación · 50 % de «' + (r['TÍTULO'] || r.BLOQUE) + '»', motivo: 'No cabe esta semana sin afectar a la competición' });
+      return;
+    }
+    if (s) cambios.push({ id: r.ID, accion: 'mover', iso: s.iso, turno: s.turno, motivo: 'Fuera de la ventana de competición; se compensa después' });
+    else cambios.push({ id: r.ID, accion: 'pendiente', motivo: 'No cabe esta semana sin afectar a la competición' });
+  });
+  // repaso (física) y plan del día de competición
+  if (p.tipo === 'fisica') {
+    var dRep = sumarDias(dias[0], -2), dInt = sumarDias(dias[0], -1);
+    if (dRep >= lunes) cambios.push({ accion: 'nuevo', iso: dRep, turno: 'PM', nuevo: { ORIGEN: 'COMPETI', 'TÍTULO': 'Repaso de competición · volumen mínimo', CONTENIDO: repasoCompeti_(p.wod), MIN: 30, INTENSIDAD: '🟠 Repaso', 'CÓDIGOS': '' }, motivo: '48–24 h antes: repaso de movimientos' });
+    if (dInt >= lunes) cambios.push({ accion: 'nuevo', iso: dInt, turno: 'AM', nuevo: { ORIGEN: 'COMPETI', 'TÍTULO': 'Descanso pre-competición', CONTENIDO: 'Descanso. 15–20′ de movilidad y estiramientos suaves.\nHidratos altos en las comidas (6–8 g/kg), hidratación y a dormir pronto.', MIN: 20, 'CÓDIGOS': '' }, motivo: '24 h antes: descanso' });
+  }
+  dias.forEach(function (d) { cambios.push({ accion: 'nuevo', iso: d, turno: p.tipo === 'fisica' ? 'AM' : (p.turno || 'AM'), nuevo: { ORIGEN: 'COMPETI', 'TÍTULO': (p.tipo === 'fisica' ? 'COMPETICIÓN' : 'GRABACIÓN ONLINE') + ' · plan del día', CONTENIDO: planDiaCompeti_(p.wod, implic), MIN: 60, INTENSIDAD: '🏆 Competición', 'CÓDIGOS': '' }, motivo: 'Calentamiento, ritmo y combustible' }); });
+  var post = sumarDias(dias[dias.length - 1], 1);
+  if (post <= sumarDias(lunes, 6)) cambios.push({ accion: 'nuevo', iso: post, turno: 'AM', nuevo: { ORIGEN: 'COMPETI', 'TÍTULO': 'Recuperación post-competición', CONTENIDO: '20–30′ de Z1/Z2 muy suave (bike o paseo) + 15′ de movilidad.\n48 h sin excéntrico pesado.', MIN: 40, INTENSIDAD: '🔵 Z1', 'CÓDIGOS': '' }, motivo: '24 h después: mínimo' });
+  if (p.tipo === 'online' && !p.wod) avisos.push('Sin el WOD: se recorta todo lo de 48–24 h por igual. Si lo pegas, solo protejo lo que implica.');
+  return { cambios: cambios, avisos: avisos, implicados: implic, mejorHueco: p.tipo === 'online' ? mejorHuecoGrabar_(lunes, filas) : null,
+    resumen: (p.tipo === 'fisica' ? 'Competición física ' : 'Grabación online ') + dias.map(function (d) { return diaDe_(d) + ' ' + isoAFecha(d).slice(0, 5); }).join(', ') + (implic.length ? ' · implica ' + implic.join(', ').toLowerCase() : '') };
+}
+function repasoCompeti_(wod) {
+  var movs = MOV_MEGA_.filter(function (m) { return wod && m.re.test(norm(wod)); }).slice(0, 4);
+  if (!movs.length) return 'Calentamiento completo + 2 rondas suaves de los movimientos de la competición (3–5 reps cada uno).\nIntensidad igual o algo superior a la de la competición, volumen mínimo. Nada hasta el fallo.';
+  return 'Calentamiento 12′ + 2 RONDAS (descanso 2′):\n' + movs.map(function (m) { return Math.max(2, Math.round(m.reps / 4)) + ' ' + m.n; }).join('\n') + '\n\nIntensidad igual o algo superior a la de la competición (cargas de competición), volumen muy bajo. Sin fatiga.';
+}
+function planDiaCompeti_(wod, implic) {
+  var w = norm(wod || ''), fmt = /AMRAP/.test(w) ? 'AMRAP: arranca al 85 % y mantén un ritmo que puedas repetir; tandas fijas desde la 1.ª ronda.' : /FOR TIME|TIME CAP|CAP/.test(w) ? 'FOR TIME: no te vayas en el primer tercio; acelera en el último.' : /EMOM|EVERY/.test(w) ? 'Intervalos: mismo ritmo en todas las ventanas; el descanso es para respirar, no para mirar el reloj.' : 'Pacing: primer tercio al 85 %, último tercio a tope.';
+  var cal = { HOMBRO: 'hombro (bandas, wall slides, 2×5 del movimiento con carga creciente)', PIERNA: 'pierna (sentadilla, saltos progresivos)', AGARRE: 'agarre (cuelgue activo, 2 tandas cortas)', SNC: 'sistema nervioso (2–3 singles rápidos al 70–80 %)', GLUC: 'motor (2′ de erg con 3 aceleraciones de 10″)', IMPACTO: 'tobillo (pogos, comba)' };
+  return 'CALENTAMIENTO ESPECÍFICO 20–25′: general 8′ + ' + (implic.length ? implic.map(function (c) { return cal[c]; }).filter(Boolean).join(' · ') : 'movimientos del WOD en progresión') + ' + 1 ronda corta del WOD al 70 %.\n\n' +
+    'RITMO: ' + fmt + '\n\nCOMBUSTIBLE: comida 2–3 h antes con 1–2 g/kg de hidratos y poca grasa; 30′ antes 20–30 g de hidratos rápidos. Agua con una pizca de sal. Cafeína solo si ya la has probado en entrenos.' + (wod ? '\n\nWOD:\n' + wod : '');
+}
+function mejorHuecoGrabar_(lunes, filas) {
+  var punt = [];
+  for (var k = 0; k < 7; k++) { var iso = sumarDias(lunes, k); if (iso < hoyIso_()) continue; ['AM', 'PM'].forEach(function (t) {
+    var h = horaDe_(iso, t), carga = filas.filter(function (r) { var dh = (h - horaDe_(r._iso, r._turno)) / 36e5; return dh > 0 && dh <= 48; }).reduce(function (a, r) { return a + r._min * (esDura_(r) ? 2 : 1); }, 0);
+    punt.push({ iso: iso, turno: t, carga: carga }); }); }
+  return punt.sort(function (a, b) { return a.carga - b.carga; }).slice(0, 2);
+}
+
+// ---------- proponer · aplicar · deshacer ----------
+function reestProponer_(modo, lunes, params) {
+  lunes = lunesDe_(lunes || hoyIso_());
+  var P = modo === 'Viaje' ? proponerViaje_(lunes, params) : modo === 'Competi' ? proponerCompeti_(lunes, params) : proponerReorg_(lunes, params);
+  var id = 'R' + nuevoId_().slice(0, 6), plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
+  P.cambios.forEach(function (c, i) { c.k = i; var r = plan[c.id]; if (r) { c.titulo = r['TÍTULO'] || r.BLOQUE; c.desdeIso = celdaIso_(r.FECHA); c.desdeTurno = r.TURNO === 'AM' ? 'AM' : 'PM'; c.origen = r.ORIGEN; } else if (c.nuevo) c.titulo = c.nuevo['TÍTULO']; });
+  var json = JSON.stringify(P);
+  anadirFila_(HOJAS.REEST, { ID: id, LUNES: isoAFecha(lunes), MODO: modo, ESTADO: 'Propuesta', RESUMEN: P.resumen, PARAMS: JSON.stringify(params).slice(0, 45000), PROPUESTA: json.length < 49000 ? json : '', CREADA: ahora_() });
+  if (json.length >= 49000) CacheService.getScriptCache().put('reest_' + id, json.slice(0, 95000), 21600);
+  P.id = id; P.lunes = lunes; P.modo = modo;
+  return P;
+}
+function reestAplicar_(id, ajustes) {
+  return bloqueo_(function () {
+    var x = listar_(HOJAS.REEST).filter(function (r) { return r.ID === id; })[0]; if (!x) throw new Error('no_encontrado');
+    if (x.ESTADO !== 'Propuesta') throw new Error('ya_' + String(x.ESTADO).toLowerCase());
+    var P = JSON.parse(x.PROPUESTA || CacheService.getScriptCache().get('reest_' + id) || '{}');
+    (ajustes || []).forEach(function (a) { var c = P.cambios[a.k]; if (!c) return; if (a.destino === 'pendiente') c.accion = c.nuevo ? 'quitar' : 'pendiente'; else if (a.destino === 'quitar') c.accion = c.nuevo ? 'quitar' : 'suprimir'; else if (a.iso) { c.iso = a.iso; c.turno = a.turno || 'PM'; if (c.accion === 'pendiente' || c.accion === 'suprimir') c.accion = 'mover'; } });
+    asegurarColumna_(HOJAS.PLAN, 'REESTRUCTURA'); asegurarColumna_(HOJAS.PLAN, 'ESTADO PREVIO');
+    var plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
+    var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh), nuevas = [], sello = 'reestructura ' + id + ' · ' + ahora_();
+    var tocados = {}, tocar = function (r) { if (tocados[r.ID]) return; tocados[r.ID] = 1; actualizarFila_(HOJAS.PLAN, r._fila, { 'ESTADO PREVIO': r.ESTADO, ESTADO: 'SUSTITUIDO', REESTRUCTURA: id, ACTUALIZADO: ahora_() }); };
+    var fila = function (o, iso, turno) { return Object.assign({}, o, { ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: turno, ORDEN: o.ORDEN || 60, ESTADO: 'PROGRAMADO', GENERADO: sello, REESTRUCTURA: id, ACTUALIZADO: ahora_() }); };
+    P.cambios.forEach(function (c) {
+      var r = c.id ? plan[c.id] : null;
+      if (c.accion === 'quitar') return;
+      if (c.accion === 'nuevo') { var o = Object.assign({}, c.nuevo); delete o._iso; delete o._turno; delete o._min; delete o._comp; delete o._fila; if (!o.ORIGEN) o.ORIGEN = 'REORGANIZADO';
+        o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], c.motivo].filter(Boolean).join(' · '); nuevas.push(fila(o, c.iso, c.turno)); return; }
+      if (c.accion === 'nuevo-pendiente') { anadirPendiente_({ 'TÍTULO': c.titulo, ORIGEN: 'COMPENSACIÓN' }, c.motivo + ' (' + id + ')'); return; }
+      if (!r) return;
+      tocar(r);
+      if (c.accion === 'pendiente') { anadirPendiente_(r, c.motivo + ' (' + id + ')'); return; }
+      if (c.accion === 'suprimir' || c.accion === 'sustituir') return;
+      var o2 = {}; cab.forEach(function (h) { o2[h] = r[h]; });
+      if (norm(r.ORIGEN) === 'FABRIK') { o2.ORIGEN = 'FABRIK ADAPTADO'; o2.FABRIK_REF = ''; }
+      if (c.contenido) o2.CONTENIDO = c.contenido;
+      o2['POR QUÉ (cursiva)'] = c.motivo + (r['POR QUÉ (cursiva)'] ? ' · ' + r['POR QUÉ (cursiva)'] : '');
+      o2['ESTADO PREVIO'] = '';
+      nuevas.push(fila(o2, c.iso || celdaIso_(r.FECHA), c.turno || r.TURNO));
+    });
+    if (nuevas.length) sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, nuevas.length, cab.length).setValues(nuevas.map(function (o) { return filaDe_(cab, o); }));
+    actualizarFila_(HOJAS.REEST, x._fila, { ESTADO: 'Aplicada', APLICADA: ahora_() });
+    if (x.MODO === 'Competi') { try { var pp = JSON.parse(x.PARAMS || '{}'), d0 = pp.tipo === 'fisica' ? (pp.dias || [])[0] : pp.iso, d1 = pp.tipo === 'fisica' ? (pp.dias || []).slice(-1)[0] : pp.iso;
+      asegurarColumna_(HOJAS.EVENTOS, 'MUY EXIGENTE'); var idEv = guardarEvento_({ EVENTO: (pp.tipo === 'fisica' ? 'Competición' : 'Grabación online') + ' (Reestructurar)', TIPO: 'Competición', INICIO: isoAFecha(d0), FIN: isoAFecha(d1), BLOQUEA: pp.tipo === 'fisica' ? 'Día completo' : (pp.turno === 'PM' ? 'Tarde' : 'Mañana'), 'CÓMO PROCEDER': 'Reestructurado ' + id, ESTADO: 'Decidido', sinCalendario: true });
+      var ev = listar_(HOJAS.EVENTOS).filter(function (e) { return e.ID === idEv; })[0]; if (ev) actualizarFila_(HOJAS.EVENTOS, ev._fila, { 'MUY EXIGENTE': 'Sí' }); } catch (e) { Logger.log('Evento competi: ' + e); } }
+    MEMO = null;
+    return { id: id, nuevas: nuevas.length };
+  });
+}
+function reestDeshacer_(id) {
+  return bloqueo_(function () {
+    var x = listar_(HOJAS.REEST).filter(function (r) { return r.ID === id; })[0]; if (!x) throw new Error('no_encontrado');
+    var sh = hojaMia_(HOJAS.PLAN), borrar = [];
+    listar_(HOJAS.PLAN).forEach(function (r) {
+      if (r.REESTRUCTURA !== id) return;
+      if (r.ESTADO === 'SUSTITUIDO' && r['ESTADO PREVIO']) actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: r['ESTADO PREVIO'], 'ESTADO PREVIO': '', REESTRUCTURA: '', ACTUALIZADO: ahora_() });
+      else borrar.push(r._fila);
+    });
+    borrar.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
+    listar_(HOJAS.PENDIENTES).forEach(function (p) { if (String(p.MOTIVO || '').indexOf('(' + id + ')') >= 0 && p.ESTADO === 'Pendiente') actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Descartado' }); });
+    actualizarFila_(HOJAS.REEST, x._fila, { ESTADO: 'Deshecha' });
+    MEMO = null;
+    return true;
+  });
+}
+/** Sobre la marcha: ese día aparece material nuevo → bloque nuevo automático (editable) que ataca lo que más falta con ese material. */
+function reestMaterial_(lunes, iso, turno, material) {
+  var w = pesoCarencias_(lunesDe_(lunes || iso)), mat = mapaMaterial_(material, false), cat = catalogo_();
+  var cands = Object.keys(cat).filter(function (c) { var r = cat[c]; if (!r.CONTENIDO || /CARRERA/.test(norm(r.ORIGEN))) return false; var a = adaptarMaterial_(r.CONTENIDO, mat); return a.cambios === 0; })
+    .sort(function (a, b) { return (w[b] || 0) - (w[a] || 0); });
+  if (!cands.length) throw new Error('sin_bloque_para_material');
+  var r = cat[cands[0]], o = { ORIGEN: 'VIAJE', 'TÍTULO': r.NOMBRE + ' (material nuevo)', CONTENIDO: r.CONTENIDO, MIN: r.MIN || 12, INTENSIDAD: r.INTENSIDAD, 'CÓDIGOS': cands[0],
+    'POR QUÉ (cursiva)': 'Con el material que acabas de marcar, lo que más te falta: ' + r.NOMBRE + '. ' + (r['POR QUÉ (cursiva)'] || ''), 'CIENCIA (técnica · fisiología · biología)': r['CIENCIA (técnica · fisiología · biología)'] || '' };
+  var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
+  var fila = Object.assign(o, { ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: turno, ORDEN: 70, ESTADO: 'BORRADOR', GENERADO: 'manual ' + ahora_() + ' (material nuevo · candado)', ACTUALIZADO: ahora_() });
+  sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, fila)]);
+  MEMO = null;
+  return fila;
+}
+function reestActiva_(lunes) {
+  var l = lunesDe_(lunes);
+  return listar_(HOJAS.REEST).filter(function (r) { return celdaIso_(r.LUNES) === l && r.ESTADO === 'Aplicada'; }).map(function (r) { return { id: r.ID, modo: r.MODO, resumen: r.RESUMEN }; });
+}

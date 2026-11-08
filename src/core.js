@@ -299,7 +299,18 @@
     });
     return partes.map(function (x) { return { etiqueta: x.etiqueta, tipo: x.tipo, texto: x.lineas.join('\n').replace(/^\s*\n+|\s+$/g, '') }; }).filter(function (x) { return x.texto || x.etiqueta; });
   }
+  /** v0.14 · Reestructurar: la semana adaptada por defecto y la original para el selector «Original | Adaptada». */
   function construirDatos(sem) {
+    var re = (sem && sem.plan || []).filter(function (r) { return r.REESTRUCTURA; });
+    if (!re.length) return construirDatosBase(sem);
+    var ocultos = {}; re.forEach(function (r) { if (norm(r.ESTADO) === 'SUSTITUIDO' && norm(r.ORIGEN) === 'FABRIK') { var f = refFabrik(r); if (f) ocultos[f.dia + '·' + f.n] = 1; } });
+    var orig = Object.assign({}, sem, { plan: sem.plan.filter(function (r) { return !(r.REESTRUCTURA && norm(r.ESTADO) !== 'SUSTITUIDO'); }).map(function (r) { return r.REESTRUCTURA ? Object.assign({}, r, { ESTADO: r['ESTADO PREVIO'] || 'PROGRAMADO' }) : r; }) });
+    var d = construirDatosBase(Object.assign({}, sem, { _ocultos: ocultos }));
+    d.diasOrig = construirDatosBase(orig).dias; d.reest = sem.reest || [];
+    d.diasCambiados = {}; re.forEach(function (r) { d.diasCambiados[aIso(r.FECHA)] = 1; });
+    return d;
+  }
+  function construirDatosBase(sem) {
     var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO' && norm(r.ESTADO) !== 'SIN HUECO'; });
     if (fab) { fab.dias.forEach(function (fd) { porNombre[fd.nombre] = fd; }); S.ciclo = fab.ciclo; guardar('rte-ciclo', fab.ciclo); }
     var dias = DIAS7.map(function (nom, i) { return { nombre: nom, iso: sumarDias(sem.lunes, i), foco: [], bloques: [], rpe: null, notasDia: [] }; });
@@ -319,6 +330,7 @@
     if (fab) fab.dias.forEach(function (fd) {
       var rd = refDia[fd.nombre], destino = rd ? porIso[aIso(rd.FECHA)] : porIso[fd.iso];
       fd.bloques.forEach(function (b, k) {
+        if (sem._ocultos && sem._ocultos[fd.nombre + '·' + b.n]) return;   // reestructurado: va su versión adaptada
         var rb = refBloque[fd.nombre + '·' + b.n], d2 = rb ? porIso[aIso(rb.FECHA)] : destino;
         if (!d2) return;
         var r = rb || rd;
@@ -566,6 +578,7 @@
     if (S.vista === 'propuesta') return renderPropuesta();
     if (S.vista === 'hoja') return renderHoja();
     if (S.vista === 'extras') return renderExtras();
+    if (S.vista === 'reest') return renderReest();
     TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
@@ -684,13 +697,17 @@
   }
 
   function dia(d, x) {
-    var html = '<div class="day-title"><h1>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</h1>' +
-      (x.bloques.length ? '<button class="share-btn" type="button" data-compartir="' + d.dias.indexOf(x) + '" aria-label="Compartir el día">⤴ Compartir</button>' : '') +
+    var cambiado = d.diasCambiados && d.diasCambiados[x.iso], idx = d.dias.indexOf(x);
+    if (cambiado && S.verOrig && S.verOrig[x.iso] && d.diasOrig) x = d.diasOrig[idx];
+    var togRe = cambiado ? '<div class="seg reest-tog" role="group" aria-label="Ver plan"><button type="button" data-verorig="' + x.iso + '|0" aria-pressed="' + !(S.verOrig && S.verOrig[x.iso]) + '">🔀 Adaptada</button><button type="button" data-verorig="' + x.iso + '|1" aria-pressed="' + !!(S.verOrig && S.verOrig[x.iso]) + '">Original (Fabrik + extras)</button></div>' : '';
+    var html = togRe + '<div class="day-title"><h1>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</h1>' +
+      (x.bloques.length ? '<button class="share-btn" type="button" data-compartir="' + idx + '" aria-label="Compartir el día">⤴ Compartir</button>' : '') +
       (x.rpe ? '<div class="rpe-pill" style="--c:' + rpeColor(x.rpe) + '"><b>' + esc(x.rpe) + '</b><span>' + (x.rpe === 'Z2' ? 'Recovery' : /≈/.test(x.rpe) ? 'RPE estimado' : 'RPE del metcon') + '</span></div>' :
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
     html += htmlChequeo(d, x) + htmlCombustible(x);
+    if (cambiado && (d.reest || []).some(function (r) { return r.modo === 'Viaje'; }) && !(S.verOrig && S.verOrig[x.iso])) html += '<button class="btn-ghost sm reest-mat" type="button" data-matnuevo="' + x.iso + '">＋ Tengo material nuevo hoy</button>';
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
     html += (x.fases || []).map(function (f) { return '<div class="variant-note fase"><span class="v-tag">' + esc(f.tipo) + '</span><span>' + esc(f.txt) + '</span></div>'; }).join('');
@@ -1716,7 +1733,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1764,6 +1781,8 @@
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
     if ((b = t.closest('[data-compartir]'))) { abrirCompartir(+b.dataset.compartir); return; }
+    if ((b = t.closest('[data-verorig]'))) { var vo = b.dataset.verorig.split('|'); S.verOrig = S.verOrig || {}; S.verOrig[vo[0]] = vo[1] === '1'; render(); return; }
+    if ((b = t.closest('[data-matnuevo]'))) { abrirMaterialNuevo(b.dataset.matnuevo); return; }
     if ((b = t.closest('[data-visto]'))) {
       b.disabled = true;
       api({ action: 'aviso_visto', id: b.dataset.visto }).then(ok).then(function () { S.data.avisosVistos = (S.data.avisosVistos || []).concat([b.dataset.visto]); render(); toast('Visto · queda en el calendario y en Menú › Avisos'); }).catch(falloApi(b));
@@ -1868,7 +1887,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.10';
+  var WEB_VERSION = 'web 0.11';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

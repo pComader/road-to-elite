@@ -22,6 +22,7 @@
     var hechos = (d.registro || []).length;
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
+    html += '<button class="set-link reest-link" type="button" id="ir-reest"><span class="set-ico">🔀</span>Reestructurar · viaje, reorganizar, competi<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-extras"><span class="set-ico">⊕</span>Extras semana en curso<span class="go">›</span></button>';
@@ -51,6 +52,7 @@
     document.getElementById('ir-cobertura').onclick = function () { S.vista = 'cobertura'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     $app.querySelectorAll('[data-unidad]').forEach(function (b) { b.onclick = function () { guardar('rte-unidad', b.dataset.unidad); S._abrir = 's-unid'; render(); toast('Cargas en ' + b.dataset.unidad); }; });
+    document.getElementById('ir-reest').onclick = function () { S.vista = 'reest'; S.reest = {}; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
@@ -660,6 +662,182 @@
     };
     pintar();
   }
+
+
+  // ---------- v0.14 · REESTRUCTURAR (viaje · reorganización · competi) ----------
+  var MAT_VIAJE = [['box', 'Tengo un box'], ['hspu', 'Pared HSPU'], ['pino', 'Pino / HSW'], ['rack_completo', 'Rack completo (anillas)'], ['rack_dominadas', 'Dominadas + T2B'], ['rack_estricto', 'Solo estrictos'],
+    ['chaleco', 'Chaleco'], ['comba', 'Comba'], ['kb', 'Kettlebells'], ['barra', 'Barra y discos'], ['db', 'Mancuernas'], ['sandbag_hyrox', 'Sandbag HYROX'], ['sandbag', 'Sandbag'], ['cajon', 'Cajón'],
+    ['slamball', 'Slamball'], ['cuerda', 'Cuerda'], ['fondos', 'Fondos']];
+  var MAT_MEGA = [['barra', 'Barras'], ['db', 'Mancuernas'], ['kb', 'Kettlebells'], ['comba', 'Comba'], ['sandbag', 'Sandbag'], ['sandbag_hyrox', 'Sandbag HYROX'], ['rack_completo', 'Anillas / rack'], ['rack_dominadas', 'Barra dominadas'],
+    ['slamball', 'Slamball'], ['gusano2', 'Gusano de 2'], ['gusano3', 'Gusano de 3'], ['gusano4', 'Gusano de 4'], ['ergos', 'Assault / ski / remo'], ['yugo', 'Yugo'], ['trineo', 'Trineo'], ['cuerda', 'Cuerda'],
+    ['lodge_lanzar', 'Lodge para lanzar sandbag'], ['lodge_saltar', 'Lodge para saltar'], ['cajon', 'Cajón'], ['hspu', 'Pared HSPU'], ['_correr', 'Se puede correr']];
+  function chipsMat(id, lista, sel) { sel = sel || []; return '<div class="zonas" id="' + id + '">' + lista.map(function (m) { var on = sel.indexOf(m[0]) >= 0; return '<button type="button" class="zona' + (on ? ' on' : '') + '" data-mk="' + m[0] + '" aria-pressed="' + on + '">' + esc(m[1]) + '</button>'; }).join('') + '</div>'; }
+  function leerChips(id) { var el = document.getElementById(id); return el ? [].map.call(el.querySelectorAll('.zona.on'), function (b) { return b.dataset.mk; }) : []; }
+  function enlazarChips(raiz) { (raiz || document).querySelectorAll('.zona[data-mk]').forEach(function (b) { b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }; }); }
+  function diasRestantes() { var d = S.data; return d.dias.filter(function (x) { return x.iso >= d.hoy; }); }
+  function etqDia(iso) { var x = S.data.dias.filter(function (y) { return y.iso === iso; })[0]; return (x ? NOMBRE_DIA[x.nombre].slice(0, 3) : '') + ' ' + diaMes(iso); }
+  function segHtml(id, ops, val) { return '<div class="seg" role="group" id="' + id + '">' + ops.map(function (o) { return '<button type="button" data-sv="' + o[0] + '" aria-pressed="' + (o[0] === val) + '">' + esc(o[1]) + '</button>'; }).join('') + '</div>'; }
+  function enlazarSeg(id, fn) { var g = document.getElementById(id); if (!g) return; g.querySelectorAll('[data-sv]').forEach(function (b) { b.onclick = function () { g.querySelectorAll('[data-sv]').forEach(function (y) { y.setAttribute('aria-pressed', y === b); }); if (fn) fn(b.dataset.sv); }; }); }
+  function valSeg(id) { var b = document.querySelector('#' + id + ' [aria-pressed="true"]'); return b ? b.dataset.sv : ''; }
+
+  function renderReest() {
+    var d = S.data, R = S.reest = S.reest || {};
+    var html = cabeceraVista('Reestructurar', 'Menú');
+    if (R.propuesta) return renderPropuestaReest(html);
+    if (!R.modo) {
+      html += '<div class="hint">Adapta la semana a lo que te ha surgido. Primero ves la propuesta junto al plan original; nada se aplica sin tu OK y se puede deshacer.</div>' +
+        [['Viaje', '✈️', 'Días fuera, qué material tienes y si puedes correr. Lo que no se pueda hacer se compensa en casa (máx. +40 %) o en el domingo.'],
+         ['Reorganización', '🧩', 'Te quedan cosas sin hacer: marcas huecos y bloques pendientes y te monto una sesión clásica o un mega WOD.'],
+         ['Competi', '🏆', 'Online (grabación) o física: descanso, −50 % de volumen protegiendo lo que implica el WOD y compensación después.']].map(function (m) {
+          return '<button class="reest-card" type="button" data-rm="' + m[0] + '"><span class="rc-ico">' + m[1] + '</span><span><b>' + m[0] + '</b><span class="hint">' + m[2] + '</span></span></button>'; }).join('');
+      if ((d.reest || []).length) html += '<h3 class="sec-t">Aplicadas esta semana</h3>' + d.reest.map(function (r) { return '<div class="xb reest"><div class="xb-h"><span class="tag">' + esc(r.modo) + '</span><b class="xb-t">' + esc(r.resumen) + '</b></div><button class="btn-ghost sm" type="button" data-rdes="' + esc(r.id) + '">Deshacer</button></div>'; }).join('');
+      $app.innerHTML = html;
+      document.getElementById('atras').onclick = function () { S.reest = null; abrirAjustes(); };
+      $app.querySelectorAll('[data-rm]').forEach(function (b) { b.onclick = function () { R.modo = b.dataset.rm; render(); window.scrollTo({ top: 0 }); }; });
+      $app.querySelectorAll('[data-rdes]').forEach(function (b) { b.onclick = function () { if (!confirmar(b, '¿Deshacer? Pulsa otra vez')) return; b.disabled = true;
+        api({ action: 'reest_deshacer', id: b.dataset.rdes, lunes: d.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); toast('Deshecha'); render(); }).catch(falloApi(b)); }; });
+      return;
+    }
+    var dr = diasRestantes();
+    if (R.modo === 'Viaje') {
+      var perf = leer('rte-perfiles-mat') || {};
+      html += '<form id="rf" class="avf"><h3 class="sec-t">✈️ Viaje</h3>' +
+        '<div class="two"><div><label for="rv-d">Desde</label><select id="rv-d">' + dr.map(function (x) { return '<option value="' + x.iso + '">' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
+        '<div><label for="rv-h">Hasta</label><select id="rv-h">' + dr.map(function (x, i) { return '<option value="' + x.iso + '"' + (i === Math.min(2, dr.length - 1) ? ' selected' : '') + '>' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div></div>' +
+        '<label>Cada mañana y tarde del viaje</label><div class="hint">Libre = puedes entrenar · Desplazamiento = vas de viaje · Imposible = no se entrena. 🏃 = puedes correr ese turno · 🥾 = minutos de ruta andando.</div>' +
+        '<div id="rv-dias">' + dr.map(function (x) { return '<div class="rv-dia" data-iso="' + x.iso + '"><b>' + etqDia(x.iso) + '</b>' + ['AM', 'PM'].map(function (t) {
+          return '<div class="rv-t"><span class="tag">' + t + '</span><select data-est="' + t + '"><option value="libre">Libre</option><option value="desplazamiento">Desplazamiento</option><option value="imposible">Imposible</option></select>' +
+            '<label class="sh-b"><input type="checkbox" data-run="' + t + '"><span>🏃</span></label><input class="rv-min" inputmode="numeric" placeholder="🥾 min" data-ruta="' + t + '">' +
+            '<details class="rv-exc"><summary>Material distinto</summary>' + chipsMat('rx-' + x.iso + '-' + t, MAT_VIAJE) + '</details></div>'; }).join('') + '</div>'; }).join('') + '</div>' +
+        '<label>Material del viaje</label>' + (Object.keys(perf).length ? '<select id="rv-perf"><option value="">Cargar perfil guardado…</option>' + Object.keys(perf).map(function (k) { return '<option>' + esc(k) + '</option>'; }).join('') + '</select>' : '') +
+        chipsMat('rv-mat', MAT_VIAJE) + '<div class="two"><div><label for="rv-db">Mancuernas hasta (kg)</label><input id="rv-db" inputmode="decimal"></div><div><label for="rv-pn">Guardar como perfil</label><input id="rv-pn" placeholder="Ej. Gym hotel"></div></div>' +
+        '<label>Si puedes correr, ¿qué?</label>' + chipsMat('rv-cor', [['libre', 'Libre / continua'], ['tempo', 'Tempo'], ['series', 'Series']], ['libre']) +
+        '<label class="sh-b"><input type="checkbox" id="rv-dom" checked><span>Si el domingo estoy en casa, meter ahí un día completo</span></label>' +
+        '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
+    } else if (R.modo === 'Reorganización') {
+      var bls = []; d.dias.forEach(function (x) { x.bloques.forEach(function (b) { if (!/NO HACER|OCULTO|PROPUESTA/.test(norm(b.estado || '')) && (b.idPlan || b.id)) bls.push({ x: x, b: b }); }); });
+      var hecho = function (b) { return (d.registro || []).some(function (r) { return r.ID_PLAN === (b.idPlan || b.id) && r.HECHO === 'Sí'; }); };
+      var corre = function (b) { return norm(b.origen || '') === 'CARRERA' || /\b(W01|W02|W04|V01)\b/.test(b.codigos || ''); };
+      html += '<form id="rf" class="avf"><h3 class="sec-t">🧩 Reorganización</h3>' +
+        '<label>Huecos que te quedan (y minutos)</label><div id="ro-h">' + dr.map(function (x) { return '<div class="rv-dia"><b>' + etqDia(x.iso) + '</b>' + ['AM', 'PM'].map(function (t) {
+          return '<label class="sh-b"><input type="checkbox" data-hk="' + x.iso + '|' + t + '"><span>' + t + '</span></label><input class="rv-min" inputmode="numeric" placeholder="min" data-hm="' + x.iso + '|' + t + '" value="' + (t === 'AM' ? 60 : 90) + '">'; }).join('') + '</div>'; }).join('') + '</div>' +
+        '<label>Marca lo que NO has hecho (lo no marcado se da por hecho)</label><div class="ro-bl">' + bls.map(function (o) { var id = o.b.idPlan || o.b.id, h = hecho(o.b);
+          return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span>' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' +
+            (corre(o.b) ? '<select data-car="' + esc(id) + '"><option value="aparte">Si no la hice: aparte (≥6 h de la fuerza)</option><option value="metcon">Dentro del metcon (carrera o erg)</option><option value="no">Dejarla (Z2: +25 % la semana que viene)</option></select>' : '') + '</div>'; }).join('') + '</div>' +
+        '<label for="ro-e">Añadir: escribe solo el estímulo (ej. «hspu») o diseña un bloque</label><div class="two"><input id="ro-e" placeholder="Estímulo"><button class="btn sm" type="button" id="ro-add">Añadir</button></div><div id="ro-n" class="dchips">' + (R.nuevos || []).map(function (n, i) { return '<span class="dchip">' + esc(n.estimulo || n.titulo) + '</span>'; }).join('') + '</div>' +
+        '<details class="set"><summary>Diseñar un bloque a mano</summary><div class="set-body"><input id="ro-mt" placeholder="Título"><textarea id="ro-mc" rows="4" placeholder="Ejercicios"></textarea><input id="ro-mm" inputmode="numeric" placeholder="Minutos"><button class="btn sm" type="button" id="ro-madd">Añadir bloque</button></div></details>' +
+        '<label>Tipo de sesión</label>' + segHtml('ro-tipo', [['A', 'A · Clásica'], ['B', 'B · Integrada (mega WOD)']], R.tipo || 'A') +
+        '<div class="hint" id="ro-th">A: calentamiento activo (ya atacando pendientes) → skills → fuerza → metcon. B: un mega WOD de 30–75′ con todo lo pendiente.</div>' +
+        '<div id="ro-b"' + (R.tipo === 'B' ? '' : ' hidden') + '><label>Formato</label>' + segHtml('ro-f', [['solo', 'Solo'], ['pareja', 'Pareja'], ['equipo3', 'Equipo 3'], ['equipo4', 'Equipo 4']], 'solo') +
+        '<div class="two"><div><label for="ro-min">Minutos</label><input id="ro-min" inputmode="numeric" value="45"></div><div><label for="ro-ch">Atletas con chaleco</label><input id="ro-ch" inputmode="numeric" value="0"></div></div>' +
+        '<label>Material disponible</label>' + chipsMat('ro-mat', MAT_MEGA, ['barra', 'db', 'comba', 'ergos', 'rack_dominadas', 'cajon']) +
+        '<div class="two"><div><label for="ro-bx">Barra máx. (kg)</label><input id="ro-bx" inputmode="decimal" value="60"></div><div><label for="ro-dx">Mancuerna máx. (kg)</label><input id="ro-dx" inputmode="decimal" value="22.5"></div></div>' +
+        '<label class="sh-b"><input type="checkbox" id="ro-chica"><span>Hay chica en la pareja / equipo</span></label><div class="three" id="ro-chw" hidden><input id="ro-cb" inputmode="decimal" placeholder="Barra ♀ kg"><input id="ro-cd" inputmode="decimal" placeholder="DB ♀ kg"><input id="ro-cs" inputmode="decimal" placeholder="Sandbag ♀ kg"></div>' +
+        '<label class="sh-b"><input type="checkbox" id="ro-cash" checked><span>Cerrar con 15′ de erg Z2 si queda endurance pendiente</span></label></div>' +
+        '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
+    } else {
+      html += '<form id="rf" class="avf"><h3 class="sec-t">🏆 Competi</h3>' + segHtml('rc-t', [['online', 'Online (1 día)'], ['fisica', 'Física']], R.ctipo || 'online') +
+        '<div id="rc-on"' + (R.ctipo === 'fisica' ? ' hidden' : '') + '><div class="two"><div><label for="rc-d">Día de grabación</label><select id="rc-d">' + d.dias.map(function (x) { return '<option value="' + x.iso + '">' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
+        '<div><label>Turno</label>' + segHtml('rc-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div></div>' +
+        '<div id="rc-fi"' + (R.ctipo === 'fisica' ? '' : ' hidden') + '><label>Días de competición</label>' + chipsMat('rc-dias', d.dias.map(function (x) { return [x.iso, etqDia(x.iso)]; })) + '</div>' +
+        '<label for="rc-w">WOD(s) si los sabes</label><textarea id="rc-w" rows="5" placeholder="Pega el WOD: detecto qué implica (hombro, pierna, agarre…) para protegerlo"></textarea>' +
+        '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
+    }
+    $app.innerHTML = html;
+    enlazarChips($app);
+    document.getElementById('atras').onclick = function () { S.reest = null; abrirAjustes(); };
+    document.getElementById('rf-v').onclick = function () { S.reest = {}; render(); };
+    var enviar = function (params) {
+      var b = $app.querySelector('#rf [type=submit]'); b.disabled = true; b.textContent = 'Calculando…';
+      api({ action: 'reest_proponer', modo: R.modo, lunes: d.semana, params: params }).then(ok).then(function (r) { R.params = params; R.propuesta = r.propuesta; R.ajustes = {}; render(); window.scrollTo({ top: 0 }); })
+        .catch(function (e) { b.disabled = false; b.textContent = 'Ver propuesta'; toast(mensajeError(e.message)); });
+    };
+    if (R.modo === 'Viaje') {
+      var sync = function () { var de = val('rv-d'), ha = val('rv-h'); $app.querySelectorAll('.rv-dia').forEach(function (r) { r.classList.toggle('dis', r.dataset.iso < de || r.dataset.iso > ha); }); };
+      document.getElementById('rv-d').onchange = sync; document.getElementById('rv-h').onchange = sync; sync();
+      var ps = document.getElementById('rv-perf'); if (ps) ps.onchange = function () { var p = (leer('rte-perfiles-mat') || {})[ps.value]; if (!p) return; $app.querySelectorAll('#rv-mat .zona').forEach(function (b) { var on = p.indexOf(b.dataset.mk) >= 0; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }); };
+      document.getElementById('rf').onsubmit = function (ev) {
+        ev.preventDefault();
+        var de = val('rv-d'), ha = val('rv-h'); if (ha < de) { toast('«Hasta» va antes de «Desde»'); return; }
+        var p = { desde: de, hasta: ha, dias: {}, material: leerChips('rv-mat'), excepciones: {}, correr: {}, correrDias: {}, rutas: [], domingoCompleto: document.getElementById('rv-dom').checked, dbKg: val('rv-db') };
+        leerChips('rv-cor').forEach(function (k) { p.correr[k] = true; });
+        $app.querySelectorAll('.rv-dia').forEach(function (r) { var iso = r.dataset.iso; if (iso < de || iso > ha) return; p.dias[iso] = {};
+          ['AM', 'PM'].forEach(function (t) { p.dias[iso][t] = r.querySelector('[data-est="' + t + '"]').value; if (r.querySelector('[data-run="' + t + '"]').checked) p.correrDias[iso + '|' + t] = true;
+            var m = +r.querySelector('[data-ruta="' + t + '"]').value; if (m) p.rutas.push({ iso: iso, turno: t, min: m });
+            var ex = leerChips('rx-' + iso + '-' + t); if (ex.length) p.excepciones[iso + '|' + t] = ex; }); });
+        var pn = val('rv-pn'); if (pn) { var pf = leer('rte-perfiles-mat') || {}; pf[pn] = p.material; guardar('rte-perfiles-mat', pf); }
+        enviar(p);
+      };
+    } else if (R.modo === 'Reorganización') {
+      R.nuevos = R.nuevos || [];
+      enlazarSeg('ro-tipo', function (v) { R.tipo = v; document.getElementById('ro-b').hidden = v !== 'B'; });
+      enlazarSeg('ro-f');
+      document.getElementById('ro-chica').onchange = function () { document.getElementById('ro-chw').hidden = !this.checked; };
+      document.getElementById('ro-add').onclick = function () { var e = val('ro-e'); if (!e) return; R.nuevos.push({ estimulo: e }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(e) + '</span>'); document.getElementById('ro-e').value = ''; };
+      document.getElementById('ro-madd').onclick = function () { var t = val('ro-mt'), c = val('ro-mc'); if (!t && !c) return; R.nuevos.push({ titulo: t || 'Bloque nuevo', contenido: c, min: +val('ro-mm') || 15 }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(t || 'Bloque nuevo') + '</span>'); ['ro-mt', 'ro-mc', 'ro-mm'].forEach(function (i) { document.getElementById(i).value = ''; }); };
+      document.getElementById('rf').onsubmit = function (ev) {
+        ev.preventDefault();
+        var huecos = [].filter.call($app.querySelectorAll('[data-hk]'), function (c) { return c.checked; }).map(function (c) { var k = c.dataset.hk.split('|'); return { iso: k[0], turno: k[1], min: +($app.querySelector('[data-hm="' + c.dataset.hk + '"]').value) || 60 }; });
+        if (!huecos.length) { toast('Marca al menos un hueco'); return; }
+        var p = { huecos: huecos, noHechos: [].filter.call($app.querySelectorAll('[data-nh]'), function (c) { return c.checked; }).map(function (c) { return c.dataset.nh; }), nuevos: R.nuevos, carrera: {}, tipo: R.tipo || 'A' };
+        $app.querySelectorAll('[data-car]').forEach(function (s) { p.carrera[s.dataset.car] = s.value; });
+        if (!p.noHechos.length && !p.nuevos.length) { toast('Marca algún bloque no hecho o añade uno'); return; }
+        if (p.tipo === 'B') p.mega = { formato: valSeg('ro-f') || 'solo', minutos: +val('ro-min') || 45, chaleco: +val('ro-ch') || 0, material: leerChips('ro-mat'), barraMax: +String(val('ro-bx')).replace(',', '.') || 60, dbMax: +String(val('ro-dx')).replace(',', '.') || 22.5,
+          chica: document.getElementById('ro-chica').checked ? { barra: val('ro-cb'), db: val('ro-cd'), sandbag: val('ro-cs') } : null, cashout: document.getElementById('ro-cash').checked };
+        enviar(p);
+      };
+    } else {
+      enlazarSeg('rc-t', function (v) { R.ctipo = v; document.getElementById('rc-on').hidden = v === 'fisica'; document.getElementById('rc-fi').hidden = v !== 'fisica'; });
+      enlazarSeg('rc-tu');
+      document.getElementById('rf').onsubmit = function (ev) {
+        ev.preventDefault();
+        var t = valSeg('rc-t') || 'online', p = { tipo: t, wod: val('rc-w') };
+        if (t === 'online') { p.iso = val('rc-d'); p.turno = valSeg('rc-tu') || 'AM'; } else { p.dias = leerChips('rc-dias'); if (!p.dias.length) { toast('Marca los días de competición'); return; } }
+        enviar(p);
+      };
+    }
+  }
+  var ACC_REEST = { adaptar: 'Adaptado', mover: 'Movido', nuevo: 'Nuevo', pendiente: 'A pendientes', suprimir: 'Se quita', sustituir: 'Se reorganiza', 'nuevo-pendiente': 'A pendientes' };
+  function renderPropuestaReest(html) {
+    var R = S.reest, P = R.propuesta, d = S.data;
+    var opts = '<option value="">Como propone</option>' + d.dias.filter(function (x) { return x.iso >= d.hoy; }).map(function (x) { return ['AM', 'PM'].map(function (t) { return '<option value="' + x.iso + '|' + t + '">' + etqDia(x.iso) + ' ' + t + '</option>'; }).join(''); }).join('') + '<option value="pendiente">A pendientes</option><option value="quitar">Quitar</option>';
+    html += '<section class="me" style="display:block"><b>' + esc(P.resumen) + '</b>' + (P.avisos || []).map(function (a) { return '<div class="hint">⚠ ' + esc(a) + '</div>'; }).join('') +
+      (P.mejorHueco ? '<div class="hint">🎯 Mejor hueco para grabar (menos fatiga en las 48 h previas): ' + P.mejorHueco.map(function (h) { return etqDia(h.iso) + ' ' + h.turno; }).join(' · ') + ' (el 2.º, para un segundo intento).</div>' : '') +
+      (P.implicados && P.implicados.length ? '<div class="hint">El WOD implica: ' + esc(P.implicados.join(', ').toLowerCase()) + '. Es lo que protejo.</div>' : '') + '</section>';
+    html += P.cambios.filter(function (c) { return c.accion !== 'sustituir'; }).map(function (c) {
+      var desde = c.desdeIso ? etqDia(c.desdeIso) + ' ' + (c.desdeTurno || '') : '', a = c.iso ? etqDia(c.iso) + ' ' + (c.turno || '') : '';
+      var cont = c.contenido || (c.nuevo && c.nuevo.CONTENIDO) || '';
+      return '<div class="xb rp-' + c.accion + '"><div class="xb-h"><span class="tag">' + (ACC_REEST[c.accion] || c.accion) + '</span><b class="xb-t">' + esc(c.titulo || '') + '</b></div>' +
+        '<div class="xb-p">' + (desde ? '<span>' + esc(desde) + '</span>' : '') + (a ? '<span>→ <b>' + esc(a) + '</b></span>' : '') + '</div><div class="hint">' + esc(c.motivo || '') + '</div>' +
+        (cont ? '<details class="alt"><summary>Ver contenido</summary><div class="exp-body"><div class="prose-n pre">' + esc(cont) + '</div></div></details>' : '') +
+        (c.accion !== 'nuevo-pendiente' ? '<select class="rp-sel" data-k="' + c.k + '">' + opts + '</select>' : '') + '</div>';
+    }).join('');
+    html += '<button class="btn btn-primary" type="button" id="rp-ok">Aplicar la semana adaptada</button><button class="btn" type="button" id="rp-back">Cambiar respuestas</button><button class="btn-ghost" type="button" id="rp-no">Descartar</button>' +
+      '<div class="hint">Después, en cada día cambiado puedes ver «Adaptada» u «Original (Fabrik + extras)». Se puede deshacer desde Reestructurar.</div>';
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = function () { S.reest = null; abrirAjustes(); };
+    $app.querySelectorAll('.rp-sel').forEach(function (s) { s.onchange = function () { var v = s.value, k = +s.dataset.k; if (!v) delete R.ajustes[k]; else if (v === 'pendiente' || v === 'quitar') R.ajustes[k] = { k: k, destino: v }; else { var x = v.split('|'); R.ajustes[k] = { k: k, iso: x[0], turno: x[1] }; } }; });
+    document.getElementById('rp-back').onclick = function () { R.propuesta = null; render(); };
+    document.getElementById('rp-no').onclick = function () { S.reest = {}; render(); };
+    document.getElementById('rp-ok').onclick = function () {
+      var b = this; b.disabled = true; b.textContent = 'Aplicando…';
+      api({ action: 'reest_aplicar', id: P.id, lunes: d.semana, ajustes: Object.keys(R.ajustes).map(function (k) { return R.ajustes[k]; }) }).then(ok).then(function (r) {
+        aplicarSemana(r.semana); S.reest = null; S.vista = 'semana'; render(); toast('Semana adaptada · ' + r.aplicado.nuevas + ' bloques');
+      }).catch(falloApi(b));
+    };
+  }
+  function abrirMaterialNuevo(iso) {
+    abrirHoja('<div class="row"><h2>Material nuevo · ' + etqDia(iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      '<div class="hint">Marca lo que tienes ahora. Te creo un bloque nuevo (en borrador, editable) con lo que más te falta y se puede hacer con ese material. Para ampliar un bloque que ya tienes, ábrelo y usa «↔ Mover / editar».</div>' +
+      segHtml('mn-t', [['AM', 'Mañana'], ['PM', 'Tarde']], 'PM') + chipsMat('mn-m', MAT_VIAJE) + '<button class="btn btn-primary" type="button" id="mn-ok">Crear bloque</button>');
+    enlazarChips($scrim); enlazarSeg('mn-t');
+    document.getElementById('mn-ok').onclick = function () {
+      var b = this, m = leerChips('mn-m'); if (!m.length) { toast('Marca algún material'); return; } b.disabled = true;
+      api({ action: 'reest_material', lunes: S.data.semana, iso: iso, turno: valSeg('mn-t') || 'PM', material: m }).then(ok).then(function (r) { aplicarSemana(r.semana); cerrarHoja(); render(); toast('Bloque creado: ' + r.bloque['TÍTULO']); })
+        .catch(falloApi(b));
+    };
+  }
+
 
   // ---------- v0.11 · Extras de la semana en curso ----------
   function renderExtras() {
