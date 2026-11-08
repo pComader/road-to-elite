@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.16.0',
+  VERSION: '0.16.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -4355,7 +4355,8 @@ function alimentarMotor_(nSemanas) {
     nuevas.push(Object.assign(analizarWod_(r.CONTENIDO, {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Guardado', FECHA: r['FECHA ORIGEN'] || '', NOMBRE: String(r.NOMBRE || 'WOD').slice(0, 160),
       TEXTO: String(r.CONTENIDO).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }, metaBd_('Guardado en la app', 'personal')));
   });
-  try { competicionesBd_(ya).forEach(function (o) { nuevas.push(o); }); } catch (e) { Logger.log('Motor · competiciones de la base de datos: ' + e); }
+  var yaFecha = {}; listar_(HOJAS.MOTOR).concat(nuevas).forEach(function (r) { if (r.FECHA) yaFecha[r.FECHA + '|' + r.MOVIMIENTOS] = 1; });
+  try { leerVuelcoGabi_(ya, yaFecha).forEach(function (o) { nuevas.push(o); }); } catch (e) { Logger.log('Motor · lo volcado por la app de Gabi: ' + e); }
   return filasEnHoja_(HOJAS.MOTOR, nuevas);
 }
 /** Filas que pegas a mano (o que añade Claude) solo con NOMBRE y TEXTO: se analizan solas. */
@@ -4823,13 +4824,12 @@ function menuTokenAgente() {
 
 // ===================== v0.16 · BASE DE DATOS DE WODs COMPARTIDA (Base_de_datos_WOD) =====================
 /*
- * El análisis del motor vive en Base_de_datos_WOD (Drive), en las pestañas «MOTOR · ANÁLISIS» y «MOTOR · LÉEME».
+ * El análisis del motor vive en Base_de_datos_WOD (Drive), en una pestaña OCULTA «MOTOR · ANÁLISIS» (la app de Gabi la ignora).
  * Esa hoja la rellena también la app de Gabi (pestañas «Ciclo …», una por competición, «Resultados archivados», INICIO):
- * Road To Elite NUNCA escribe, renombra ni borra esas pestañas; de las de competición solo LEE (son WODs públicos).
+ * Road To Elite NUNCA escribe, renombra ni borra esas pestañas: solo LEE «Ciclo …» (historial de Fabrik) y las de competición.
  * Cada fila lleva PROCEDENCIA y PERMISO: «personal» (programación de Fabrik, tus WODs) o «compartible» (competiciones públicas, benchmarks).
- * Otras apps: JSON en Drive (motor_wods.json, junto a la hoja) o API de solo lectura con su token (solo filas «compartible»).
+ * Otras apps: motor_wods.json (carpeta de backups de Road To Elite) o API de solo lectura con su token (solo filas «compartible»).
  */
-HOJAS.MOTOR_LEEME = 'MOTOR · LÉEME';
 var BD_ = null;
 function bdWodsId_() { var id = ''; try { id = leerConfig_().bd_wods_id; } catch (e) {} return String(id || CONFIG.BD_WOD_ID).trim(); }
 function bdWods_() { if (!BD_) BD_ = SpreadsheetApp.openById(bdWodsId_()); return BD_; }
@@ -4837,41 +4837,45 @@ var VERSION_GUIA_ = '';
 function versionGuia_() { if (!VERSION_GUIA_) VERSION_GUIA_ = 'g-' + hashTxt_(guiaTexto_()).slice(0, 6); return VERSION_GUIA_; }
 function metaBd_(procedencia, permiso) { return { PROCEDENCIA: procedencia, PERMISO: permiso, 'VERSIÓN GUÍA': versionGuia_(), IDIOMA: 'es' }; }
 function esPestanaGabi_(n) { return n === 'INICIO' || /^Ciclo /.test(n) || n === 'Resultados archivados'; }
-/** WODs de las pestañas de competición que escribe la app de Gabi (solo lectura; nivel RX, o el primero si no hay RX). */
-function competicionesBd_(ya) {
+/**
+ * Lo que vuelca la app de Gabi en Base_de_datos_WOD (SOLO LECTURA; cabecera en la fila 3):
+ *  · «Ciclo dd/mm/aaaa»: todos los metcons de Fabrik con fase, semana, atletas, composición y material → historial completo.
+ *  · Una pestaña por competición: cada WOD en cada nivel → se toma RX (o el primero si no hay RX), «compartible».
+ * Los metcons que ya están (mismo texto, o misma fecha y mismos movimientos que la lectura directa de Fabrik) no se repiten.
+ */
+function leerVuelcoGabi_(ya, yaFecha) {
   var out = [];
   bdWods_().getSheets().forEach(function (sh) {
-    var n = sh.getName(); if (esPestanaGabi_(n) || /^MOTOR ·/.test(n) || sh.getLastRow() < 4) return;
+    var n = sh.getName(); if (n === 'INICIO' || n === 'Resultados archivados' || /^MOTOR ·/.test(n) || sh.getLastRow() < 4) return;
     var v = sh.getRange(3, 1, sh.getLastRow() - 2, Math.max(1, sh.getLastColumn())).getDisplayValues(), cab = v[0].map(function (h) { return String(h).trim(); });
-    var c = function (h) { return cab.indexOf(h); };
-    if (c('METCON') < 0 || c('NIVEL') < 0) return;
-    var porWod = {};
-    v.slice(1).forEach(function (r) { var k = r[c('WOD')] + '|' + r[c('NOMBRE')]; if (!r[c('METCON')]) return; if (!porWod[k] || /^RX$/i.test(r[c('NIVEL')])) porWod[k] = r; });
-    Object.keys(porWod).forEach(function (k) {
-      var r = porWod[k], txt = r[c('METCON')], h = hashTxt_(txt); if (ya[h]) return; ya[h] = 1;
-      out.push(Object.assign(analizarWod_(txt, {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Competición', FECHA: r[c('FECHA')] || '', NOMBRE: (n + ' · WOD ' + r[c('WOD')] + ' · ' + r[c('NOMBRE')] + ' (' + r[c('NIVEL')] + ')').slice(0, 160),
-        TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }, metaBd_('Competición pública (' + n + ')', 'compartible')));
+    var c = function (h) { return cab.indexOf(h); }, g = function (r, h) { return c(h) >= 0 ? String(r[c(h)] || '').trim() : ''; };
+    if (c('METCON') < 0) return;
+    var ciclo = /^Ciclo /.test(n), filas = v.slice(1).filter(function (r) { return g(r, 'METCON'); });
+    if (!ciclo) {
+      if (c('NIVEL') < 0) return;
+      var porWod = {}; filas.forEach(function (r) { var k = g(r, 'WOD') + '|' + g(r, 'NOMBRE'); if (!porWod[k] || /^RX$/i.test(g(r, 'NIVEL'))) porWod[k] = r; });
+      filas = Object.keys(porWod).map(function (k) { return porWod[k]; });
+    }
+    filas.forEach(function (r) {
+      var txt = g(r, 'METCON'), h = hashTxt_(txt); if (ya[h]) return;
+      var a = analizarWod_(txt, {}), kf = g(r, 'FECHA') + '|' + a.MOVIMIENTOS;
+      if (ciclo && yaFecha[kf]) return;
+      ya[h] = 1; yaFecha[kf] = 1;
+      var etiquetas = ['ATLETAS', 'COMPOSICIÓN', 'MATERIAL'].map(function (k) { return g(r, k) ? k.charAt(0) + k.slice(1).toLowerCase() + ': ' + g(r, k) : ''; }).filter(Boolean).join(' · ');
+      out.push(Object.assign(a, { ID: 'MW-' + h.slice(0, 8), FUENTE: ciclo ? 'Fabrik' : 'Competición', FECHA: g(r, 'FECHA'),
+        NOMBRE: (ciclo ? n + ' · ' + g(r, 'FASE') + ' · ' + g(r, 'SEMANA') + ' · ' + g(r, 'DÍA') + ' · ' + (g(r, 'TÍTULO') || 'METCON') : n + ' · WOD ' + g(r, 'WOD') + ' · ' + g(r, 'NOMBRE') + ' (' + g(r, 'NIVEL') + ')').replace(/( · )+/g, ' · ').slice(0, 160),
+        'OBJETIVO / ESTÍMULO': [a['OBJETIVO / ESTÍMULO'], etiquetas].filter(Boolean).join('\n'), TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() },
+        metaBd_(ciclo ? 'Fabrik vía app de Gabi (' + n + ')' : 'Competición pública vía app de Gabi (' + n + ')', ciclo ? 'personal' : 'compartible')));
     });
   });
   return out;
 }
-var LEEME_BD_ = [
-  ['🧠 MOTOR · base de datos de WODs analizados (Road To Elite)'],
-  [''],
-  ['• MOTOR · ANÁLISIS la escribe el servidor de Road To Elite. La app de Gabi no la toca (y Road To Elite no toca las pestañas de la app de Gabi: INICIO, «Ciclo …», competiciones, Resultados archivados).'],
-  ['• Cada fila = un WOD descompuesto: formato, minutos, ventanas, estructura, movimientos, patrones, pesos e INTERFERENCIAS (según MOTOR_GUIA.md), objetivo y limitantes.'],
-  ['• CIENCIA: Claude (semillas) y Gemini (cada madrugada). CONCEPTOS: Ollama, desde el agente del PC. ANALIZADO POR dice quién ha pasado por cada fila.'],
-  ['• Fuentes: Fabrik (a diario), WODs guardados en la app, las pestañas de competición de esta hoja (solo lectura) y lo que pegues aquí abajo (NOMBRE + TEXTO; el resto se rellena solo).'],
-  ['• PERMISO: «personal» = programación de Fabrik / tuya (no sale de tus apps sin permiso de Gabi) · «compartible» = competiciones públicas y benchmarks.'],
-  ['• Otras apps: motor_wods.json (en esta misma carpeta de Drive, se renueva cada día) o la API de solo lectura de Road To Elite con su token (menú del Sheet de Road To Elite). Solo devuelve filas «compartible».'],
-  ['• No cambies el nombre de las pestañas «MOTOR · …» ni de sus columnas. Puedes añadir filas, corregir celdas y cambiar PERMISO.']
-];
 function prepararBd_() {
   if (!leerConfig_().bd_wods_id) ponerConfig_('bd_wods_id', CONFIG.BD_WOD_ID, 'Base_de_datos_WOD (Drive): el motor escribe en sus pestañas «MOTOR · …»; la app de Gabi escribe las suyas');
   var ss = bdWods_(), r = [];
   prepararEsquema_(ss, ESQ_BD_);
-  var le = ss.getSheetByName(HOJAS.MOTOR_LEEME) || ss.insertSheet(HOJAS.MOTOR_LEEME);
-  le.clear(); le.getRange(1, 1, LEEME_BD_.length, 1).setValues(LEEME_BD_); le.getRange(1, 1).setFontWeight('bold').setFontSize(14); le.setColumnWidth(1, 1000); le.setTabColor('#8b5cf6');
+  var mo = ss.getSheetByName(HOJAS.MOTOR); if (mo && !mo.isSheetHidden()) mo.hideSheet();   // invisible para la app de Gabi y para quien abra la hoja
+  var le = ss.getSheetByName('MOTOR · LÉEME'); if (le) ss.deleteSheet(le);
   // migración desde la pestaña oculta de la v0.15 (APP · MOTOR WODS del Sheet de Road To Elite)
   var vieja = miLibro_().getSheetByName('APP · MOTOR WODS');
   if (vieja) {
@@ -4899,9 +4903,9 @@ function datosBdJson_() {
   return { esquema: 'road-to-elite/motor-wods', version: 1, generado: new Date().toISOString(), servidor: CONFIG.VERSION, guia: versionGuia_(), columnas: cab,
     wods: listar_(HOJAS.MOTOR).map(function (r) { var o = {}; cab.forEach(function (h) { if (r[h] !== '' && r[h] != null) o[h] = r[h]; }); return o; }) };
 }
-/** motor_wods.json junto a Base_de_datos_WOD (se sobrescribe). Para cualquier otra app que tenga tu Drive. */
+/** motor_wods.json en la carpeta de backups de Road To Elite (se sobrescribe). Para cualquier otra app que tenga tu Drive. */
 function exportarBdJson_() {
-  var d = datosBdJson_(), txt = JSON.stringify(d, null, 1), carpeta = DriveApp.getFileById(bdWodsId_()).getParents().next(), it = carpeta.getFilesByName('motor_wods.json');
+  var d = datosBdJson_(), txt = JSON.stringify(d, null, 1), carpeta = DriveApp.getFolderById(CONFIG.BACKUPS_ID), it = carpeta.getFilesByName('motor_wods.json');
   if (it.hasNext()) it.next().setContent(txt); else carpeta.createFile('motor_wods.json', txt, 'application/json');
   return { wods: d.wods.length };
 }
