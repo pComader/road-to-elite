@@ -399,12 +399,29 @@
   }
 
   // ---------- Pendientes (APP · PENDIENTES) ----------
+  function abrirEditarPendiente(id) {
+    var p = (S.data.pendientes || []).filter(function (x) { return x.ID === id; })[0]; if (!p) return;
+    abrirHoja('<div class="row"><h2>Editar pendiente</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><form id="pef" class="avf">' +
+      '<label for="pe-t">Título</label><input id="pe-t" maxlength="200" value="' + esc(p.BLOQUE || '') + '">' +
+      '<label for="pe-c">Contenido (lo que se recolocará)</label><textarea id="pe-c" rows="8">' + esc(p._CONTENIDO || '') + '</textarea>' +
+      '<div class="two"><div><label for="pe-m">Minutos</label><input id="pe-m" inputmode="numeric" value="' + esc(p._MIN || '') + '"></div><div><label for="pe-n">Notas</label><input id="pe-n" maxlength="300" value="' + esc(p.NOTAS || '') + '"></div></div>' +
+      '<div class="hint">Del ' + esc(p['FECHA ORIGINAL'] || '') + '. Al cargar los extras de la semana siguiente se propone con estos datos.</div>' +
+      '<button class="btn btn-primary" type="submit" id="pe-ok">Guardar</button></form>');
+    document.getElementById('pef').onsubmit = function (ev) {
+      ev.preventDefault(); var b = document.getElementById('pe-ok'); b.disabled = true;
+      api({ action: 'pendiente_editar', id: id, bloque: val('pe-t'), contenido: val('pe-c'), min: val('pe-m'), notas: val('pe-n') }).then(ok)
+        .then(function (r) { S.data.pendientes = r.pendientes; cerrarHoja(); S._abrir = 's-pend'; render(); toast('Pendiente actualizado'); }).catch(falloApi(b));
+    };
+  }
   function htmlPendientes(lista) {
     if (!lista.length) return '<div class="hint">No hay nada pendiente.</div>';
     return '<div class="hint">Se te propondrán al programar la semana siguiente; nada entra sin tu aprobación.</div><div class="pr-list">' + lista.map(function (p) {
       return '<div class="pend-i"><div class="pend-t"><b>' + esc(p.BLOQUE) + '</b><span class="tag">' + esc(p.TIPO) + '</span><span class="tag' + (p.ESTADO === 'Propuesto' ? ' ex' : '') + '">' + esc(p.ESTADO) + '</span></div>' +
         '<div class="hint">' + esc(p['FECHA ORIGINAL']) + (p.MOTIVO ? ' · ' + esc(p.MOTIVO) : '') + '</div>' +
-        '<div class="evc-acc"><button class="btn-ghost sm" type="button" data-pend="' + esc(p.ID) + '" data-est="Descartado">Descartar</button></div></div>';
+        ((p._CONTENIDO || p.NOTAS) ? '<details class="ro-ver"><summary>Ver bloque</summary><div class="exp-body">' + (p._MIN ? '<div class="hint">' + esc(p._MIN) + '′' + (p._INTENSIDAD ? ' · ' + esc(p._INTENSIDAD) : '') + '</div>' : '') +
+          '<div class="prose-n pre">' + esc(p._CONTENIDO || '') + '</div>' + (p.NOTAS ? '<div class="hint">' + esc(p.NOTAS) + '</div>' : '') + '</div></details>' : '') +
+        (p._Z2 ? '<div class="hint">Z2: la semana siguiente se suma el 25 % de sus minutos a tu Z2 más larga.</div>' : '') +
+        '<div class="evc-acc"><button class="btn sm" type="button" data-pend-ed="' + esc(p.ID) + '">Editar</button><button class="btn-ghost sm" type="button" data-pend="' + esc(p.ID) + '" data-est="Descartado">Descartar</button></div></div>';
     }).join('') + '</div>';
   }
 
@@ -665,10 +682,10 @@
 
 
   // ---------- v0.14 · REESTRUCTURAR (viaje · reorganización · competi) ----------
-  var MAT_VIAJE = [['box', 'Tengo un box'], ['hspu', 'Pared HSPU'], ['pino', 'Pino / HSW'], ['rack_completo', 'Rack completo (anillas)'], ['rack_dominadas', 'Dominadas + T2B'], ['rack_estricto', 'Solo estrictos'],
+  var MAT_VIAJE = [['box', 'Tengo un box'], ['hspu', 'Pared HSPU'], ['pino', 'Pino / HSW'], ['rack_dominadas', 'Rack (C2B, pull-ups, T2B)'], ['anillas', 'Anillas'], ['bmu', 'Barra para BMU'], ['rack_estricto', 'Solo estrictos'],
     ['chaleco', 'Chaleco'], ['comba', 'Comba'], ['kb', 'Kettlebells'], ['barra', 'Barra y discos'], ['db', 'Mancuernas'], ['sandbag_hyrox', 'Sandbag HYROX'], ['sandbag', 'Sandbag'], ['cajon', 'Cajón'],
     ['slamball', 'Slamball'], ['cuerda', 'Cuerda'], ['fondos', 'Fondos']];
-  var MAT_MEGA = [['barra', 'Barras'], ['db', 'Mancuernas'], ['kb', 'Kettlebells'], ['comba', 'Comba'], ['sandbag', 'Sandbag'], ['sandbag_hyrox', 'Sandbag HYROX'], ['rack_completo', 'Anillas / rack'], ['rack_dominadas', 'Barra dominadas'],
+  var MAT_MEGA = [['barra', 'Barras'], ['db', 'Mancuernas'], ['kb', 'Kettlebells'], ['comba', 'Comba'], ['sandbag', 'Sandbag'], ['sandbag_hyrox', 'Sandbag HYROX'], ['rack_dominadas', 'Rack (C2B, pull-ups, T2B)'], ['anillas', 'Anillas'], ['bmu', 'Barra para BMU'],
     ['slamball', 'Slamball'], ['gusano2', 'Gusano de 2'], ['gusano3', 'Gusano de 3'], ['gusano4', 'Gusano de 4'], ['ergos', 'Assault / ski / remo'], ['yugo', 'Yugo'], ['trineo', 'Trineo'], ['cuerda', 'Cuerda'],
     ['lodge_lanzar', 'Lodge para lanzar sandbag'], ['lodge_saltar', 'Lodge para saltar'], ['cajon', 'Cajón'], ['hspu', 'Pared HSPU'], ['_correr', 'Se puede correr']];
   function chipsMat(id, lista, sel) { sel = sel || []; return '<div class="zonas" id="' + id + '">' + lista.map(function (m) { var on = sel.indexOf(m[0]) >= 0; return '<button type="button" class="zona' + (on ? ' on' : '') + '" data-mk="' + m[0] + '" aria-pressed="' + on + '">' + esc(m[1]) + '</button>'; }).join('') + '</div>'; }
@@ -680,6 +697,11 @@
   function enlazarSeg(id, fn) { var g = document.getElementById(id); if (!g) return; g.querySelectorAll('[data-sv]').forEach(function (b) { b.onclick = function () { g.querySelectorAll('[data-sv]').forEach(function (y) { y.setAttribute('aria-pressed', y === b); }); if (fn) fn(b.dataset.sv); }; }); }
   function valSeg(id) { var b = document.querySelector('#' + id + ' [aria-pressed="true"]'); return b ? b.dataset.sv : ''; }
 
+  function verBloqueDet(id) {
+    var x = bloqueParaVer(id); if (!x || !(x.cont || x.porque)) return '';
+    return '<details class="ro-ver"><summary>Ver bloque</summary><div class="exp-body">' + (x.meta ? '<div class="hint">' + esc(x.meta) + '</div>' : '') +
+      '<div class="prose-n pre">' + esc(x.cont || '') + '</div>' + (x.porque ? '<div class="hint"><i>' + esc(x.porque) + '</i></div>' : '') + '</div></details>';
+  }
   function renderReest() {
     var d = S.data, R = S.reest = S.reest || {};
     var html = cabeceraVista('Reestructurar', 'Menú');
@@ -723,7 +745,7 @@
           return '<label class="sh-b"><input type="checkbox" data-hk="' + x.iso + '|' + t + '"><span>' + t + '</span></label><input class="rv-min" inputmode="numeric" placeholder="min" data-hm="' + x.iso + '|' + t + '" value="' + (t === 'AM' ? 60 : 90) + '">'; }).join('') + '</div>'; }).join('') + '</div>' +
         '<label>Marca lo que NO has hecho (lo no marcado se da por hecho)</label><div class="ro-bl">' + bls.map(function (o) { var id = o.b.idPlan || o.b.id, h = hecho(o.b);
           var otros = bls.filter(function (q) { return (q.b.idPlan || q.b.id) !== id && !hecho(q.b); });
-          return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span data-ver-blq="' + esc(id) + '">' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' +
+          return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span data-ver-blq="' + esc(id) + '">' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' + verBloqueDet(id) +
             (corre(o.b) ? '<select data-car="' + esc(id) + '" hidden><option value="aparte">Si no la hice: aparte (≥6 h de la fuerza)</option><option value="metcon">Dentro del metcon (carrera o erg)</option><option value="no">Dejarla (Z2: +25 % la semana que viene)</option></select>' :
               '<div class="ro-dest" data-dest-box="' + esc(id) + '" hidden><span class="hint">¿Qué hago con él?</span><select data-dest="' + esc(id) + '">' +
               '<option value="auto">Intentar meterlo en los huecos que marque</option><option value="pendiente">Dejarlo pendiente para la semana que viene</option>' +
@@ -826,7 +848,7 @@
       var cont = c.contenido || (c.nuevo && c.nuevo.CONTENIDO) || '';
       return '<div class="xb rp-' + c.accion + '"><div class="xb-h"><span class="tag">' + (ACC_REEST[c.accion] || c.accion) + '</span><b class="xb-t"' + (c.id ? ' data-ver-blq="' + esc(c.id) + '"' : '') + '>' + esc(c.titulo || '') + '</b></div>' +
         '<div class="xb-p">' + (desde ? '<span>' + esc(desde) + '</span>' : '') + (a ? '<span>→ <b>' + esc(a) + '</b></span>' : '') + '</div><div class="hint">' + esc(c.motivo || '') + '</div>' +
-        (cont ? '<details class="alt"><summary>Ver contenido</summary><div class="exp-body"><div class="prose-n pre">' + esc(cont) + '</div></div></details>' : '') +
+        (cont ? '<details class="alt"><summary>Ver contenido</summary><div class="exp-body"><div class="prose-n pre">' + esc(cont) + '</div></div></details>' : (c.id ? verBloqueDet(c.id) : '')) +
         (c.accion !== 'nuevo-pendiente' ? '<select class="rp-sel" data-k="' + c.k + '">' + opts + '</select>' : '') + '</div>';
     }).join('');
     html += '<button class="btn btn-primary" type="button" id="rp-ok">Aplicar la semana adaptada</button><button class="btn" type="button" id="rp-back">Cambiar respuestas</button><button class="btn-ghost" type="button" id="rp-no">Descartar</button>' +

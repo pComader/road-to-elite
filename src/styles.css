@@ -1044,3 +1044,4 @@ details.alt .exp-body{padding:0 10px 10px}
 .blq-card h3{margin:0;font-size:1.05rem}
 .ro-dest{display:flex;flex-direction:column;gap:6px;margin:6px 0 4px 28px}
 .blq-card .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.ro-ver{margin:2px 0 6px 28px}.ro-ver summary{font-size:.85rem;opacity:.8;cursor:pointer}.pend-i .ro-ver{margin-left:0}

@@ -1504,7 +1504,8 @@
 
   function detectarTimer(texto, etiqueta) {
     var cab = String(etiqueta || '').toUpperCase().replace(/^[A-Z](\.\d)?\s*·\s*/, '').trim();
-    var lineas = ((cab && /\d\s*('|")|SETS?|NO TIME/.test(cab) ? cab + '\n' : '') + String(texto || '').toUpperCase()).split('\n').map(function (l) { return l.replace(/\s+/g, ' ').trim(); });
+    cab = cab.replace(/[′’‘´`]/g, "'").replace(/[″“”]/g, '"');
+    var lineas = ((cab && /\d\s*('|")|SETS?|NO TIME/.test(cab) ? cab + '\n' : '') + String(texto || '').toUpperCase().replace(/[′’‘´`]/g, "'").replace(/[″“”]/g, '"')).split('\n').map(function (l) { return l.replace(/\s+/g, ' ').trim(); });
     var g = [], total = null, notas = [], hayCuenta = false, forTime = false, restNeeded = false, repetir = 1, saltar = false;
     var setsCtx = null; // { series, pasos:[], tap:[] } mientras se leen ejercicios bajo «N SETS»
     var capRonda = null;
@@ -1762,7 +1763,7 @@
   var abrirAjustes = perezoso('menu', 'abrirAjustes'), renderAjustes = perezoso('menu', 'renderAjustes'), renderCobertura = perezoso('menu', 'renderCobertura'),
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
-    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
+    abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
     renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
@@ -1878,6 +1879,7 @@
     }
     if ((b = t.closest('[data-aprobar-plan]'))) { aprobarPlan(); return; }
     if (t.closest('[data-ver-pend]')) { abrirAjustes('s-pend'); return; }
+    if ((b = t.closest('[data-pend-ed]'))) { abrirEditarPendiente(b.dataset.pendEd); return; }
     if ((b = t.closest('[data-pend]'))) {
       if (!confirmar(b, '¿Seguro?')) return;
       b.disabled = true;
@@ -1922,7 +1924,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.13';
+  var WEB_VERSION = 'web 0.14';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
