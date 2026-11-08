@@ -2,7 +2,7 @@
 # Lo lanza cada hora la tarea programada «RoadToElite\Agente» (instalar.bat). No instala nada: PowerShell de Windows + Ollama si está abierto.
 #  1. Si en Drive hay un backup de los jueves más nuevo que el del PC, lo copia (zip + .md) a la carpeta de destino y se lo dice al servidor.
 #  2. Si queda un aviso de backup (Drive o PC sin hacer), muestra una ventana (como mucho cada «aviso_cada_horas»).
-#  3. Si Ollama está abierto, añade CONCEPTOS a unos pocos WODs de MOTOR · ANÁLISIS (Base_de_datos_WOD) (max_wods por hora; 0 = desactivado).
+#  3. Si Ollama está abierto, añade CONCEPTOS a unos pocos WODs de MOTOR · ANÁLISIS («Road to Elite · Motor WODs») (max_wods por hora; 0 = desactivado).
 # El token vive en %APPDATA%\RoadToElite\config.json (fuera de las carpetas que ve Claude). El registro (sin secretos) va a agente.log.
 param([switch]$Visible)
 $ErrorActionPreference = 'Stop'
@@ -78,7 +78,7 @@ try {
   } elseif (-not $alerta -and $estado['aviso_txt']) { $estado.Remove('aviso_txt'); [IO.File]::WriteAllText($estPath, ($estado | ConvertTo-Json), $utf8) }
 } catch { Log ('Aviso: ' + $_.Exception.Message) }
 
-# ---------- 3 · Ollama: conceptos para MOTOR · ANÁLISIS (Base_de_datos_WOD) ----------
+# ---------- 3 · Ollama: conceptos para MOTOR · ANÁLISIS («Road to Elite · Motor WODs») ----------
 try {
   $max = if ($null -ne $cfg.max_wods) { [int]$cfg.max_wods } else { 3 }
   if ($max -gt 0) {

@@ -11,7 +11,7 @@ Una tarea programada de Windows (`RoadToElite\Agente`) que se lanza cada hora co
    - aparece una ventana en el PC, como mucho cada 4 h.
 
    El aviso desaparece solo en cuanto el backup está hecho. Si el PC estaba apagado, la copia se hace en la primera hora que esté encendido.
-3. **Ollama:** si está abierto, cada hora pasa 3 WODs de `MOTOR · ANÁLISIS (Base_de_datos_WOD)` a tu modelo local para añadir CONCEPTOS. Esos conceptos los usa el motor para relacionar estímulos.
+3. **Ollama:** si está abierto, cada hora pasa 3 WODs de `MOTOR · ANÁLISIS («Road to Elite · Motor WODs»)` a tu modelo local para añadir CONCEPTOS. Esos conceptos los usa el motor para relacionar estímulos.
 
 ## Instalar
 
