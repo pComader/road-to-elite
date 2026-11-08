@@ -769,7 +769,7 @@
     var adapt = b.partes.filter(function (p) { return p.tipo === 'adapt'; });
     var notas = '';
     if (b.wod) {
-      var campos = [['material', 'Material'], ['carga', 'Carga'], ['intensidad', 'Intensidad'], ['formato', 'Formato'], ['modalidad', 'Modalidad'], ['notas', 'Estrategia'], ['objetivo', 'Objetivo']];
+      var campos = [['material', 'Material'], ['carga', 'Carga'], ['intensidad', 'Intensidad'], ['formato', 'Formato'], ['modalidad', 'Modalidad'], ['notas', 'Estrategia'], ['objetivo', 'Objetivo'], ['limitantes', 'Limitantes']];
       notas += '<dl class="meta">' + campos.filter(function (c) { return b.wod[c[0]]; }).map(function (c) {
         return '<dt class="coach-t">' + c[1] + '</dt><dd class="prose">' + prosa(b.wod[c[0]]) + '</dd>';
       }).join('') + '</dl>';
@@ -1041,6 +1041,8 @@
     (d.cambios || []).filter(function (c) { return c.ESTADO === 'Solicitada'; }).forEach(function (c) {
       h += '<div class="unpub">Reestructuración solicitada: ' + esc(c.EVENTO) + ' · pídeme «reestructura» en el chat</div>';
     });
+    var bkA = S.config && S.config.backup_alerta;
+    if (bkA) h += '<div class="draft-banner bk-alerta"><span>💾 ' + esc(bkA) + '</span><button class="btn btn-primary sm" type="button" data-backup-ahora>Backup en Drive ahora</button></div>';
     (d.porAprobar || []).forEach(function (e) {
       h += '<div class="draft-banner"><span>📅 Nuevo en tu Google Calendar: <b>' + esc(e.EVENTO) + '</b> · ' + esc(e.INICIO) + (e.HORA ? ' ' + esc(e.HORA) : '') + '. ¿Lo añado a la app?</span>' +
         '<button class="btn sm" type="button" data-ev-apr="0" data-id="' + esc(e.ID) + '">Ignorar</button><button class="btn btn-primary sm" type="button" data-ev-apr="1" data-id="' + esc(e.ID) + '">Añadir</button></div>';
@@ -1799,6 +1801,11 @@
       api({ action: 'cargar_fabrik', lunes: b.dataset.cargarFabrik || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.carga.ok ? r.carga.cargados + ' bloques de Fabrik en tu plan' : r.carga.motivo); }).catch(falloApi(b));
       return;
     }
+    if ((b = t.closest('[data-backup-ahora]'))) {
+      b.disabled = true; b.textContent = 'Haciendo backup…';
+      api({ action: 'backup_ahora' }).then(ok).then(function (r) { S.config = r.config; render(); toast('Backup en Drive hecho (' + r.backup.kb + ' KB). El PC lo copiará a E: en la hora siguiente.'); }).catch(falloApi(b));
+      return;
+    }
     if ((b = t.closest('[data-cargar-extras]'))) { abrirPreviaExtras(b.dataset.cargarExtras || S.data.semana, b); return; }
     if ((b = t.closest('[data-sin-hueco]'))) {
       var rsh = (S.data.sinHueco || []).filter(function (r) { return r.ID === b.dataset.sinHueco; })[0];
@@ -1887,7 +1894,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.11';
+  var WEB_VERSION = 'web 0.12';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

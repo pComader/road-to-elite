@@ -937,3 +937,6 @@ details.alt .exp-body{padding:0 10px 10px}
 .xb.reest{border-left-color:var(--reest)}
 .rp-sel{margin-top:6px;width:100%}
 .reest-mat{border-color:var(--reest)!important;color:var(--fg)}
+.motor-box{border:1px dashed var(--line,#3a3a3a);border-radius:12px;padding:10px 12px;margin:6px 0 10px;background:color-mix(in srgb,var(--reest,#8b5cf6) 7%,transparent)}
+.motor-box label{margin-top:0}
+.bk-alerta{border-color:#d97706}

@@ -730,6 +730,7 @@
         '<div class="hint" id="ro-th">A: calentamiento activo (ya atacando pendientes) → skills → fuerza → metcon. B: un mega WOD de 30–75′ con todo lo pendiente.</div>' +
         '<div id="ro-b"' + (R.tipo === 'B' ? '' : ' hidden') + '><label>Formato</label>' + segHtml('ro-f', [['solo', 'Solo'], ['pareja', 'Pareja'], ['equipo3', 'Equipo 3'], ['equipo4', 'Equipo 4']], 'solo') +
         '<div class="two"><div><label for="ro-min">Minutos</label><input id="ro-min" inputmode="numeric" value="45"></div><div><label for="ro-ch">Atletas con chaleco</label><input id="ro-ch" inputmode="numeric" value="0"></div></div>' +
+        '<label for="ro-de">⚙ Estímulos que quiero</label><input id="ro-de" maxlength="300" placeholder="ej. stoh, snatch, oh · intercalar carrera, calorías de assault">' +
         '<label>Material disponible</label>' + chipsMat('ro-mat', MAT_MEGA, ['barra', 'db', 'comba', 'ergos', 'rack_dominadas', 'cajon']) +
         '<div class="two"><div><label for="ro-bx">Barra máx. (kg)</label><input id="ro-bx" inputmode="decimal" value="60"></div><div><label for="ro-dx">Mancuerna máx. (kg)</label><input id="ro-dx" inputmode="decimal" value="22.5"></div></div>' +
         '<label class="sh-b"><input type="checkbox" id="ro-chica"><span>Hay chica en la pareja / equipo</span></label><div class="three" id="ro-chw" hidden><input id="ro-cb" inputmode="decimal" placeholder="Barra ♀ kg"><input id="ro-cd" inputmode="decimal" placeholder="DB ♀ kg"><input id="ro-cs" inputmode="decimal" placeholder="Sandbag ♀ kg"></div>' +
@@ -783,7 +784,7 @@
         $app.querySelectorAll('[data-car]').forEach(function (s) { p.carrera[s.dataset.car] = s.value; });
         if (!p.noHechos.length && !p.nuevos.length) { toast('Marca algún bloque no hecho o añade uno'); return; }
         if (p.tipo === 'B') p.mega = { formato: valSeg('ro-f') || 'solo', minutos: +val('ro-min') || 45, chaleco: +val('ro-ch') || 0, material: leerChips('ro-mat'), barraMax: +String(val('ro-bx')).replace(',', '.') || 60, dbMax: +String(val('ro-dx')).replace(',', '.') || 22.5,
-          chica: document.getElementById('ro-chica').checked ? { barra: val('ro-cb'), db: val('ro-cd'), sandbag: val('ro-cs') } : null, cashout: document.getElementById('ro-cash').checked };
+          chica: document.getElementById('ro-chica').checked ? { barra: val('ro-cb'), db: val('ro-cd'), sandbag: val('ro-cs') } : null, cashout: document.getElementById('ro-cash').checked, deseo: val('ro-de') };
         enviar(p);
       };
     } else {
@@ -881,6 +882,8 @@
         '<form id="nbf" class="avf">' + (pls && pls.length ? '<label for="nb-pl">Desde plantilla</label><select id="nb-pl"><option value="">— En blanco —</option>' +
           pls.map(function (p, i) { return '<option value="' + i + '">' + esc(p.NOMBRE) + '</option>'; }).join('') + '</select>' : '<div class="hint">Aún no tienes plantillas: guarda cualquier bloque EXTRA con «☆ Guardar como plantilla».</div>') +
         '<div class="two"><div><label for="nb-tu">Turno</label>' + sel('nb-tu', 'PM', ['AM', 'PM']) + '</div><div><label for="nb-or">Tipo</label>' + sel('nb-or', 'EXTRA', ['EXTRA', 'CARRERA', 'Z6–Z8', 'TÉCNICA', 'MOVILIDAD']) + '</div></div>' +
+        '<div class="motor-box"><label for="nb-de">⚙ Estímulos que quiero (el motor diseña el metcon)</label><textarea id="nb-de" rows="2" maxlength="300" placeholder="ej. stoh, snatch, oh · o · intercalar carrera, calorías de assault · amrap 16"></textarea>' +
+        '<div class="two"><input id="nb-dm" inputmode="numeric" placeholder="Minutos (opcional)"><button class="btn sm" type="button" id="nb-gen">Generar con el motor</button></div><div id="nb-dr" class="hint"></div></div>' +
         '<label for="nb-ti">Título</label><input id="nb-ti" required maxlength="120">' +
         '<label for="nb-co">Contenido (como en la pizarra)</label><textarea id="nb-co" rows="4"></textarea>' +
         '<div class="three"><div><label for="nb-mi">Min</label><input id="nb-mi" inputmode="numeric"></div><div><label for="nb-ca">Cantidad</label><input id="nb-ca" inputmode="numeric" placeholder="saltos…"></div>' +
@@ -889,6 +892,19 @@
         '<label for="nb-pq">Por qué va aquí</label><textarea id="nb-pq" rows="2"></textarea>' +
         '<div class="hint">Entra en BORRADOR: cuenta en la cobertura como borrador hasta que apruebes el plan.</div>' +
         '<button class="btn btn-primary" type="submit" id="nb-ok">Añadir</button></form>');
+      document.getElementById('nb-gen').onclick = function () {
+        var de = val('nb-de'), g = this; if (!de) { toast('Escribe los estímulos que quieres'); return; }
+        g.disabled = true; g.textContent = 'Diseñando…';
+        api({ action: 'metcon_generar', deseo: de, min: +val('nb-dm') || 0, lunes: S.data.semana }).then(ok).then(function (r) {
+          g.disabled = false; g.textContent = 'Generar otra vez';
+          var b = r.metcon.bloque, put = function (id, v) { var el = document.getElementById(id); if (el && v != null) el.value = v; };
+          put('nb-ti', b['TÍTULO']); put('nb-co', b.CONTENIDO); put('nb-mi', b.MIN); put('nb-cd', b['CÓDIGOS']); put('nb-in', b.INTENSIDAD); put('nb-pq', b['POR QUÉ (cursiva)']); put('nb-or', 'EXTRA');
+          S._plElegida = { 'CIENCIA (técnica · fisiología · biología)': b['CIENCIA (técnica · fisiología · biología)'], INTERFERENCIAS: b.INTERFERENCIAS };
+          var en = r.metcon.entendido, lst = [].concat(en.movimientos, en.ergs).filter(Boolean);
+          document.getElementById('nb-dr').innerHTML = 'Entendido: ' + esc(lst.join(', ') || '—') + (en.intercalar ? ' · intercalar ' + esc(en.intercalar) : '') + (r.metcon.referencia ? ' · estructura de <b>' + esc(r.metcon.referencia) + '</b>' : '') +
+            (r.metcon.avisos.length ? '<br>' + r.metcon.avisos.map(esc).join('<br>') : '') + '<br>Revísalo y edítalo abajo antes de añadirlo.';
+        }).catch(falloApi(g));
+      };
       var pl = document.getElementById('nb-pl');
       if (pl) pl.onchange = function () {
         var p = pls[+pl.value]; if (!p) return;
@@ -1237,11 +1253,13 @@
         '<div class="part-lbl">Refuerzos pedidos</div>' + li(P.refuerzos) + '<div class="part-lbl">Pendientes que entran</div>' + li(P.pendientes) +
         (P.sinHueco.length ? '<div class="pos-act warn"><b>No caben</b><span>' + esc(P.sinHueco.join(', ')) + '</span><span>Quedarán avisados para que elijas día y turno o los pases a pendientes.</span></div>' : '') +
         '<details><summary>Ver todos los bloques</summary><div class="exp-body">' + P.bloques.map(function (x) { return '<div class="pr-row"><b>' + esc(x.titulo) + '</b><span class="hint">' + esc(x.dia + ' ' + x.turno + ' · ' + (x.min || '') + '′ · ' + (PR[x.prio] || x.prio)) + '</span></div>'; }).join('') + '</div></details>' +
+        '<label for="pv-de">⚙ Estímulos que quiero esta semana (opcional)</label><textarea id="pv-de" rows="2" maxlength="300" placeholder="ej. intercalar carrera, calorías de assault, thrusters · el motor añade un metcon a medida en el mejor hueco"></textarea>' +
         '<div class="hint">Lo que tenga 🔒 candado (movido o editado a mano) y lo ya aprobado no se toca. Todo entra en borrador.</div>' +
         '<button class="btn btn-primary" type="button" id="pv-ok">Generar</button>');
       document.getElementById('pv-ok').onclick = function () {
         var b = this; b.disabled = true; b.textContent = 'Programando…';
-        api({ action: 'generar_extras', lunes: lunes, ver: S.data.semana }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); S.vista = 'hoja'; render(); toast(r2.extras.resumen); }).catch(falloApi(b));
+        api({ action: 'generar_extras', lunes: lunes, ver: S.data.semana, deseo: val('pv-de') }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); S.vista = 'hoja'; render();
+          var md = r2.extras.medida; toast(r2.extras.resumen + (md && !md.ok ? ' · metcon a medida: ' + (md.avisos || []).join(' ') : '')); }).catch(falloApi(b));
       };
     }).catch(function (er) { if (btn) btn.disabled = false; cerrarHoja(); toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
   }

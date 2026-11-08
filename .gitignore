@@ -22,3 +22,4 @@ desktop.ini
 # Backups locales
 Backup/
 docs/
+pc-agent/agente.log*

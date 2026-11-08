@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.14.1',
+  VERSION: '0.15.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -48,6 +48,7 @@ function doGet() {
 function doPost(e) {
   try {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    if (body.agente) return json_(accionAgente_(body));   // v0.15: agente del PC (token propio, solo sus 5 acciones)
     var user = verificarUsuario_(body.idToken);
     if (!user.ok) return json_(user);
     var a = body.action, t0 = Date.now();
@@ -121,12 +122,15 @@ function accion_(a, body, user) {
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
-      case 'generar_extras': var rg = generarExtras_(body.lunes); refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'generar_extras': var rg = generarExtras_(body.lunes); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'hoja_semana': return json_({ ok: true, filas: pintarHojaSemana_(body.lunes) });
       case 'enviar_resumen': return json_({ ok: true, enviado: enviarResumenSemana_(body.lunes) });
+      case 'metcon_generar': return json_({ ok: true, metcon: metconGuiado_(body.deseo, { min: body.min, material: body.material, lunes: body.lunes, formato: body.formato }) });
+      case 'motor_wods': return json_({ ok: true, wods: listar_(HOJAS.MOTOR).slice(-80).map(function (r) { return { id: r.ID, fuente: r.FUENTE, nombre: r.NOMBRE, formato: r.FORMATO, min: r.MIN, movimientos: r.MOVIMIENTOS, interferencias: r.INTERFERENCIAS, ciencia: r.CIENCIA, conceptos: r['CONCEPTOS (Ollama)'], por: r['ANALIZADO POR'] }; }) });
+      case 'backup_ahora': var bk = backupJueves(); return json_({ ok: true, backup: bk, config: leerConfig_() });
       case 'reest_proponer': return json_({ ok: true, propuesta: conMemo_(function () { return reestProponer_(body.modo, body.lunes, body.params || {}); }) });
       case 'reest_aplicar': var ra = reestAplicar_(body.id, body.ajustes); refrescarResumen_(); return json_({ ok: true, aplicado: ra, semana: semanaCompleta_(body.lunes) });
       case 'reest_deshacer': reestDeshacer_(body.id); refrescarResumen_(); return json_({ ok: true, semana: semanaCompleta_(body.lunes) });
@@ -929,6 +933,7 @@ function enviarPush_(titulo, texto, enlace) {
 }
 /** Cada hora: avisa (una sola vez por cosa) de lo que necesita tu decisión. */
 function revisarAvisos() {
+  var bkAlerta = ''; try { revisarBackup_(); bkAlerta = leerConfig_().backup_alerta || ''; } catch (e) { Logger.log('Backup: ' + e); }
   if (!pushActivo_()) return;
   var hecho = {}; try { hecho = JSON.parse(PROPS.getProperty('AVISOS_HECHOS') || '{}'); } catch (e) {}
   var avisar = function (clave, titulo, texto) { if (hecho[clave]) return; if (enviarPush_(titulo, texto)) hecho[clave] = hoyIso_(); };
@@ -950,6 +955,7 @@ function revisarAvisos() {
       if (cf.length) avisar('fabrik_' + l + '_' + cf.map(function (c) { return c.dia; }).join('-'), 'Fabrik ha cambiado',
         'Cambios en ' + cf.map(function (c) { return c.dia.toLowerCase(); }).join(', ') + ' desde que aprobaste la semana. Revisa interferencias con tus extras.');
     });
+    if (bkAlerta) avisar('backup_' + hoy, 'Backup sin hacer', bkAlerta);
     var chequeoHoy = listar_(HOJAS.CHEQUEO).some(function (r) { return celdaIso_(r.FECHA) === hoy; });
     if (hora >= 16 && hora < 20 && !chequeoHoy && filasActivasDia_(hoy).length) avisar('chequeo_' + hoy, '¿Cómo llegas hoy?', '15 segundos: cansancio, agujetas y zonas cargadas antes de entrenar.');
   });
@@ -1361,8 +1367,13 @@ function configurarSin_() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['cargarFabrikDomingo', 'sincronizarCalendario'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('cargarFabrikDomingo').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(23).nearMinute(15).inTimezone(CONFIG.ZONA).create();
   ScriptApp.newTrigger('sincronizarCalendario').timeBased().everyHours(1).create();
+  // v0.15: motor diario (Fabrik → APP · MOTOR WODS, Gemini) y backup completo de los jueves
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create();
+  ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create();
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
+  try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
   logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
   logc_('OK · Metas nuevas de competición (Z6–Z8 integrado, DU, front squat, burpees, hang snatch/clean): ' + sembrarMetasV12_());
@@ -1698,7 +1709,7 @@ function puntuar(titulo, bloque) {
 }
 
 var CAMPOS_METCON = [['WOD MATERIAL', 'material'], ['INTENSIDAD', 'intensidad'], ['CARGA', 'carga'], ['NOTAS', 'notas'],
-  ['OBJETIVO', 'objetivo'], ['MODALIDAD WOD', 'formato'], ['MODALIDAD', 'modalidad']];
+  ['OBJETIVO', 'objetivo'], ['MODALIDAD WOD', 'formato'], ['MODALIDAD', 'modalidad'], ['LIMITANTE', 'limitantes']];
 
 function asignarNotas(dia, celda) {
   var lineas = String(celda || '').replace(/\r/g, '').split('\n');
@@ -2847,7 +2858,9 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('Road To Elite')
     .addItem('Cargar Fabrik · semana siguiente', 'menuCargarFabrikSiguiente').addItem('Cargar Fabrik · esta semana', 'menuCargarFabrikActual')
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
-    .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addToUi();
+    .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
+    .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
+    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Agente del PC · ver token', 'menuTokenAgente').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
 function menuCargarFabrikActual() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(lunesDe_(hoyIso_())))); }
@@ -3909,12 +3922,17 @@ function megaWod_(pend, o, w, cubiertas, minutos) {
   var n = { solo: 1, pareja: 2, equipo3: 3, equipo4: 4 }[o.formato || 'solo'] || 1, fm = FORMATOS_EQUIPO_[o.formato || 'solo'] || FORMATOS_EQUIPO_.solo;
   var txt = pend.map(function (r) { return norm((r['TÍTULO'] || '') + '\n' + (r.CONTENIDO || '')); }).join('\n');
   var tiene = function (m) { return !m.mat || mat[m.mat] || (m.alt && mat[m.alt]); };
-  // movimientos: primero los que salen en lo pendiente; luego los de más carencia y aún no cubiertos esta semana
-  var movs = MOV_MEGA_.filter(function (m) { return m.re.test(txt) && tiene(m); });
-  MOV_MEGA_.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m) && m.c && !cubiertas[m.c]; }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); }).forEach(function (m) { if (movs.length < 8) movs.push(m); });
-  if (n > 1) MOV_MEGA_.filter(function (m) { return m.equipo && mat[m.mat] && movs.indexOf(m) < 0; }).forEach(function (m) { movs.splice(1, 0, m); });   // material de equipo marcado: entra
-  if (movs.length < 4) MOV_MEGA_.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m); }).slice(0, 4 - movs.length).forEach(function (m) { movs.push(m); });
+  var MOVS = movsMega_();   // v0.15: de MOTOR_GUIA.md
+  // movimientos: primero lo que pides en «Estímulos que quiero», luego lo que sale en lo pendiente y lo de más carencia aún no cubierto esta semana
+  var D = o.deseo ? parseDeseo_(o.deseo, guiaMotor_()) : null;
+  var movs = D ? MOVS.filter(function (m) { return tiene(m) && D.movs.some(function (g) { return g.k === m.k; }); }) : [];
+  if (D) D.patrones.forEach(function (p) { if (p === 'MONO' || movs.some(function (m) { return m.patron === p; })) return; var c = MOVS.filter(function (m) { return m.patron === p && tiene(m) && movs.indexOf(m) < 0; }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); })[0]; if (c) movs.push(c); });
+  MOVS.filter(function (m) { return m.re.test(txt) && tiene(m) && movs.indexOf(m) < 0; }).forEach(function (m) { movs.push(m); });
+  MOVS.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m) && m.c && !cubiertas[m.c]; }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); }).forEach(function (m) { if (movs.length < 8) movs.push(m); });
+  if (n > 1) MOVS.filter(function (m) { return m.equipo && mat[m.mat] && movs.indexOf(m) < 0; }).forEach(function (m) { movs.splice(1, 0, m); });   // material de equipo marcado: entra
+  if (movs.length < 4) MOVS.filter(function (m) { return movs.indexOf(m) < 0 && tiene(m); }).slice(0, 4 - movs.length).forEach(function (m) { movs.push(m); });
   var ergs = ERG_MEGA_.filter(function (e) { return mat[e[0]]; }); if (!ergs.length) ergs = [['', 'BURPEES (en vez de erg)']];
+  if (D && D.ergs.length) { var pe = D.ergs.map(ergMegaDe_).filter(function (e) { return e && mat[e[0]]; }); if (pe.length) ergs = pe.concat(ergs.filter(function (e) { return !pe.some(function (x) { return x[1] === e[1]; }); })); }
   var bar = +o.barraMax || 60, db = +o.dbMax || 22.5, ch = o.chica || null;
   var carga = function (m) {
     if (m.carga === 'barra' && mat.barra) return ' (' + Math.min(bar, /CLEAN|DEADLIFT/.test(m.n) ? 70 : 50) + ' kg' + (ch && ch.barra ? ' / ♀ ' + ch.barra + ' kg' : '') + ')';
@@ -3949,7 +3967,7 @@ function megaWod_(pend, o, w, cubiertas, minutos) {
     ORIGEN: 'REORGANIZADO', 'TÍTULO': 'MEGA WOD · ' + T + '′ · ' + ({ solo: 'individual', pareja: 'en pareja', equipo3: 'equipo de 3', equipo4: 'equipo de 4' }[o.formato || 'solo']),
     CONTENIDO: partes.join('\n\n— 2′ de transición —\n\n') + chal + '\n\nMARCADOR: total de reps de los AMRAP + tiempo de los FOR TIME.\nRITMO: el primer bloque al 80 %, sube en los siguientes; las partes P1/P4 sí al 90 %.',
     MIN: T, INTENSIDAD: '🔴 Mega WOD', 'CÓDIGOS': cods.join('|'),
-    'POR QUÉ (cursiva)': 'Integra lo pendiente de la semana (' + pend.map(function (x) { return x['TÍTULO'] || x.BLOQUE; }).slice(0, 6).join(', ') + ') y lo que más te falta y aún no has hecho esta semana, en formato de competición. Lo ya cubierto en la semana no se repite.',
+    'POR QUÉ (cursiva)': (o.deseo ? 'Pediste «' + String(o.deseo).trim() + '»: va primero. ' : '') + 'Integra lo pendiente de la semana (' + pend.map(function (x) { return x['TÍTULO'] || x.BLOQUE; }).slice(0, 6).join(', ') + ') y lo que más te falta y aún no has hecho esta semana, en formato de competición. Lo ya cubierto en la semana no se repite.',
     'CIENCIA (técnica · fisiología · biología)': 'Alterna partes por encima de umbral (P1/P4: H⁺ y aclarado de lactato) con partes sostenidas: adaptaciones centrales (gasto cardiaco) y periféricas (tampón, capilares). La fuerza pendiente va al principio y en fresco para no diluir su estímulo neural (manual §16).'
   };
 }
@@ -4117,3 +4135,671 @@ function reestActiva_(lunes) {
   var l = lunesDe_(lunes);
   return listar_(HOJAS.REEST).filter(function (r) { return celdaIso_(r.LUNES) === l && r.ESTADO === 'Aplicada'; }).map(function (r) { return { id: r.ID, modo: r.MODO, resumen: r.RESUMEN }; });
 }
+
+// ===================== v0.15 · MOTOR GUIADO POR MOTOR_GUIA.md · APP · MOTOR WODS · GEMINI · AGENTE DEL PC · BACKUP DE LOS JUEVES =====================
+/*
+ * - MOTOR_GUIA.md (Drive, CONFIG › motor_guia_id): sus tablas «## TABLA · …» mandan sobre los movimientos, formatos, pesos e interferencias
+ *   del motor. Si no se puede leer, se usa la copia de este código (MOTOR_GUIA_BASE_).
+ * - APP · MOTOR WODS (oculta): cada metcon de Fabrik y de competición descompuesto (formato, ventanas, estructura, pesos, interferencias)
+ *   + CIENCIA (Claude / Gemini) + CONCEPTOS (Ollama, desde el PC). El motor copia las estructuras que más se parecen a lo que pides.
+ * - «Estímulos que quiero»: metconGuiado_ (bloque nuevo, extras) y megaWod_ (Reestructurar B).
+ * - Backup de los jueves (Drive) + copia en el PC por el agente; si a las 16:00 no está: correo, aviso en la app y ventana en el PC.
+ */
+HOJAS.MOTOR = 'APP · MOTOR WODS';
+ESQUEMA[HOJAS.MOTOR] = {
+  cab: ['ID', 'FUENTE', 'FECHA', 'NOMBRE', 'TEXTO', 'FORMATO', 'MIN', 'VENTANAS', 'ESTRUCTURA', 'MOVIMIENTOS', 'PATRONES', 'PESOS', 'INTERFERENCIAS',
+    'OBJETIVO / ESTÍMULO', 'LIMITANTES', 'RPE', 'CIENCIA', 'CONCEPTOS (Ollama)', 'ANALIZADO POR', 'HASH', 'ACTUALIZADO'],
+  anchos: [90, 95, 90, 220, 320, 90, 50, 160, 200, 200, 130, 140, 260, 240, 220, 50, 380, 260, 120, 90, 120],
+  fechas: ['FECHA'], negrita: 'NOMBRE', listas: { FUENTE: ['Fabrik', 'Competición', 'Guardado', 'Manual'] }
+};
+
+// ---------- 1 · La guía ----------
+function guiaTexto_() {
+  var c = CacheService.getScriptCache(), v = c.get('guia_md_v15');
+  if (v) return v;
+  var id = leerConfig_().motor_guia_id, t = '';
+  if (id) { try { t = DriveApp.getFileById(id).getBlob().getDataAsString('UTF-8'); } catch (e) { Logger.log('MOTOR_GUIA no legible: ' + e); } }
+  if (!/##\s*TABLA/i.test(t)) t = MOTOR_GUIA_BASE_;
+  try { c.put('guia_md_v15', t, 21600); } catch (e) { /* >100 KB: sin caché */ }
+  return t;
+}
+function tablasGuia_(md) {
+  var T = {}, actual = null;
+  String(md || '').replace(/\r/g, '').split('\n').forEach(function (l) {
+    var h = l.match(/^##\s*TABLA\s*·\s*(.+?)\s*$/i);
+    if (h) { actual = norm(h[1]).trim(); T[actual] = { cab: null, filas: [] }; return; }
+    if (/^#/.test(l)) { actual = null; return; }
+    if (!actual || !/^\s*\|/.test(l)) return;
+    var celdas = l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (x) { return x.trim(); });
+    if (celdas.every(function (x) { return /^:?-{2,}:?$/.test(x); })) return;
+    var t = T[actual];
+    if (!t.cab) { t.cab = celdas.map(function (x) { return norm(x).trim(); }); return; }
+    if (/^#/.test(celdas[0])) return;
+    var o = {}; t.cab.forEach(function (k, i) { o[k] = celdas[i] || ''; }); t.filas.push(o);
+  });
+  return T;
+}
+var GUIA_MEMO_ = null;
+function guiaMotor_() {
+  if (GUIA_MEMO_) return GUIA_MEMO_;
+  var T = tablasGuia_(guiaTexto_());
+  if (!T.MOVIMIENTOS || !T.MOVIMIENTOS.filas.length) T = tablasGuia_(MOTOR_GUIA_BASE_);
+  var f = function (k) { return (T[k] || { filas: [] }).filas; };
+  var lista = function (s) { return String(s || '').split(',').map(function (x) { return norm(x).replace(/\s+/g, ' ').trim(); }).filter(Boolean); };
+  var numero = function (s) { var n = parseFloat(String(s || '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+  var G = { movs: [], formatos: {}, patrones: [], interf: [], pesos: {}, reglas: {} };
+  f('MOVIMIENTOS').forEach(function (r) {
+    if (!r.CLAVE) return;
+    var k = norm(r.CLAVE).trim();
+    G.movs.push({ k: k, n: r.NOMBRE || k, alias: lista(r.ALIAS).concat([k.replace(/_/g, ' ')]).filter(function (a, i, x) { return x.indexOf(a) === i; }).sort(function (a, b) { return b.length - a.length; }),
+      mat: String(r.MATERIAL || '').trim().toLowerCase(), alt: String(r.ALTERNATIVA || '').trim().toLowerCase(), patron: norm(r.PATRON).trim(), carga: lista(r.CARGA),
+      unidad: String(r.UNIDAD || 'reps').trim().toLowerCase(), reps: numero(r.REPS) || 10, kg: numero(r['KG ♂ RX']), kgF: numero(r['KG ♀ RX']), rm: String(r['1RM DE'] || '').trim(), c: String(r.CODIGO || '').trim().toUpperCase() });
+  });
+  f('FORMATOS').forEach(function (r) {
+    if (!r.CLAVE) return;
+    G.formatos[norm(r.CLAVE).trim()] = { k: norm(r.CLAVE).trim(), nombre: r.NOMBRE, min: numero(r.MIN) || 5, max: numero(r.MAX) || 40, ventana: r.VENTANA, sistema: r.SISTEMA, zona: r.ZONA, rpe: r.RPE,
+      repsx: numero(r['REPS X']) || 1, cuando: r.CUANDO, estrategia: r.ESTRATEGIA };
+  });
+  f('PATRONES').forEach(function (r) { if (r.PALABRA) G.patrones.push({ palabras: lista(r.PALABRA), patron: norm(r.PATRON).trim(), carga: norm(r.CARGA).trim() }); });
+  f('INTERFERENCIAS').forEach(function (r) {
+    if (!r.A || !r.B) return;
+    G.interf.push({ a: norm(r.A).trim(), b: norm(r.B).trim(), tipo: String(r.TIPO || '').trim().toLowerCase(), orden: String(r.ORDEN || 'A<>B').replace(/\s/g, '').toUpperCase(), efecto: r['EFECTO BUSCADO'] || '', ciencia: r.CIENCIA || '' });
+  });
+  f('PESOS').forEach(function (r) { if (r.FORMATO) G.pesos[norm(r.FORMATO).trim()] = { min: numero(r['% MIN']) || 45, max: numero(r['% MAX']) || 65, nota: r.NOTA || '' }; });
+  f('REGLAS').forEach(function (r) { if (r.CLAVE) G.reglas[String(r.CLAVE).trim().toLowerCase()] = numero(r.VALOR) || r.VALOR; });
+  if (!G.movs.length) throw new Error('MOTOR_GUIA sin tabla de movimientos');
+  GUIA_MEMO_ = G;
+  return G;
+}
+function movPorClave_(G, k) { return G.movs.filter(function (m) { return m.k === k; })[0] || null; }
+/** Posición del alias en el texto normalizado, con límites de palabra (admite plural en S/ES). -1 si no está. */
+function aliasEn_(t, a) {
+  var i = t.indexOf(a);
+  while (i >= 0) {
+    var antes = i ? t.charAt(i - 1) : ' ', resto = t.slice(i + a.length), desp = resto.replace(/^(ES|S)(?=[^A-Z]|$)/, '').charAt(0) || ' ';
+    if (!/[A-Z0-9]/.test(antes) && !/[A-Z]/.test(desp)) return i;
+    i = t.indexOf(a, i + 1);
+  }
+  return -1;
+}
+/** Movimientos de la guía que aparecen en el texto, en orden de aparición (el alias más largo gana: «squat snatch» no cuenta también como «snatch»). */
+function detectarMovs_(t, G) {
+  t = norm(t);
+  var hits = [];
+  G.movs.forEach(function (m) {
+    m.alias.forEach(function (a) {
+      var i = t.indexOf(a);
+      while (i >= 0) {
+        var antes = i ? t.charAt(i - 1) : ' ', resto = t.slice(i + a.length), plural = (resto.match(/^(ES|S)(?=[^A-Z]|$)/) || [''])[0], desp = resto.slice(plural.length).charAt(0) || ' ';
+        if (!/[A-Z0-9]/.test(antes) && !/[A-Z]/.test(desp)) hits.push({ m: m, i: i, len: a.length + plural.length });
+        i = t.indexOf(a, i + 1);
+      }
+    });
+  });
+  hits.sort(function (x, y) { return y.len - x.len || x.i - y.i; });
+  var tomados = [], out = [];
+  hits.forEach(function (h) {
+    if (tomados.some(function (x) { return h.i < x.i + x.len && x.i < h.i + h.len; })) return;
+    tomados.push(h);
+    if (!out.some(function (o) { return o.m === h.m; })) out.push(h);
+  });
+  return out.sort(function (x, y) { return x.i - y.i; });
+}
+function encaja_(lado, m, fk) { return lado === '*' || lado === m.k || lado === m.patron || (fk && lado === fk); }
+/** Interferencias de la guía entre dos movimientos (x antes que y). */
+function interfEntre_(G, x, y) {
+  return G.interf.filter(function (r) {
+    if (encaja_(r.a, x) && encaja_(r.b, y)) return true;
+    return r.orden !== 'A>B' && encaja_(r.a, y) && encaja_(r.b, x);
+  });
+}
+
+// ---------- 2 · Análisis de un WOD ----------
+function hashTxt_(txt) {
+  var d = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, norm(txt).replace(/\s+/g, ' ').trim());
+  return d.map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('').slice(0, 16);
+}
+function formatoDeTexto_(t, nMovs) {
+  var min = function (re) { var m = t.match(re); return m ? +m[1] : 0; };
+  var cap = min(/(?:TIME ?CAP|CAP|TC)[^0-9]{0,4}([0-9]{1,2})/), amrap = min(/AMRAP[^0-9]{0,6}([0-9]{1,2})/), emom = min(/EMOM[^0-9]{0,6}([0-9]{1,2})/);
+  var every = t.match(/(?:EVERY|CADA|E)\s*([0-9]{1,2}(?:[:,.][0-9]{2})?)\s*(?:'|′|’|MIN|:00)?\s*(?:X|×)\s*([0-9]{1,2})/);
+  var pesado = /HEAVY|PESAD|[0-9]RM|[89][0-9] ?%/.test(t);
+  if (/SINCRO|SYNCHRO|IN PAIRS|EN PAREJA|EQUIPO|TEAM OF/.test(t)) return { k: 'SINCRO', min: amrap || cap || emom || 0 };
+  if (/[0-9]{1,3}[\"″]? ?ON\b|ON ?\/ ?OFF|[0-9]+ ?: ?[0-9]+ ?(TRABAJO|WORK)|TRABAJO ?\/ ?DESCANSO/.test(t)) return { k: 'INTERVALOS', min: cap || amrap || emom || 0 };
+  if (every) { var n = parseFloat(String(every[1]).replace(/[:,]/, '.')), s = +every[2]; return { k: pesado ? 'VENTANAS' : n >= 2.5 ? 'EVERY' : 'EMOM', min: Math.round(n * s) }; }
+  if (emom) return { k: 'EMOM', min: emom };
+  if (amrap) return { k: amrap <= 10 ? 'AMRAP_C' : amrap <= 20 ? 'AMRAP' : 'AMRAP_L', min: amrap };
+  if (/(^|[^0-9])[0-9]{1,2}-[0-9]{1,2}-[0-9]{1,2}/.test(t)) return { k: 'ESCALERA', min: cap };
+  if (/FOR TIME|TIME ?CAP|CAP|POR TIEMPO|CHIPPER/.test(t)) return { k: (nMovs >= 6 || /CHIPPER/.test(t)) ? 'CHIPPER' : cap && cap <= 8 ? 'SPRINT' : 'FOR_TIME', min: cap };
+  return { k: '', min: 0 };
+}
+/** Descompone un WOD. meta (opcional): campos de la ficha de Fabrik { objetivo, modalidad, rpe, limitantes, carga }. */
+function analizarWod_(txt, meta) {
+  var G = guiaMotor_(), t = norm(txt), meta = meta || {};
+  var det = detectarMovs_(t, G), movs = det.map(function (x) { return x.m; });
+  var fo = formatoDeTexto_(t, movs.length);
+  var vent = [];
+  (t.match(/(?:EVERY|CADA)\s*[0-9:,.′'’"″]+\s*(?:MIN)?\s*(?:X|×)\s*[0-9]+(?:\s*(?:SETS|RONDAS|ROUNDS))?/g) || []).forEach(function (x) { vent.push(x.trim()); });
+  (t.match(/[0-9]{1,3}\s*["″]?\s*ON\s*\/?\s*[0-9]{1,3}\s*["″]?\s*OFF/g) || []).forEach(function (x) { vent.push(x.trim()); });
+  (t.match(/(?:REST|DESCANS[OA]|RECUPERA)\S*\s*[0-9]{1,2}\s*(?:'|′|’|MIN|["″]|SEG)/g) || []).forEach(function (x) { vent.push(x.trim()); });
+  var esq = (t.match(/(^|[^0-9])([0-9]{1,3}(?:-[0-9]{1,3}){2,})/) || [])[2] || '', rondas = (t.match(/([0-9]{1,2})\s*(?:RONDAS|ROUNDS|RFT|SETS)/) || [])[1] || '';
+  var asc = /\+ ?[0-9]+ ?(REPS? )?(EACH|CADA|POR) (ROUND|RONDA)|ASCENDING|ASCENDENTE/.test(t);
+  var estructura = [esq ? esq : '', rondas ? rondas + ' rondas' : '', asc ? 'ascendente' : ''].filter(Boolean).join(' · ');
+  estructura = (estructura ? estructura + ' · ' : '') + movs.map(function (m) { return m.k; }).join(' → ');
+  var pesos = [];
+  (t.match(/[0-9]{1,3}(?:[.,][0-9])?\s*(?:\/\s*[0-9]{1,3}(?:[.,][0-9])?)?\s*(?:KG|LB|LBS|#)/g) || []).concat(t.match(/[0-9]{2,3}(?:\s*\/\s*[0-9]{2,3})?\s*%/g) || [])
+    .forEach(function (x) { x = x.replace(/\s+/g, ''); if (pesos.indexOf(x) < 0 && pesos.length < 8) pesos.push(x); });
+  if (meta.carga) pesos.push('carga ' + String(meta.carga).replace(/\s+/g, ' ').trim().toLowerCase());
+  var inter = [];
+  for (var i = 0; i + 1 < movs.length; i++) {
+    interfEntre_(G, movs[i], movs[i + 1]).forEach(function (r) { var s = movs[i].k + '→' + movs[i + 1].k + ' (' + r.tipo + ': ' + r.efecto + ')'; if (inter.indexOf(s) < 0) inter.push(s); });
+    var fam = { AGARRE: null, HOMBRO: ['OH', 'EMPUJE_G'], PIERNA: ['SENT', 'BISAGRA'] };
+    ['AGARRE', 'HOMBRO', 'PIERNA'].forEach(function (c) { var pf = fam[c], mismo = !pf || (pf.indexOf(movs[i].patron) >= 0 && pf.indexOf(movs[i + 1].patron) >= 0); if (mismo && movs[i].carga.indexOf(c) >= 0 && movs[i + 1].carga.indexOf(c) >= 0) { var s2 = movs[i].k + '→' + movs[i + 1].k + ' (doble ' + c.toLowerCase() + ')'; if (inter.indexOf(s2) < 0 && !inter.some(function (z) { return z.indexOf(movs[i].k + '→' + movs[i + 1].k) === 0; })) inter.push(s2); } });
+  }
+  if (movs.length > 2) interfEntre_(G, movs[movs.length - 1], movs[0]).forEach(function (r) { var s = movs[movs.length - 1].k + '→' + movs[0].k + ' (cambio de ronda · ' + r.tipo + ')'; if (inter.indexOf(s) < 0) inter.push(s); });
+  if (fo.k === 'VENTANAS' && movs.some(function (m) { return m.patron === 'MONO'; })) inter.push('ERG→HEAVY (fuerza en fatiga)');
+  var obj = meta.objetivo || ((txt.match(/OBJETIVO\s*:\s*([^\n]+(?:\n(?!\s*[A-ZÁÉÍÓÚ ]{4,}:)[^\n]+)*)/i) || [])[1] || '');
+  var lim = meta.limitantes || ((txt.match(/LIMITANTE[\s\S]{0,400}/i) || [''])[0]);
+  var rpe = meta.rpe || ((t.match(/RPE\s*([0-9]{1,2}(?:[\/-][0-9]{1,2})?)/) || [])[1] || '');
+  return {
+    FORMATO: fo.k, MIN: fo.min || '', VENTANAS: vent.filter(function (v, i2) { return vent.indexOf(v) === i2; }).slice(0, 4).join(' · '), ESTRUCTURA: estructura.slice(0, 400),
+    MOVIMIENTOS: movs.map(function (m) { return m.k; }).join(', '), PATRONES: movs.map(function (m) { return m.patron; }).filter(function (p, i2, a) { return p && a.indexOf(p) === i2; }).join(', '),
+    PESOS: pesos.join(' · ').slice(0, 300), INTERFERENCIAS: inter.slice(0, 8).join('\n'),
+    'OBJETIVO / ESTÍMULO': [meta.modalidad ? 'Modalidad: ' + meta.modalidad : '', obj ? 'Objetivo: ' + recortar(obj) : ''].filter(Boolean).join('\n').slice(0, 1200),
+    LIMITANTES: recortar(String(lim || '')).replace(/\n+/g, ' · ').slice(0, 600), RPE: rpe
+  };
+}
+
+// ---------- 3 · Alimentar la base de datos ----------
+function filasEnHoja_(nombre, filas) {
+  if (!filas.length) return 0;
+  var sh = hojaMia_(nombre), cab = cabeceras_(sh);
+  var m = filas.map(function (o) { return cab.map(function (c) { var v = o[c]; return v == null ? '' : celdaSegura_(v); }); });
+  sh.getRange(sh.getLastRow() + 1, 1, m.length, cab.length).setValues(m);
+  return m.length;
+}
+/** Metcons de Fabrik (últimas n semanas, hasta la siguiente) y WODs guardados en APP · WODS. Solo lee Fabrik. */
+function alimentarMotor_(nSemanas) {
+  var ya = {}, nuevas = [];
+  listar_(HOJAS.MOTOR).forEach(function (r) { if (r.HASH) ya[r.HASH] = 1; });
+  var est = estructura_(fabrik_()), tope = sumarDias(lunesDe_(hoyIso_()), 7);
+  est.semanas.filter(function (s) { return s.iso && s.iso <= tope; }).slice(-(nSemanas || 2)).forEach(function (s) {
+    var F; try { F = semanaBase_(s, est); } catch (e) { Logger.log('Motor · semana ' + s.nombre + ': ' + e); return; }
+    (F.dias || []).forEach(function (d) {
+      (d.bloques || []).forEach(function (b) {
+        if (!b.n || !esMetconB_(b)) return;
+        var txt = textoBloque_(b), h = hashTxt_(txt);
+        if (ya[h]) return; ya[h] = 1;
+        var w = b.wod || {};
+        var a = analizarWod_(txt, { objetivo: w.objetivo, modalidad: [w.modalidad, w.formato].filter(Boolean).join(' · '), rpe: b.rpe || d.rpe, limitantes: w.limitantes, carga: w.carga });
+        nuevas.push(Object.assign(a, { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Fabrik', FECHA: d.iso ? isoAFecha(d.iso) : '', NOMBRE: (s.nombre + ' · ' + d.nombre + ' · ' + (b.titulo || 'METCON')).slice(0, 160),
+          TEXTO: String(txt).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }));
+      });
+    });
+  });
+  listar_(HOJAS.WODS).forEach(function (r) {
+    if (!r.CONTENIDO) return;
+    var h = hashTxt_(r.CONTENIDO); if (ya[h]) return; ya[h] = 1;
+    nuevas.push(Object.assign(analizarWod_(r.CONTENIDO, {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Guardado', FECHA: r['FECHA ORIGEN'] || '', NOMBRE: String(r.NOMBRE || 'WOD').slice(0, 160),
+      TEXTO: String(r.CONTENIDO).slice(0, 4000), HASH: h, 'ANALIZADO POR': 'Motor', ACTUALIZADO: ahora_() }));
+  });
+  return filasEnHoja_(HOJAS.MOTOR, nuevas);
+}
+/** Filas que pegas a mano (o que añade Claude) solo con NOMBRE y TEXTO: se analizan solas. */
+function reanalizarMotor_() {
+  var n = 0;
+  listar_(HOJAS.MOTOR).forEach(function (r) {
+    if (!r.TEXTO || r.FORMATO || r.MOVIMIENTOS) return;
+    var a = analizarWod_(r.TEXTO, {});
+    a.HASH = hashTxt_(r.TEXTO); if (!r.ID) a.ID = 'MW-' + a.HASH.slice(0, 8); if (!r.FUENTE) a.FUENTE = 'Manual';
+    a['ANALIZADO POR'] = autores_(r['ANALIZADO POR'], 'Motor'); a.ACTUALIZADO = ahora_();
+    actualizarFila_(HOJAS.MOTOR, r._fila, a); n++;
+  });
+  return n;
+}
+function autores_(prev, quien) { var l = String(prev || '').split(/\s*·\s*/).filter(Boolean); if (l.indexOf(quien) < 0) l.push(quien); return l.join(' · '); }
+
+// WODs de competición de referencia (escritos por Claude con su explicación; comprueba pesos y reps con la fuente oficial).
+var MOTOR_SEMILLAS_ = [
+  ['Open 24.1', 'FOR TIME · cap 15′\n21 DB SNATCHES (brazo 1)\n21 LATERAL BURPEES OVER DB\n21 DB SNATCHES (brazo 2)\n21 LATERAL BURPEES OVER DB\n15-15-15-15\n9-9-9-9\nDB 22,5 / 15 kg',
+    'Escalera descendente de dos movimientos de muy baja técnica y alto gasto: el limitante es respiratorio y de transición, no muscular. El DB snatch unilateral reparte la fatiga del agarre entre brazos y el burpee lateral mantiene la FC cerca del máximo, así que es un esfuerzo glucolítico-aeróbico de 10–15′ en Z5. Gana quien no para: pocas pausas, transiciones de menos de 2″ y un ritmo de burpee constante. Las adaptaciones son tolerancia a H⁺ y eficiencia del gesto repetido.'],
+  ['Open 24.2', 'AMRAP 20′\n300 m ROW\n10 DEADLIFTS 84 / 56,5 kg\n50 DOUBLE UNDERS',
+    'AMRAP largo: el remo y los DU sostienen el estímulo aeróbico (Z3–Z4) y el peso muerto moderado (≈45–55 % 1RM) introduce fatiga de cadena posterior y agarre que se acumula ronda tras ronda. Remo → peso muerto es un par de cadena posterior: si el remo se tira con espalda, el peso muerto se resiente. La clave es un ritmo de remo repetible (mismo split por ronda) y los DU sin fallos, porque cada fallo cuesta FC y segundos.'],
+  ['Open 24.3', 'FOR TIME · cap 15′\n5 RONDAS: 10 THRUSTERS 43 / 29 kg + 10 CHEST TO BAR\nDESCANSO 1′\n5 RONDAS: 7 THRUSTERS 61 / 43 kg + 7 BAR MUSCLE UPS',
+    'Dos parejas empuje-tirón (thruster + C2B y thruster pesado + BMU): complementarias, porque mientras trabajan las piernas y el hombro empujando, el dorsal se recupera, y al revés. El minuto de descanso divide el WOD en un sprint ligero y una segunda parte donde la barra pesada y el BMU con fatiga cardiorrespiratoria son el limitante técnico. Entrena gimnásticos de alta habilidad con pulsaciones altas, la interferencia típica de la fase de realización.'],
+  ['Open 25.1', 'AMRAP 15′\n3 LATERAL BURPEES OVER DB\n3 DB HANG CLEAN TO OVERHEAD\n30 ft (≈9 m) DB OVERHEAD WALKING LUNGE\n+3 reps de burpee y C2OH cada ronda\nDB 22,5 / 15 kg',
+    'Escalera ascendente: las primeras rondas son ritmo y las últimas, gestión de fatiga de hombro. Burpee → C2OH → lunge OH encadena tres exigencias de estabilidad por encima de la cabeza (deltoides, serrato, core) con la FC alta del burpee. Es un AMRAP medio en umbral (Z4–Z5) cuyo limitante local es el hombro: hay que bloquear bien en el lunge y no soltar la mancuerna salvo planificado.'],
+  ['Open 25.2 (= 22.3)', 'FOR TIME · cap 12′\n21 PULL-UPS · 42 DOUBLE UNDERS · 21 THRUSTERS 43 / 29 kg\n18 CHEST TO BAR · 36 DOUBLE UNDERS · 18 THRUSTERS 52 / 34 kg\n15 BAR MUSCLE UPS · 30 DOUBLE UNDERS · 15 THRUSTERS 61 / 38,5 kg',
+    'Escalera descendente de volumen y ascendente de dificultad: cada tramo sube la exigencia del tirón (pull-up → C2B → BMU) y el peso del thruster. Los DU entre los dos sostienen la FC y hacen de bisagra respiratoria: es el par DU + thruster que Fabrik marca como limitante respiratorio alto. Gana quien llega con agarre y hombro al BMU: tandas planificadas en los pull-ups y nada al fallo antes del tercer tramo.'],
+  ['Open 25.3', 'FOR TIME · cap 20′\n5 WALL WALKS · 50 cal ROW\n5 WALL WALKS · 25 DEADLIFTS 102 / 70 kg\n5 WALL WALKS · 25 CLEANS 61 / 38,5 kg\n5 WALL WALKS · 25 SNATCHES 43 / 29 kg\n5 WALL WALKS · 50 cal ROW',
+    'Chipper de barra con cargas que bajan y técnica que sube (peso muerto → clean → snatch), separado por wall walks: el hombro y el core trabajan en isometría entre tramos de cadena posterior. Remo y peso muerto seguidos solo están unidos por los wall walks: la lumbar acumula fatiga, así que el remo debe ir con piernas. Es mixto aeróbico-glucolítico (Z4) con limitante muscular de espalda y agarre; pacing de chipper: todos los apartados al 75–80 % y el remo final para vaciar.'],
+  ['Fran (benchmark)', 'FOR TIME\n21-15-9\nTHRUSTERS 43 kg\nPULL-UPS',
+    'Sprint glucolítico (2–5′, Z6–Z7) con el par empuje-tirón más clásico. El thruster consume pierna y hombro, y la dominada, agarre y dorsal: son complementarios, pero con FC máxima. La caída de rendimiento viene de la acidosis (H⁺) y del agarre. Se entrena con tandas grandes desde el principio y transiciones mínimas; mide la potencia glucolítica.'],
+  ['HYROX (estaciones)', 'FOR TIME\n8 × (1 km RUN + ESTACIÓN)\nSKIERG 1000 m · SLED PUSH 50 m · SLED PULL 50 m · BURPEE BROAD JUMPS 80 m · ROW 1000 m · FARMERS CARRY 200 m · SANDBAG LUNGES 100 m · WALL BALLS 100',
+    'Esfuerzo aeróbico largo (60–90′, Z3–Z4) donde la interferencia buscada es correr comprometido: cada estación fatiga un patrón (empuje de pierna, agarre, cuádriceps excéntrico) y el kilómetro siguiente exige economía de carrera con ese músculo cansado. Sled → run y lunge → run son los pares más duros. Mejora con umbral alto, fuerza-resistencia de pierna y ritmo de carrera estable.']
+];
+function sembrarMotorWods_() {
+  var ya = {}; listar_(HOJAS.MOTOR).forEach(function (r) { if (r.HASH) ya[r.HASH] = 1; });
+  var nuevas = MOTOR_SEMILLAS_.filter(function (s) { return !ya[hashTxt_(s[1])]; }).map(function (s) {
+    var h = hashTxt_(s[1]);
+    return Object.assign(analizarWod_(s[1], {}), { ID: 'MW-' + h.slice(0, 8), FUENTE: 'Competición', NOMBRE: s[0], TEXTO: s[1], CIENCIA: s[2], HASH: h, 'ANALIZADO POR': 'Motor · Claude', ACTUALIZADO: ahora_() });
+  });
+  return filasEnHoja_(HOJAS.MOTOR, nuevas);
+}
+
+// ---------- 4 · Gemini: explicación científica de los WODs sin CIENCIA ----------
+function geminiExplicar_(max) {
+  var key = PROPS.getProperty('GEMINI_KEY');
+  if (!key) return 'sin clave (Propiedades del script › GEMINI_KEY)';
+  var cf = leerConfig_(), modelo = String(cf.gemini_modelo || 'gemini-2.5-flash').trim(), n = 0;
+  var claves = guiaTexto_().split(/^## Claves/m).slice(1).join('## Claves').slice(0, 6000);
+  var filas = listar_(HOJAS.MOTOR).filter(function (r) { return r.TEXTO && !String(r.CIENCIA || '').trim(); }).slice(0, max || 6);
+  for (var i = 0; i < filas.length; i++) {
+    var r = filas[i];
+    var prompt = 'Eres fisiólogo del ejercicio y entrenador de CrossFit y HYROX de élite. Analiza este WOD para la base de datos de un atleta RX (90 kg). ' +
+      'Responde en español, en 5–7 frases, sin títulos, listas ni markdown. Incluye: sistema energético y zona dominantes; por qué el orden y los pares de movimientos ' +
+      'generan esa interferencia (fatiga local frente a sistémica, H⁺, fosfocreatina, CO₂ y control motor); qué adaptaciones provoca; la estrategia de ritmo; y el limitante principal. ' +
+      'No inventes datos que no estén en el WOD.\n\nCLAVES DEL ATLETA Y DEL PROGRAMA:\n' + claves + '\n\nWOD (' + (r.FUENTE || '') + ' · ' + (r.NOMBRE || '') + '):\n' + r.TEXTO +
+      '\n\nANÁLISIS DEL MOTOR: formato ' + (r.FORMATO || '¿?') + (r.MIN ? ' · ' + r.MIN + '′' : '') + ' · movimientos ' + (r.MOVIMIENTOS || '') + ' · interferencias ' + String(r.INTERFERENCIAS || '').replace(/\n/g, '; ') +
+      (r['OBJETIVO / ESTÍMULO'] ? ' · ' + r['OBJETIVO / ESTÍMULO'].replace(/\n/g, '; ') : '') + (r.LIMITANTES ? ' · ' + r.LIMITANTES : '');
+    var gen = { temperature: 0.4, maxOutputTokens: 1200 };
+    if (/flash/i.test(modelo)) gen.thinkingConfig = { thinkingBudget: 0 };
+    var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(modelo) + ':generateContent', {
+      method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, muteHttpExceptions: true,
+      payload: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gen })
+    });
+    if (res.getResponseCode() !== 200) {
+      ponerConfig_('gemini_ultimo_error', hoyTxt_() + ' · HTTP ' + res.getResponseCode() + ' · ' + res.getContentText().slice(0, 300), 'Último error de Gemini (lo lee Claude)');
+      break;
+    }
+    var j = JSON.parse(res.getContentText()), parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+    var txt = parts.map(function (p) { return p.text || ''; }).join('').trim();
+    if (txt) { actualizarFila_(HOJAS.MOTOR, r._fila, { CIENCIA: txt.slice(0, 3000), 'ANALIZADO POR': autores_(r['ANALIZADO POR'], 'Gemini'), ACTUALIZADO: ahora_() }); n++; }
+  }
+  return n;
+}
+/** Cada madrugada: metcons nuevos de Fabrik, filas pegadas a mano y explicación de Gemini. */
+function motorDiario() {
+  var est = [];
+  try { est.push('nuevos ' + alimentarMotor_(2)); } catch (e) { est.push('alimentar FALLO ' + e); }
+  try { est.push('reanalizados ' + reanalizarMotor_()); } catch (e) { est.push('reanalizar FALLO ' + e); }
+  try { est.push('Gemini ' + geminiExplicar_(8)); } catch (e) { est.push('Gemini FALLO ' + String(e).slice(0, 120)); }
+  ponerConfig_('ultimo_motor', hoyTxt_() + ' · ' + est.join(' · '), 'Resultado de la tarea diaria del motor (APP · MOTOR WODS)');
+}
+
+// ---------- 5 · «Estímulos que quiero» y metcon a medida ----------
+function parseDeseo_(txt, G) {
+  var t = norm(txt), D = { texto: String(txt || ''), movs: [], ergs: [], patrones: [], intercalar: null, formato: '', min: 0, intensidad: '', equipo: '' };
+  detectarMovs_(t, G).forEach(function (x) { (x.m.patron === 'MONO' ? D.ergs : D.movs).push(x.m); });
+  var mi = t.match(/INTERCAL[A-Z]*\s+(?:DE\s+|CON\s+|LA\s+|EL\s+)?([A-Z ]{3,40})/) || t.match(/ENTRE (?:RONDAS|SERIES|MOVIMIENTOS)\s*(?:DE\s+|CON\s+)?([A-Z ]{3,40})/);
+  if (mi) {
+    var e = detectarMovs_(mi[1], G).filter(function (x) { return x.m.patron === 'MONO'; })[0];
+    D.intercalar = e ? e.m : /CORR|CARRER|RUN/.test(mi[1]) ? movPorClave_(G, 'RUN') : D.ergs[0] || null;
+    if (D.intercalar && D.ergs.indexOf(D.intercalar) < 0) D.ergs.unshift(D.intercalar);
+  }
+  G.patrones.forEach(function (p) { if (p.palabras.some(function (w) { return aliasEn_(t, w) >= 0; }) && D.patrones.indexOf(p.patron) < 0) D.patrones.push(p.patron); });
+  var F = [['VENTANAS', /HEAVY EN VENTANAS|VENTANAS/], ['EVERY', /EVERY|CADA [0-9]/], ['INTERVALOS', /INTERVALO|ON ?\/ ?OFF/], ['EMOM', /EMOM/], ['CHIPPER', /CHIPPER/], ['ESCALERA', /ESCALERA|[0-9]{1,2}-[0-9]{1,2}-[0-9]{1,2}/],
+    ['SPRINT', /SPRINT/], ['FOR_TIME', /FOR TIME|POR TIEMPO/], ['AMRAP', /AMRAP/]];
+  for (var i = 0; i < F.length; i++) if (F[i][1].test(t)) { D.formato = F[i][0]; break; }
+  var mm = t.match(/([0-9]{1,2})\s*(?:'|′|’|MIN)/) || t.match(/(?:AMRAP|EMOM|CAP|TIME CAP|DE)\s*([0-9]{1,2})(?![0-9])/); if (mm) D.min = +mm[1];
+  D.intensidad = /PESAD|HEAVY/.test(t) ? 'pesado' : /POTENCIA|P1|P4|Z6|Z7|Z8/.test(t) ? 'potencia' : /SPRINT|CORTO|RAPIDO/.test(t) ? 'corto' : /LARGO|SOSTENID|AEROBIC|Z3/.test(t) ? 'largo' : '';
+  D.equipo = /EQUIPO|TEAM/.test(t) ? 'equipo' : /PAREJA|PAIRS|SINCRO/.test(t) ? 'pareja' : '';
+  if (D.formato === 'AMRAP' && D.min) D.formato = D.min <= 10 ? 'AMRAP_C' : D.min <= 20 ? 'AMRAP' : 'AMRAP_L';
+  return D;
+}
+/** Marca más alta (kg) de APP · MARCAS cuyo movimiento contiene «nombre». */
+function rmDe_(nombre) {
+  var q = norm(nombre).trim(); if (!q) return 0;
+  var memo = rmDe_.memo; if (!memo) { try { memo = listar_(HOJAS.MARCAS); } catch (e) { memo = []; } rmDe_.memo = memo; }
+  return memo.reduce(function (mx, r) {
+    var v = parseFloat(String(r.VALOR || '').replace(',', '.'));
+    if (!v || norm(r.MOVIMIENTO).indexOf(q) < 0 || /LB/.test(norm(r.UNIDAD)) || /TIEMPO|REPS|SEG|MIN|CAL/.test(norm(r.UNIDAD) + ' ' + norm(r.TIPO))) return mx;
+    return Math.max(mx, v);
+  }, 0);
+}
+function redondea25_(x) { return Math.round(x / 2.5) * 2.5; }
+function cargaTxt_(m, pc, dbMat) {
+  if (!m.kg && !m.rm) return '';
+  var p = m.rm.match(/^(.*?)\s+([0-9]+(?:[.,][0-9]+)?)$/), base = p ? rmDe_(p[1]) : 0, fac = p ? parseFloat(p[2].replace(',', '.')) : 1;
+  if (base && (m.mat === 'barra' || !dbMat)) {
+    var a = redondea25_(base * fac * pc.min / 100), b = redondea25_(base * fac * pc.max / 100);
+    var k = function (x) { return String(x).replace('.', ','); };
+    return ' (' + (a === b ? k(a) : k(a) + '–' + k(b)) + ' kg · ' + pc.min + '–' + pc.max + ' % de tu ' + p[1].toLowerCase() + ')';
+  }
+  if (dbMat) return ' (DB ' + String(Math.min(m.kg || 22.5, 22.5)).replace('.', ',') + ' kg)';
+  return m.kg ? ' (RX ' + String(m.kg).replace('.', ',') + ' kg' + (m.rm && pc ? ' · o el ' + pc.min + '–' + pc.max + ' % de tu 1RM' : '') + ')' : '';
+}
+function repsTxt_(m, f) {
+  var v = m.reps * f;
+  if (m.unidad === 'cal') return Math.max(5, Math.round(v)) + ' cal ' + m.n;
+  if (m.unidad === 'm') { var mt = v >= 100 ? Math.max(100, Math.round(v / 100) * 100) : Math.max(5, Math.round(v / 5) * 5); return mt + ' m ' + m.n; }
+  return Math.max(1, Math.round(v)) + ' ' + m.n;
+}
+/** El WOD de APP · MOTOR WODS que más se parece a lo pedido (≥3 puntos). */
+function refMotor_(lista, D, fk) {
+  var filas; try { filas = listar_(HOJAS.MOTOR); } catch (e) { return null; }
+  var ks = lista.map(function (m) { return m.k; }), ps = lista.map(function (m) { return m.patron; });
+  var tok = norm(D.texto).split(/[^A-Z0-9]+/).filter(function (x) { return x.length >= 4; });
+  var mejor = null, pm = 0;
+  filas.forEach(function (r) {
+    var rm = String(r.MOVIMIENTOS || '').split(/\s*,\s*/).filter(Boolean), rp = String(r.PATRONES || '').split(/\s*,\s*/);
+    var p = rm.filter(function (k) { return ks.indexOf(k) >= 0; }).length * 2 + rp.filter(function (x) { return x && ps.indexOf(x) >= 0; }).length * 0.5;
+    if (fk && r.FORMATO === fk) p += 2;
+    var bolsa = norm((r['OBJETIVO / ESTÍMULO'] || '') + ' ' + (r['CONCEPTOS (Ollama)'] || '') + ' ' + (r.LIMITANTES || ''));
+    p += Math.min(2, tok.filter(function (x) { return bolsa.indexOf(x) >= 0; }).length * 0.5);
+    if (r.CIENCIA) p += 0.3;
+    if (p > pm) { pm = p; mejor = r; }
+  });
+  return mejor && pm >= 3 ? { nombre: mejor.NOMBRE, fuente: mejor.FUENTE, formato: mejor.FORMATO, estructura: mejor.ESTRUCTURA || '', ciencia: mejor.CIENCIA || '', puntos: pm } : null;
+}
+/** Ordena los movimientos para provocar las interferencias buscadas y no juntar las que se evitan. */
+function ordenarInterf_(items, G, primero, quiereAgarre) {
+  var resto = items.slice(), seq = [], pares = [];
+  var tipo = function (x, y) {
+    var rs = G.interf.filter(function (r) { return encaja_(r.a, x) && encaja_(r.b, y) || (r.orden !== 'A>B' && encaja_(r.a, y) && encaja_(r.b, x)); });
+    var b = rs.filter(function (r) { return r.tipo === 'buscada'; })[0] || rs.filter(function (r) { return r.tipo === 'complementaria'; })[0] || rs.filter(function (r) { return r.tipo === 'evitar'; })[0];
+    return b || null;
+  };
+  var puntos = function (x, y) { var r = tipo(x, y); if (!r) return 0; return r.tipo === 'buscada' ? 3 : r.tipo === 'complementaria' ? 1 : (quiereAgarre && /agarre/i.test(r.efecto) ? 2 : -4); };
+  var ini = null;
+  if (primero) resto.forEach(function (y) { if (!ini || puntos(primero, y) > puntos(primero, ini)) ini = y; });
+  if (!ini) ini = resto.filter(function (x) { return resto.some(function (y) { return y !== x && puntos(x, y) >= 3; }); })[0] || resto[0];
+  while (resto.length) {
+    var x = seq.length ? seq[seq.length - 1] : null, sig = ini;
+    if (x) { sig = null; resto.forEach(function (y) { if (!sig || puntos(x, y) > puntos(x, sig)) sig = y; }); }
+    if (x) { var r = tipo(x, sig); if (r) pares.push({ a: x, b: sig, r: r }); }
+    seq.push(sig); resto.splice(resto.indexOf(sig), 1);
+  }
+  if (primero && seq.length) { var r0 = tipo(primero, seq[0]); if (r0) pares.unshift({ a: primero, b: seq[0], r: r0 }); }
+  return { seq: seq, pares: pares };
+}
+/**
+ * Metcon a medida desde «Estímulos que quiero» (ej. «stoh, snatch, oh» o «intercalar carrera, calorías de assault»).
+ * o = { min, material: [...] (vacío = box), lunes, formato } → { bloque, formato, referencia, avisos }
+ */
+function metconGuiado_(deseo, o) {
+  o = o || {};
+  var G = guiaMotor_(), D = parseDeseo_(deseo || '', G), avisos = [], R = G.reglas;
+  var mat = mapaMaterial_(o.material && o.material.length ? o.material : ['box'], true);
+  var tiene = function (m) { return !m.mat || mat[m.mat] || (m.alt && mat[m.alt]); };
+  var w = {}; try { w = pesoCarencias_(o.lunes || lunesDe_(hoyIso_())); } catch (e) {}
+  var movs = D.movs.filter(tiene), sinMat = D.movs.filter(function (m) { return !tiene(m); });
+  if (sinMat.length) avisos.push('Sin material para ' + sinMat.map(function (m) { return m.n.toLowerCase(); }).join(', ') + ': no entra.');
+  D.patrones.forEach(function (p) {
+    if (movs.some(function (m) { return m.patron === p; }) || p === 'MONO') return;
+    var c = G.movs.filter(function (m) { return m.patron === p && tiene(m) && movs.indexOf(m) < 0; }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); })[0];
+    if (c) movs.push(c);
+  });
+  var ergs = D.ergs.filter(tiene);
+  if (D.patrones.indexOf('MONO') >= 0 && !ergs.length) { var e0 = G.movs.filter(function (m) { return m.patron === 'MONO' && tiene(m); })[0]; if (e0) ergs.push(e0); }
+  if (!movs.length) {
+    movs = G.movs.filter(function (m) { return m.patron !== 'MONO' && m.c && tiene(m); }).sort(function (a, b) { return (w[b.c] || 0) - (w[a.c] || 0); }).slice(0, ergs.length ? 2 : 3);
+    avisos.push((ergs.length ? 'Solo has pedido erg/carrera: ' : 'No he reconocido estímulos en «' + (deseo || '') + '»: ') + 'añado lo que más te falta (' + movs.map(function (m) { return m.n.toLowerCase(); }).join(', ') + ').');
+  }
+  if (movs.length + ergs.length <= 2) avisos.push('Solo ' + (movs.length + ergs.length) + ' movimientos: añade un erg o «intercalar carrera» si quieres más interferencia.');
+  var maxM = +R.max_movs || 4; if (movs.length + ergs.length > maxM + 1) { avisos.push('Demasiados movimientos para un metcon: me quedo con ' + maxM + ' + erg.'); movs = movs.slice(0, maxM); }
+  var Tpedido = D.min || +o.min || +R.min_metcon || 12;
+  var fk = D.formato || o.formato || '';
+  var ref = refMotor_(movs.concat(ergs), D, fk);
+  if (!fk && ref && G.formatos[ref.formato]) fk = ref.formato;
+  if (!fk) fk = D.intensidad === 'pesado' ? 'VENTANAS' : D.intensidad === 'potencia' ? 'EVERY' : D.intensidad === 'corto' || Tpedido <= 8 ? 'SPRINT' : Tpedido <= 10 ? 'AMRAP_C' : Tpedido <= 20 ? (movs.length >= 5 ? 'CHIPPER' : 'AMRAP') : 'AMRAP_L';
+  var F = G.formatos[fk] || G.formatos.AMRAP || { k: 'AMRAP', nombre: 'AMRAP', min: 10, max: 20, repsx: 1, estrategia: '', sistema: '', zona: '', rpe: '8' };
+  var T = Math.max(F.min, Math.min(F.max, Math.min(+R.max_metcon || 40, Tpedido)));
+  if (T !== Tpedido) avisos.push('El formato ' + F.nombre + ' va de ' + F.min + ' a ' + F.max + '′: lo dejo en ' + T + '′.');
+  var pc = G.pesos[fk] || { min: 50, max: 65 };
+  var quiereAgarre = D.patrones.indexOf('TIRON') >= 0 && /AGARRE|GRIP/.test(norm(deseo));
+  var otrosErg = ergs.filter(function (e) { return e !== D.intercalar; });
+  var ord = ordenarInterf_(otrosErg.concat(movs), G, D.intercalar, quiereAgarre), seq = ord.seq;
+  var fEq = D.equipo ? (+R.reps_equipo || 0.75) * (D.equipo === 'pareja' ? 2 : 3) : 1, fx = (+F.repsx || 1) * fEq;
+  var dbMat = !mat.barra && mat.db;
+  var L = function (m, f) { return repsTxt_(m, fx * (f || 1)) + (m.patron === 'MONO' ? '' : cargaTxt_(m, pc, dbMat && m.mat === 'barra')); };
+  var inter = D.intercalar ? repsTxt_(D.intercalar, fEq * (D.intercalar.unidad === 'm' ? 0.5 : 0.8)) : '';
+  var lineas = [], cab = '';
+  var esq = (String(ref && ref.estructura || '').match(/[0-9]{1,3}(?:-[0-9]{1,3}){2,}/) || [])[0] || '21-15-9';
+  switch (F.k) {
+    case 'EMOM':
+      var est = seq.length ? seq : ergs; var vueltas = Math.max(1, Math.floor(T / est.length));
+      cab = 'EMOM ' + (vueltas * est.length) + '′ (' + vueltas + ' vueltas)';
+      est.forEach(function (m, i) { lineas.push('MIN ' + (i + 1) + ': ' + L(m, 0.5)); });
+      if (inter) lineas.push('+ ' + inter + ' al empezar cada minuto impar');
+      break;
+    case 'EVERY':
+      var S = Math.max(3, Math.floor(T / 4)); cab = 'EVERY 4′ × ' + S + ' (60–90″ ON al 90 %, el resto descanso)';
+      if (inter) lineas.push(inter);
+      seq.slice(0, 3).forEach(function (m) { lineas.push(L(m, 0.7)); });
+      break;
+    case 'INTERVALOS':
+      var Si = Math.max(4, Math.floor(T / 3)); cab = Si + ' × (2′ ON / 1′ OFF)';
+      if (inter) lineas.push(inter);
+      seq.forEach(function (m) { lineas.push(L(m, 0.5)); });
+      lineas.push('Mismas reps en cada serie: la última igual que la primera');
+      break;
+    case 'VENTANAS':
+      var heavy = movs.filter(function (m) { return /OLY|SENT|BISAGRA|OH/.test(m.patron) && (m.mat === 'barra'); })[0] || movs[0];
+      var Sv = Math.max(4, Math.floor(T / 2.5)); cab = 'EVERY 2′30″ × ' + Sv + ' · heavy en ventanas';
+      var erg = D.intercalar || otrosErg[0]; if (erg) lineas.push(repsTxt_(erg, 0.8));
+      if (heavy) lineas.push('2 ' + heavy.n + cargaTxt_(heavy, pc, false) + ' · ventanas impares a la carga baja y pares a la alta');
+      seq.filter(function (m) { return m !== heavy && m !== erg; }).slice(0, 1).forEach(function (m) { lineas.push(L(m, 0.4)); });
+      break;
+    case 'ESCALERA':
+      cab = esq + ' · FOR TIME · cap ' + T + '′';
+      seq.forEach(function (m) { lineas.push(m.patron === 'MONO' ? repsTxt_(m, 0.8) : m.n + cargaTxt_(m, pc, dbMat && m.mat === 'barra')); });
+      if (inter) lineas.push('Tras cada tanda: ' + inter);
+      break;
+    case 'CHIPPER':
+      cab = 'FOR TIME · cap ' + T + '′ · chipper';
+      seq.forEach(function (m, i) { lineas.push(L(m, 1.5)); if (inter && i < seq.length - 1) lineas.push('  ' + inter); });
+      break;
+    case 'SPRINT': case 'FOR_TIME':
+      var rondas = F.k === 'SPRINT' ? 2 : Math.max(3, Math.min(6, Math.round(T / 4)));
+      cab = rondas + ' RONDAS FOR TIME · cap ' + T + '′';
+      if (inter) lineas.push(inter);
+      seq.forEach(function (m) { lineas.push(L(m, F.k === 'SPRINT' ? 1 : 0.8)); });
+      break;
+    default:
+      cab = 'AMRAP ' + T + '′' + (D.equipo ? ' · ' + (D.equipo === 'pareja' ? 'en pareja (reparte como queráis)' : 'en equipo') : '');
+      if (inter) lineas.push(inter);
+      seq.forEach(function (m) { lineas.push(L(m, 1)); });
+  }
+  var buscadas = ord.pares.filter(function (p) { return p.r.tipo === 'buscada'; }), evitadas = ord.pares.filter(function (p) { return p.r.tipo === 'evitar'; });
+  var interTxt = ord.pares.map(function (p) { return p.a.n + ' → ' + p.b.n + ' · ' + p.r.tipo + ': ' + p.r.efecto; });
+  var contenido = cab + '\n' + lineas.join('\n') +
+    (F.estrategia ? '\n\nESTRATEGIA: ' + F.estrategia : '') +
+    (buscadas.length ? '\nINTERFERENCIA QUE BUSCAMOS: ' + buscadas.map(function (p) { return p.a.n.toLowerCase() + ' → ' + p.b.n.toLowerCase(); }).join(' · ') : '') +
+    (evitadas.length ? '\nOJO: ' + evitadas.map(function (p) { return p.a.n.toLowerCase() + ' + ' + p.b.n.toLowerCase(); }).join(', ') + ' van seguidos (doble ' + (evitadas[0].r.efecto || 'carga').toLowerCase() + '): rompe antes del fallo' : '');
+  var cods = movs.map(function (m) { return m.c; }).filter(function (c, i, a) { return c && a.indexOf(c) === i; });
+  var ciencia = [F.sistema ? F.nombre + ': sistema ' + F.sistema + (F.zona ? ' (' + F.zona + ')' : '') + '.' : '']
+    .concat(ord.pares.filter(function (p) { return p.r.ciencia; }).slice(0, 3).map(function (p) { return p.a.n + ' → ' + p.b.n + ': ' + p.r.ciencia; }))
+    .concat(ref && ref.ciencia ? ['Del WOD de referencia «' + ref.nombre + '»: ' + String(ref.ciencia).slice(0, 400)] : []).filter(Boolean).join('\n');
+  var porque = 'Pediste: «' + String(deseo || '').trim() + '». ' + (ref ? 'Estructura inspirada en «' + ref.nombre + '» (' + ref.fuente + ', APP · MOTOR WODS). ' : '') +
+    (F.cuando ? F.nombre + ': ' + F.cuando.charAt(0).toLowerCase() + F.cuando.slice(1) + '. ' : '') +
+    (movs.some(function (m) { return D.movs.indexOf(m) < 0; }) ? 'Añadido por tus carencias: ' + movs.filter(function (m) { return D.movs.indexOf(m) < 0; }).map(function (m) { return m.n.toLowerCase(); }).join(', ') + '.' : '');
+  return {
+    bloque: { ORIGEN: 'EXTRA', 'TÍTULO': ('METCON A MEDIDA · ' + F.nombre + ' ' + T + '′ · ' + seq.concat(D.intercalar ? [D.intercalar] : []).map(function (m) { return m.n.split(' (')[0]; }).slice(0, 4).join(' + ')).slice(0, 120),
+      CONTENIDO: contenido, MIN: T + 10, INTENSIDAD: 'RPE ' + (F.rpe || '8') + (F.zona ? ' · ' + F.zona : ''), 'CÓDIGOS': cods.join('|'),
+      'POR QUÉ (cursiva)': porque.trim(), 'CIENCIA (técnica · fisiología · biología)': ciencia, INTERFERENCIAS: interTxt.join('\n') },
+    formato: F.k, referencia: ref ? ref.nombre : '', avisos: avisos, entendido: { movimientos: D.movs.map(function (m) { return m.n; }), ergs: D.ergs.map(function (m) { return m.n; }), intercalar: D.intercalar ? D.intercalar.n : '', patrones: D.patrones, formato: D.formato, min: D.min }
+  };
+}
+/** Extras: el metcon a medida entra en el mejor hueco de la semana, en borrador (rehacer los extras lo regenera). */
+function extraADeseo_(lunes, deseo) {
+  var r = metconGuiado_(deseo, { lunes: lunes, min: 15 }), b = r.bloque;
+  var pos = posicionOptima_({ lunes: lunes, campos: b }), h = (pos.mejores || [])[0];
+  if (!h) return { ok: false, avisos: r.avisos.concat(['No hay hueco esta semana para el metcon a medida']) };
+  var o = Object.assign({}, b, { ID: nuevoId_(), FECHA: isoAFecha(h.iso), 'DÍA': diaDe_(h.iso), TURNO: h.turno, ORDEN: h.turno === 'AM' ? 6 : 85, BLOQUE: b['TÍTULO'], ESTADO: 'BORRADOR',
+    GENERADO: 'auto · a medida · ' + String(deseo).slice(0, 60), ACTUALIZADO: ahora_() });
+  o['POR QUÉ (cursiva)'] += ' Va el ' + diaDe_(h.iso).toLowerCase() + ' ' + h.turno + ': ' + (h.motivos || []).slice(0, 2).join('; ') + '.';
+  anadirFila_(HOJAS.PLAN, o);
+  return { ok: true, id: o.ID, dia: diaDe_(h.iso), turno: h.turno, titulo: b['TÍTULO'], avisos: r.avisos };
+}
+/** Movimientos del mega WOD desde la guía (si falla, los de siempre). */
+function movsMega_() {
+  try {
+    var esc = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+    return guiaMotor_().movs.filter(function (m) { return m.patron !== 'MONO'; }).map(function (m) {
+      return { re: new RegExp('(^|[^A-Z])(' + m.alias.map(esc).join('|') + ')(ES|S)?([^A-Z]|$)'), n: m.n, mat: m.mat, alt: m.alt, reps: m.unidad === 'm' ? Math.round(m.reps) : m.reps,
+        carga: m.mat === 'barra' ? 'barra' : m.mat === 'db' ? 'db' : /sandbag/.test(m.mat) ? 'sandbag' : '', c: m.c, equipo: /gusano|lodge/.test(m.mat), k: m.k, patron: m.patron };
+    });
+  } catch (e) { Logger.log('movsMega_: ' + e); return MOV_MEGA_; }
+}
+function ergMegaDe_(m) {
+  return { ROW: ['ergos', 'cal ROW'], SKI: ['ergos', 'cal SKI'], ASSAULT: ['ergos', 'cal ASSAULT BIKE'], BIKE: ['ergos', 'cal BIKE ERG'], RUN: ['_correr', 'm RUN'] }[m.k] || null;
+}
+
+// ---------- 6 · Backup de los jueves y avisos ----------
+var BACKUP_HORA_ = 10, BACKUP_MARGEN_H_ = 6;
+function carpetaJueves_() {
+  var raiz = DriveApp.getFolderById(CONFIG.BACKUPS_ID), it = raiz.getFoldersByName('APP Road to Elite · jueves');
+  return it.hasNext() ? it.next() : raiz.createFolder('APP Road to Elite · jueves');
+}
+function estructuraMd_(fecha) {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID), cf = leerConfig_(), L = [];
+  L.push('# Road To Elite · estructura y funcionamiento · ' + fecha, '', 'Servidor ' + CONFIG.VERSION + ' · generado automáticamente por el backup de los jueves.', '');
+  L.push('## Cómo funciona', '',
+    '- **Web** (GitHub Pages, repo `pComader/road-to-elite`): PWA que habla con el servidor de Apps Script (`doPost` → `accion_`). Solo entra ' + CONFIG.EMAIL_PERMITIDO + ' (token de Firebase verificado).',
+    '- **Servidor** (Apps Script): lee FABRIK PROGRAM (solo lectura), escribe en este Sheet (Training Coverage) y en Google Calendar (solo lo aprobado).',
+    '- **Semana:** domingo 22:15 cierre + ajuste de carrera + vídeos + copia del Sheet → 23:15 carga Fabrik → confirmar semana → «Cargar extras» (metas, carrera, refuerzos, pendientes, metcon a medida) → aprobar (correo de estímulos).',
+    '- **Motor:** las tablas de MOTOR_GUIA.md (movimientos, formatos, pesos, interferencias) + APP · MOTOR WODS (metcons de Fabrik y competición analizados; ciencia de Claude/Gemini; conceptos de Ollama).',
+    '- **Reestructurar:** viaje (intensidad al alza), reorganización (clásica o mega WOD) y competi (online/física).',
+    '- **Backups:** domingo copia del Sheet (Drive) · jueves ' + BACKUP_HORA_ + ':00 backup completo (xlsx + este .md + guía + código) en Drive › Backups › «APP Road to Elite · jueves»; el agente del PC lo copia a E:\\2DO CEREBRO\\BackUPS\\APP Road to Elite. Si a las ' + (BACKUP_HORA_ + BACKUP_MARGEN_H_) + ':00 falta algo: correo, aviso en la app y ventana en el PC.', '');
+  L.push('## Pestañas', '', '| Pestaña | Visible | Filas | Columnas |', '|---|---|---|---|');
+  ss.getSheets().forEach(function (h) {
+    var cab = h.getLastColumn() ? h.getRange(1, 1, 1, Math.min(h.getLastColumn(), 40)).getDisplayValues()[0].filter(String) : [];
+    L.push('| ' + h.getName() + ' | ' + (h.isSheetHidden() ? 'no' : 'sí') + ' | ' + Math.max(0, h.getLastRow() - 1) + ' | ' + cab.join(', ').replace(/\|/g, '/').slice(0, 600) + ' |');
+  });
+  L.push('', '## APP · CONFIG', '', '| Clave | Valor |', '|---|---|');
+  Object.keys(cf).sort().forEach(function (k) { if (k === 'ultimo_configurar') return; L.push('| ' + k + ' | ' + String(cf[k]).replace(/\n/g, ' ').replace(/\|/g, '/').slice(0, 200) + ' |'); });
+  L.push('', '## Disparadores', '');
+  ScriptApp.getProjectTriggers().forEach(function (t) { L.push('- ' + t.getHandlerFunction() + ' · ' + t.getEventType()); });
+  L.push('', '## Propiedades del script (solo nombres; los valores nunca salen del servidor)', '', PROPS.getKeys().sort().map(function (k) { return '`' + k + '`'; }).join(' · '));
+  L.push('', '## Identificadores', '', '- Sheet: `' + CONFIG.SHEET_ID + '`', '- Carpeta de backups: `' + CONFIG.BACKUPS_ID + '`', '- MOTOR_GUIA.md: `' + (cf.motor_guia_id || '—') + '`', '- Web: ' + CONFIG.URL_APP);
+  L.push('', '## Cómo restaurar', '',
+    '1. Sheet: abre el .xlsx del zip en Google Drive («Abrir con Hojas de cálculo») o usa la copia del domingo; cambia `SHEET_ID` en CONFIG del código si es un archivo nuevo.',
+    '2. Servidor: pega `apps-script/Code.gs` del zip del código en el editor de Apps Script, ejecuta `configurar` y crea una versión nueva de la implementación.',
+    '3. Web: el zip del código es el repositorio completo; súbelo a GitHub Pages.',
+    '4. Secretos (FCM_CUENTA, GEMINI_KEY, AGENTE_TOKEN): no están en el backup a propósito; vuelve a crearlos en Propiedades del script.');
+  return L.join('\n');
+}
+function backupJueves() {
+  var f = carpetaJueves_(), fecha = hoyIso_(), blobs = [], notas = [];
+  var xl = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  if (xl.getResponseCode() !== 200) throw new Error('exportar el Sheet: HTTP ' + xl.getResponseCode());
+  blobs.push(xl.getBlob().setName('Road_to_Elite_Training_Coverage_' + fecha + '.xlsx'));
+  var md = estructuraMd_(fecha);
+  blobs.push(Utilities.newBlob(md, 'text/markdown', 'Road_to_Elite_ESTRUCTURA_' + fecha + '.md'));
+  blobs.push(Utilities.newBlob(guiaTexto_(), 'text/markdown', 'MOTOR_GUIA.md'));
+  try {
+    var gh = UrlFetchApp.fetch('https://codeload.github.com/pComader/road-to-elite/zip/refs/heads/main', { muteHttpExceptions: true });
+    if (gh.getResponseCode() === 200) blobs.push(gh.getBlob().setName('codigo_road-to-elite_main.zip')); else notas.push('código HTTP ' + gh.getResponseCode());
+  } catch (e) { notas.push('código: ' + e); }
+  var zip = f.createFile(Utilities.zip(blobs, 'Road_to_Elite_backup_' + fecha + '.zip'));
+  var fmd = f.createFile(Utilities.newBlob(md, 'text/markdown', 'Road_to_Elite_ESTRUCTURA_' + fecha + '.md'));
+  // se guardan los 10 últimos (los suyos; nada más de la carpeta)
+  var viejos = [];
+  [/^Road_to_Elite_backup_\d{4}-\d{2}-\d{2}\.zip$/, /^Road_to_Elite_ESTRUCTURA_\d{4}-\d{2}-\d{2}\.md$/].forEach(function (re) {
+    var l = [], it = f.getFiles(); while (it.hasNext()) { var x = it.next(); if (re.test(x.getName())) l.push(x); }
+    l.sort(function (a, b) { return a.getName() < b.getName() ? 1 : -1; }).slice(10).forEach(function (x) { viejos.push(x); });
+  });
+  viejos.forEach(function (x) { x.setTrashed(true); });
+  ponerConfig_('backup_jueves', fecha + ' · ' + zip.getId() + ' · ' + fmd.getId() + (notas.length ? ' · ' + notas.join(' · ') : ''), 'Último backup completo de los jueves en Drive (zip · md). El agente del PC lo copia a E:\\2DO CEREBRO\\BackUPS');
+  try { revisarBackup_(); } catch (e) { Logger.log('revisarBackup_: ' + e); }
+  return { fecha: fecha, zip: zip.getId(), md: fmd.getId(), kb: Math.round(zip.getSize() / 1024) };
+}
+/** El jueves que ya debería estar hecho (hoy si es jueves ≥16:00, o el anterior) y cómo están Drive y el PC. */
+function estadoBackup_() {
+  var cf = leerConfig_(), hoy = hoyIso_(), jue = sumarDias(lunesDe_(hoy), 3), hora = +Utilities.formatDate(new Date(), CONFIG.ZONA, 'H');
+  var req = hoy > jue || (hoy === jue && hora >= BACKUP_HORA_ + BACKUP_MARGEN_H_) ? jue : sumarDias(jue, -7);
+  var dr = String(cf.backup_jueves || '').slice(0, 10), pc = String(cf.backup_pc || '').slice(0, 10), desde = String(cf.backup_desde || '').slice(0, 10);
+  var partes = String(cf.backup_jueves || '').split(' · ');
+  return { requerido: req, drive: dr, pc: pc, driveOk: dr >= req, pcOk: pc >= req, exento: !!desde && req < desde,
+    zipId: partes[1] || '', mdId: partes[2] || '', alerta: cf.backup_alerta || '' };
+}
+function revisarBackup_() {
+  var e = estadoBackup_(), cf = leerConfig_(), hoy = hoyIso_();
+  if (e.exento) { if (cf.backup_alerta) ponerConfig_('backup_alerta', ''); return e; }
+  if (!e.driveOk && PROPS.getProperty('BACKUP_REINTENTO') !== hoy) {
+    PROPS.setProperty('BACKUP_REINTENTO', hoy);
+    try { backupJueves(); return estadoBackup_(); } catch (x) { e.error = String(x && x.message || x).slice(0, 160); }
+  }
+  var falta = [];
+  if (!e.driveOk) falta.push('Google Drive' + (e.error ? ' (' + e.error + ')' : ''));
+  if (!e.pcOk) falta.push('tu PC (E:\\2DO CEREBRO\\BackUPS: el PC estaba apagado o el agente no ha podido copiarlo)');
+  if (!falta.length) { if (cf.backup_alerta) ponerConfig_('backup_alerta', ''); return e; }
+  var txt = 'Backup del jueves ' + isoAFecha(e.requerido) + ' sin hacer en ' + falta.join(' y ') + '.';
+  if (cf.backup_alerta !== txt) ponerConfig_('backup_alerta', txt, 'Aviso de backup pendiente (la app y el PC lo muestran; se borra solo al hacerse)');
+  var marca = e.requerido + '|' + falta.length + '|' + (!e.driveOk) + (!e.pcOk);
+  if (PROPS.getProperty('BACKUP_MAIL') !== marca) {
+    try {
+      MailApp.sendEmail({ to: CONFIG.EMAIL_PERMITIDO, subject: 'Road To Elite · backup del jueves sin hacer', name: 'Road To Elite',
+        htmlBody: '<p>' + esc_(txt) + '</p><ul>' + (!e.driveOk ? '<li>Drive: abre el Sheet › menú Road To Elite › «Backup completo ahora».</li>' : '') +
+          (!e.pcOk ? '<li>PC: enciéndelo con sesión iniciada; el agente lo copia en la hora siguiente (o ejecuta «Agente PC\\ejecutar ahora.bat»).</li>' : '') +
+          '</ul><p>El aviso desaparece de la app y del PC en cuanto se hace.</p>' });
+      PROPS.setProperty('BACKUP_MAIL', marca);
+    } catch (x) { Logger.log('Correo backup: ' + x); }
+  }
+  return e;
+}
+
+// ---------- 7 · Agente del PC (Ollama + copia del backup + ventana de aviso) ----------
+var ACC_AGENTE_ = ['agente_estado', 'agente_wods', 'agente_conceptos', 'agente_backup', 'agente_backup_ok'];
+function accionAgente_(body) {
+  var tok = PROPS.getProperty('AGENTE_TOKEN'), cache = CacheService.getScriptCache(), fallos = +(cache.get('agente_fallos') || 0);
+  if (fallos > 30) return { ok: false, error: 'bloqueado' };
+  if (!tok || String(body.agente || '').length < 20 || String(body.agente) !== tok) { cache.put('agente_fallos', String(fallos + 1), 3600); return { ok: false, error: 'no_autorizado' }; }
+  if (ACC_AGENTE_.indexOf(body.action) < 0) return { ok: false, error: 'accion_no_permitida' };
+  switch (body.action) {
+    case 'agente_estado':
+      var e = revisarBackup_(), cf = leerConfig_();
+      return { ok: true, version: CONFIG.VERSION, backup: { requerido: e.requerido, drive: e.drive, pc: e.pc, driveOk: e.driveOk, pcOk: e.pcOk, exento: e.exento }, alerta: cf.backup_alerta || '' };
+    case 'agente_wods':
+      return { ok: true, wods: listar_(HOJAS.MOTOR).filter(function (r) { return r.TEXTO && !String(r['CONCEPTOS (Ollama)'] || '').trim(); }).slice(0, Math.min(+body.max || 3, 10))
+        .map(function (r) { return { id: r.ID, nombre: r.NOMBRE, fuente: r.FUENTE, texto: r.TEXTO, formato: r.FORMATO, movimientos: r.MOVIMIENTOS, interferencias: r.INTERFERENCIAS, objetivo: r['OBJETIVO / ESTÍMULO'], ciencia: r.CIENCIA }; }) };
+    case 'agente_conceptos':
+      var x = listar_(HOJAS.MOTOR).filter(function (r) { return r.ID === String(body.id || ''); })[0];
+      if (!x) return { ok: false, error: 'no_encontrado' };
+      actualizarFila_(HOJAS.MOTOR, x._fila, { 'CONCEPTOS (Ollama)': String(body.conceptos || '').replace(/[=+@]/g, ' ').slice(0, 1500), 'ANALIZADO POR': autores_(x['ANALIZADO POR'], 'Ollama'), ACTUALIZADO: ahora_() });
+      return { ok: true };
+    case 'agente_backup':
+      var st = estadoBackup_();
+      if (!st.zipId) return { ok: false, error: 'sin_backup' };
+      var z = DriveApp.getFileById(st.zipId), b64 = Utilities.base64Encode(z.getBlob().getBytes()), T = 900000, n = Math.ceil(b64.length / T);
+      var out = { ok: true, fecha: st.drive, nombre: z.getName(), partes: n, kb: Math.round(z.getSize() / 1024) };
+      if (body.parte == null) { out.md = st.mdId ? DriveApp.getFileById(st.mdId).getBlob().getDataAsString('UTF-8') : ''; out.mdNombre = st.mdId ? DriveApp.getFileById(st.mdId).getName() : ''; }
+      else { var i = Math.max(0, Math.min(n - 1, +body.parte || 0)); out.parte = i; out.datos = b64.slice(i * T, (i + 1) * T); }
+      return out;
+    case 'agente_backup_ok':
+      var f = String(body.fecha || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return { ok: false, error: 'fecha' };
+      ponerConfig_('backup_pc', f + ' · copiado ' + ahora_() + ' · ' + String(body.ruta || '').slice(0, 160), 'Último backup de los jueves copiado al PC por el agente');
+      var e2 = revisarBackup_();
+      return { ok: true, alerta: leerConfig_().backup_alerta || '', pcOk: e2.pcOk };
+  }
+}
+function prepararMotor_() {
+  var cf = leerConfig_();
+  if (!PROPS.getProperty('AGENTE_TOKEN')) PROPS.setProperty('AGENTE_TOKEN', Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 12));
+  if (!cf.motor_guia_id) {
+    var g = DriveApp.getFolderById(CONFIG.BACKUPS_ID).createFile(Utilities.newBlob(MOTOR_GUIA_BASE_, 'text/markdown', 'MOTOR_GUIA.md'));
+    ponerConfig_('motor_guia_id', g.getId(), 'ID en Drive de MOTOR_GUIA.md (la guía que sigue el motor; edítala y se relee en 6 h o con configurar)');
+  }
+  CacheService.getScriptCache().remove('guia_md_v15'); GUIA_MEMO_ = null;
+  if (!cf.gemini_modelo) ponerConfig_('gemini_modelo', 'gemini-2.5-flash', 'Modelo de Gemini para la CIENCIA de APP · MOTOR WODS (clave en Propiedades › GEMINI_KEY; nivel gratuito)');
+  if (!cf.backup_desde) ponerConfig_('backup_desde', hoyIso_(), 'Desde cuándo se exige el backup de los jueves');
+  var r = ['guía ' + guiaMotor_().movs.length + ' movimientos · ' + Object.keys(guiaMotor_().formatos).length + ' formatos · ' + guiaMotor_().interf.length + ' interferencias'];
+  r.push('semillas ' + sembrarMotorWods_());
+  try { r.push('Fabrik ' + alimentarMotor_(16)); } catch (e) { r.push('Fabrik FALLO ' + e); }
+  try { r.push('reanalizados ' + reanalizarMotor_()); } catch (e) { r.push('reanalizar FALLO ' + e); }
+  if (!String(leerConfig_().backup_jueves || '')) { try { var bj = backupJueves(); r.push('primer backup ' + bj.kb + ' KB'); } catch (e) { r.push('backup FALLO ' + e); } }
+  r.push(PROPS.getProperty('GEMINI_KEY') ? 'Gemini con clave' : 'Gemini sin clave (falta GEMINI_KEY)');
+  return r.join(' · ');
+}
+function menuMotorAhora() { SpreadsheetApp.getActive().toast('Nuevos ' + alimentarMotor_(4) + ' · reanalizados ' + reanalizarMotor_(), 'Motor'); }
+function menuGemini() { SpreadsheetApp.getActive().toast('Explicados por Gemini: ' + geminiExplicar_(8), 'Motor'); }
+function menuBackupAhora() { var r = backupJueves(); SpreadsheetApp.getActive().toast('Backup ' + r.fecha + ' · ' + r.kb + ' KB en Drive › Backups › APP Road to Elite · jueves', 'Backup'); }
+function menuTokenAgente() {
+  var t = PROPS.getProperty('AGENTE_TOKEN') || '(ejecuta configurar)';
+  SpreadsheetApp.getUi().alert('Token del agente del PC', 'Cópialo y pégalo cuando te lo pida «instalar.bat».\nNo lo compartas con nadie (tampoco con Claude):\n\n' + t, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// Copia de MOTOR_GUIA.md (docs/MOTOR_GUIA.md del repositorio): se usa si la de Drive no se puede leer y para crearla la primera vez.
+var MOTOR_GUIA_BASE_ = "# MOTOR_GUIA · Road To Elite\n\nGuía que sigue el motor que genera los entrenamientos (metcons a medida, mega WOD, extras con «Estímulos que quiero»).\n\n- **Las tablas `## TABLA · …` las lee el servidor de verdad.** Si cambias una fila, cambia lo que genera el motor, sin tocar código.\n  - Mantén las columnas y el formato `| a | b |`.\n  - Los alias van separados por comas, en mayúsculas o minúsculas (da igual) y sin tildes obligatorias.\n  - Una fila que empieza por `#` se ignora.\n- **El texto de «Claves» lo leemos Claude y Gemini** para diseñar, revisar y explicar.\n- La copia de trabajo vive en Google Drive (`MOTOR_GUIA.md`, junto a los backups). El servidor la relee cada 6 h o al ejecutar `configurar`.\n- Fuentes:\n  - `Rendimiento_Hibrido_GuiaDefinitiva_md.md` (manual v2.0);\n  - las notas de coach de Fabrik: MODALIDAD, OBJETIVO, LIMITANTES;\n  - las claves de CrossFit acordadas en el proyecto «Road To Elite».\n\n## TABLA · FORMATOS\n\n| CLAVE | NOMBRE | MIN | MAX | VENTANA | SISTEMA | ZONA | RPE | REPS x | CUÁNDO | ESTRATEGIA |\n|---|---|---|---|---|---|---|---|---|---|---|\n| SPRINT | For time corto | 3 | 8 | cap | glucolítico | Z6–Z7 | 9 | 0.8 | Sprint de competición, 2–3 movimientos, cargas medias | Salida fuerte; tandas grandes desde el principio; transiciones de menos de 3″ |\n| AMRAP_C | AMRAP corto | 6 | 10 | continuo | glucolítico | Z5–Z6 | 8–9 | 1 | Potencia con fatiga, pocas transiciones | 85–90 % desde la ronda 1 y tandas fijas |\n| AMRAP | AMRAP medio | 11 | 20 | continuo | mixto (umbral) | Z4–Z5 | 7–8 | 1.2 | Ritmo sostenido con interferencia | Ronda 1 al 80 %; mira el tiempo por ronda y no lo dejes caer más de un 10 % |\n| AMRAP_L | AMRAP largo | 21 | 40 | continuo | aeróbico | Z3 | 6–7 | 1.4 | Capacidad aeróbica, movimientos de baja demanda técnica | Sin picos; misma carrera o erg por ronda (como pide Fabrik) |\n| FOR_TIME | For time con cap | 8 | 20 | cap | mixto | Z4–Z6 | 8 | 1.2 | Gestión de WOD, chipper corto o rondas | No te vayas en el primer tercio; acelera en el último |\n| CHIPPER | Chipper | 15 | 30 | cap | mixto-aeróbico | Z3–Z5 | 7–8 | 1.5 | Muchos apartados; administrar para llegar con energía al final | Cada apartado al 75–80 %; el último es el que suma |\n| ESCALERA | 21-15-9 / ascendente | 6 | 15 | cap | glucolítico | Z5–Z6 | 8–9 | 1 | Movimientos de la misma familia con interferencia directa | Rompe antes del fallo: 21 = 12+9, 15 = 8+7, 9 = seguidas |\n| EMOM | EMOM | 10 | 30 | 60″ | mixto | Z4–Z5 | 7–8 | 0.5 | Densidad y calidad técnica en fatiga; alterna minutos | Trabajo de 35–45″ y descanso de 15–25″; si pasas de 50″, baja reps |\n| EVERY | Every 3–4′ (P1) | 12 | 30 | 3–4′ (60–90″ ON) | potencia con fatiga | Z6–Z8 | 9 | 0.7 | Potencia con fatiga: series al 90 % con recuperación casi completa | Cada serie al 90 %; si la caída pasa del 10 %, para |\n| INTERVALOS | Trabajo:descanso | 12 | 30 | 2:1 · 1:1 · 1:2 | umbral / VO₂ | Z5–Z7 | 8–9 | 0.7 | Ergos + gimnásticos; P4 umbral/pico | Mismo ritmo en todas las series; la última igual que la primera |\n| VENTANAS | Heavy en ventanas | 10 | 20 | E2–3′ | fuerza en fatiga | — | 8–9 | 0.4 | Halterofilia o fuerza pesada tras erg o gimnásticos | Ventana 1 ligera, ventana 2 exigente (estilo Fabrik); calidad antes que velocidad |\n| SINCRO | Pareja o equipo | 15 | 60 | variable | mixto | Z4–Z6 | 8 | 1.6 | Mega WOD o equipo | Reparto por fuerzas; el más fuerte en el movimiento limitante |\n\n## TABLA · MOVIMIENTOS\n\n`PATRÓN`:\n- OLY = olímpico\n- OH = empuje vertical / por encima de la cabeza\n- SENT = sentadilla\n- BISAGRA\n- TIRON = tirón gimnástico\n- EMPUJE_G = empuje gimnástico\n- SALTO\n- MONO = erg o carrera\n- CORE\n- ACARREO\n- CUERPO = peso corporal\n\n`CARGA` (etiquetas del motor): PIERNA · HOMBRO · AGARRE · CORE · IMPACTO · SNC · GLUC · AERO.\n\n`1RM DE`: la marca de APP · MARCAS de la que sale el peso, con su factor, por ejemplo «FRONT SQUAT 0.8». Si no tienes esa marca, se usa KG ♂ RX.\n\n| CLAVE | NOMBRE | ALIAS | MATERIAL | ALTERNATIVA | PATRÓN | CARGA | UNIDAD | REPS | KG ♂ RX | KG ♀ RX | 1RM DE | CÓDIGO |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| THRUSTER | THRUSTERS | thruster, thrusters | barra | db | OH | PIERNA, HOMBRO, GLUC | reps | 12 | 43 | 29 | FRONT SQUAT 0.75 | T02 |\n| STOH | SHOULDER TO OVERHEAD | stoh, s2oh, shoulder to overhead, push press, push jerk, jerk | barra | db | OH | HOMBRO | reps | 12 | 61 | 43 | PUSH JERK 1 | M07 |\n| SNATCH | POWER SNATCH | snatch, power snatch, arrancada | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 8 | 43 | 29 | SNATCH 1 | |\n| SQ_SNATCH | SQUAT SNATCH | squat snatch | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 6 | 43 | 29 | SNATCH 1 | |\n| HANG_SN | HANG POWER SNATCH | hang snatch, hang power snatch | barra | db | OLY | SNC, HOMBRO | reps | 8 | 43 | 29 | SNATCH 1 | C04 |\n| OHS | OVERHEAD SQUAT | ohs, overhead squat | barra | db | OH | HOMBRO, PIERNA, CORE | reps | 10 | 43 | 29 | SNATCH 1 | |\n| DB_SNATCH | DB SNATCH (alternos) | db snatch, dumbbell snatch | db | kb | OLY | HOMBRO, GLUC | reps | 16 | 22.5 | 15 | | |\n| DB_C2OH | DB HANG CLEAN TO OVERHEAD | c2oh, clean to overhead, db hang clean to overhead | db | kb | OH | HOMBRO, PIERNA | reps | 12 | 22.5 | 15 | | |\n| OH_LUNGE | DB OVERHEAD WALKING LUNGE | oh lunge, overhead lunge, lunge oh | db | sandbag | OH | HOMBRO, PIERNA, CORE | m | 15 | 22.5 | 15 | | |\n| CLEAN | POWER CLEAN | clean, power clean, cargada | barra | db | OLY | SNC, PIERNA, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | |\n| SQ_CLEAN | SQUAT CLEAN | squat clean | barra | db | OLY | SNC, PIERNA | reps | 8 | 61 | 43 | CLEAN 1 | |\n| HANG_CL | HANG POWER CLEAN | hang clean, hang power clean | barra | db | OLY | SNC, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | C04 |\n| FRONT_SQ | FRONT SQUAT | front squat | barra | db | SENT | PIERNA, CORE | reps | 12 | 61 | 43 | FRONT SQUAT 1 | C02 |\n| DEADLIFT | DEADLIFT | deadlift, peso muerto | barra | kb | BISAGRA | PIERNA, AGARRE, CORE | reps | 10 | 102 | 70 | DEADLIFT 1 | |\n| WALLBALL | WALL BALLS | wall ball, wallball, wall balls | slamball | | OH | PIERNA, HOMBRO, GLUC | reps | 20 | 9 | 6 | | |\n| DU | DOUBLE UNDERS | du, dus, double under, double unders, comba | comba | | SALTO | IMPACTO, GLUC | reps | 50 | | | | C01 |\n| BURPEE | BURPEES | burpee, burpees | | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BOB | BURPEES OVER THE BAR | burpee over the bar, bar facing burpee, bfb | barra | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| LAT_BURPEE | LATERAL BURPEES OVER DB | lateral burpee, burpee over db | db | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BJO | BOX JUMP OVERS | box jump, box jump over, bjo, cajon | cajon | | SALTO | PIERNA, IMPACTO | reps | 12 | | | | W07 |\n| C2B | CHEST TO BAR | c2b, chest to bar | rack_dominadas | | TIRON | AGARRE, HOMBRO | reps | 12 | | | | M01 |\n| PULLUP | PULL-UPS | pull up, pull-up, dominadas | rack_dominadas | | TIRON | AGARRE | reps | 15 | | | | |\n| T2B | TOES TO BAR | t2b, toes to bar | rack_dominadas | | CORE | AGARRE, CORE | reps | 15 | | | | |\n| BMU | BAR MUSCLE UPS | bmu, bar muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 6 | | | | M48 |\n| RMU | RING MUSCLE UPS | rmu, ring muscle up | rack_completo | | TIRON | AGARRE, HOMBRO, SNC | reps | 5 | | | | M49 |\n| HSPU | HSPU | hspu, handstand push up, pino flexion | hspu | | EMPUJE_G | HOMBRO | reps | 10 | | | | W31 |\n| HSWALK | HANDSTAND WALK | hs walk, handstand walk, pino andando | hspu | | EMPUJE_G | HOMBRO, CORE | m | 15 | | | | |\n| WALLWALK | WALL WALKS | wall walk | hspu | | EMPUJE_G | HOMBRO, CORE | reps | 5 | | | | |\n| ROPE | ROPE CLIMBS | rope, rope climb, cuerda | cuerda | | TIRON | AGARRE | reps | 3 | | | | M36 |\n| GHD | GHD SIT-UPS | ghd | box | | CORE | CORE | reps | 15 | | | | |\n| KBS | KB SWINGS | kb swing, kettlebell swing, swing | kb | db | BISAGRA | AGARRE, GLUC | reps | 20 | 24 | 16 | | |\n| DEVIL | DEVIL PRESS | devil press | db | | OLY | HOMBRO, GLUC | reps | 10 | 22.5 | 15 | | |\n| SANDBAG | SANDBAG CLEANS | sandbag, sandbag clean | sandbag | | OLY | PIERNA, CORE | reps | 10 | 70 | 45 | | M57 |\n| SB_LUNGE | SANDBAG LUNGES | sandbag lunge, lunges hyrox | sandbag_hyrox | db | SENT | PIERNA | m | 20 | 20 | 10 | | |\n| LUNGE | DB WALKING LUNGES | lunge, lunges, zancadas | db | | SENT | PIERNA | reps | 16 | 22.5 | 15 | | |\n| SLED | SLED PUSH 15 m | sled, trineo | trineo | | ACARREO | PIERNA, GLUC | reps | 2 | | | | M38 |\n| FARMER | FARMER CARRY | farmer, farmers carry | db | kb | ACARREO | AGARRE, CORE | m | 40 | 32 | 24 | | |\n| GUSANO | WORM CLEANS + CARRY 20 m | gusano, worm | gusano | | ACARREO | PIERNA, CORE | reps | 6 | | | | |\n| LODGE | SANDBAG OVER LODGE | lodge, over the wall | lodge_lanzar | | OLY | PIERNA, HOMBRO | reps | 8 | | | | M57 |\n| LODGE_JUMP | JUMP OVER LODGE | jump over lodge, jump over | lodge_saltar | | SALTO | PIERNA, IMPACTO | reps | 10 | | | | W07 |\n| ROW | ROW | row, remo, rower | ergos | | MONO | AERO, GLUC | cal | 15 | | | | |\n| SKI | SKIERG | ski, skierg | ergos | | MONO | AERO, HOMBRO | cal | 15 | | | | |\n| ASSAULT | ASSAULT BIKE | assault, air bike, airbike, echo, assault bike | ergos | | MONO | AERO, GLUC, PIERNA | cal | 15 | | | | |\n| BIKE | BIKE ERG | bike erg, bikeerg | ergos | | MONO | AERO, PIERNA | cal | 20 | | | | |\n| RUN | RUN | run, carrera, correr, running | _correr | | MONO | AERO, IMPACTO | m | 400 | | | | |\n\n## TABLA · PATRONES\n\nPalabras sueltas del campo «Estímulos que quiero» que no nombran un movimiento sino una familia. El motor añade el movimiento de esa familia que más falta (según APP · METAS) y que tu material permite.\n\n| PALABRA | PATRÓN | CARGA |\n|---|---|---|\n| oh, overhead, por encima | OH | HOMBRO |\n| empuje, push | OH | HOMBRO |\n| tiron, pull, gimnasticos | TIRON | AGARRE |\n| agarre, grip | TIRON | AGARRE |\n| pierna, legs | SENT | PIERNA |\n| bisagra, cadena posterior | BISAGRA | PIERNA |\n| halterofilia, oly, olimpico | OLY | SNC |\n| saltos, salto, plio | SALTO | IMPACTO |\n| core, abdomen | CORE | CORE |\n| acarreo, carry | ACARREO | AGARRE |\n| erg, ergos, monoestructural | MONO | AERO |\n\n## TABLA · INTERFERENCIAS\n\n- `A` y `B`: CLAVE de movimiento o PATRÓN; `*` = cualquiera.\n- `TIPO`:\n  - `buscada`: el motor los pone seguidos en ese orden porque es la interferencia de competición que se quiere entrenar;\n  - `complementaria`: alternarlos da densidad sin que uno limite al otro;\n  - `evitar`: no los pone seguidos salvo que lo pidas.\n- `ORDEN`: `A>B` (A antes que B) o `A<>B` (da igual).\n\n| A | B | TIPO | ORDEN | EFECTO BUSCADO | CIENCIA |\n|---|---|---|---|---|---|\n| RUN | THRUSTER | buscada | A>B | Correr y llegar a la barra con cuádriceps pre-fatigado y la respiración alta, como en competición e HYROX | Tras la carrera el lactato y la ventilación están altos: el thruster exige estabilizar el tronco con alta demanda respiratoria. Entrena el aclarado de H⁺ en el músculo que sigue trabajando y la eficiencia del bracing con hiperventilación. |\n| ASSAULT | OH | buscada | A>B | Estabilidad de hombro y core por encima de la cabeza con la frecuencia cardiaca muy alta | La air bike recluta piernas y brazos a la vez y dispara la FC y el CO₂. Bloquear por encima de la cabeza así obliga al control motor (manguito, serrato, core) a funcionar con fatiga sistémica: es lo que limita en competición. |\n| ASSAULT | SQ_SNATCH | buscada | A>B | Squat snatch bajo interferencia directa de la air bike (objetivo literal de Fabrik) | La precisión del segundo tirón y la recepción profunda se degradan con fatiga cardiorrespiratoria. Practicarlo con cargas medias consolida el patrón (aprendizaje motor en fatiga) sin el riesgo de hacerlo pesado. |\n| ASSAULT | BMU | buscada | A>B | BMU con fatiga cardiorrespiratoria (Fabrik) | El kipping depende del timing; con FC alta se pierde coordinación. Entrenarlo así mejora la economía del gesto cuando importa. |\n| DU | THRUSTER | buscada | A<>B | Limitante respiratorio alto (Fabrik: «thruster + DU») | Los DU mantienen la FC alta con bajo coste muscular. El thruster suma carga de pierna y hombro, y entre los dos fuerzan la tolerancia ventilatoria. |\n| RUN | T2B | buscada | A>B | Sostener eficiencia de T2B tras la carrera; usar la carrera para bajar pulsaciones (Fabrik) | Pacing estratégico: regular la intensidad de la carrera para llegar al gimnástico limitante con FC más baja. Aprende a usar lo monoestructural como recuperación activa. |\n| ROW | WALLBALL | buscada | A>B | Erg sostenido y después un movimiento de baja demanda coordinativa (Fabrik) | Tras el remo el gasto cardiaco sigue alto. El wall ball, poco técnico, permite seguir en umbral sin que la técnica limite: estímulo aeróbico-glucolítico sostenido. |\n| BURPEE | BJO | buscada | A<>B | Gestión de WOD: llegar con energía al apartado final (burpee box jump over, Fabrik) | Combina impacto y extensión de cadera con alta demanda metabólica. Administrar los apartados previos entrena la distribución de esfuerzo (pacing). |\n| MONO | VENTANAS | buscada | A>B | Fuerza o heavy en fatiga: levantar pesado después del erg | Tras un esfuerzo glucolítico la fosfocreatina está parcialmente vaciada. Levantar pesado así entrena la expresión de fuerza con fatiga metabólica (PAPE limitado; el estímulo es la tolerancia). |\n| SKI | C2B | buscada | A>B | Limitante de hombro y dorsal: tirón doble (Fabrik: C2B + ski) | Los dos tiran con dorsal y tríceps largo: la fatiga local se acumula y obliga a romper series. Útil si la meta es resistencia de tirón. |\n| OH | TIRON | complementaria | A<>B | Densidad: empuje vertical y tirón alternos (Fran, 24.3) | Agonistas y antagonistas alternos: mientras uno trabaja el otro se recupera. Más trabajo total por minuto con menos fallo local. |\n| T2B | OH | complementaria | A<>B | Core flexor y empuje vertical alternos | Patrones distintos: permiten densidad sin solapar fatiga local. |\n| LUNGE | RUN | buscada | A>B | Transición de pierna estilo HYROX | Las zancadas fatigan cuádriceps y glúteo excéntricamente, y la carrera posterior exige economía con el músculo fatigado (específico de HYROX). |\n| SLED | RUN | buscada | A>B | Sled y después carrera (HYROX) | El trineo es concéntrico pesado con alta demanda glucolítica. Correr después entrena el «compromised running». |\n| SANDBAG | RUN | buscada | A<>B | Carga incómoda y carrera | La carga asimétrica pide core y respiración contra presión intraabdominal; la carrera exige recuperarse en movimiento. |\n| C2B | T2B | evitar | A<>B | Doble agarre seguido | Los flexores del antebrazo se fatigan y caen las dos series. Solo si quieres resistencia de agarre (escribe «agarre»). |\n| PULLUP | T2B | evitar | A<>B | Doble agarre seguido | Igual que arriba. |\n| DEADLIFT | ROW | evitar | A<>B | Cadena posterior y lumbar doble en volumen | El erector espinal acumula fatiga y la técnica del peso muerto se resiente. Sepáralos con otro movimiento. |\n| WALLBALL | THRUSTER | evitar | A<>B | Mismo patrón seguido (sentadilla + empuje) | Mono-fatiga: limita el volumen total sin un estímulo nuevo. Solo si buscas «pierna/hombro» al límite. |\n| HSPU | STOH | evitar | A<>B | Doble empuje vertical | El tríceps y el deltoides anterior fallan pronto; si se busca, que sea con reps bajas. |\n| OLY | BURPEE | buscada | A<>B | Halterofilia con pulsaciones altas | Mantener la técnica de la barra con FC alta: interferencia típica de los WODs de competición en la fase de realización. |\n\n## TABLA · PESOS\n\nRango de carga en % del 1RM según el formato. El motor usa la marca del ejercicio (o la de `1RM DE`) y redondea a 2,5 kg.\n\n| FORMATO | % MIN | % MAX | NOTA |\n|---|---|---|---|\n| SPRINT | 60 | 75 | Cargas medias que permitan tandas grandes |\n| AMRAP_C | 55 | 70 | |\n| AMRAP | 45 | 60 | |\n| AMRAP_L | 35 | 50 | Barra ligera: no es el objetivo (Fabrik: «no buscamos una barra exigente») |\n| FOR_TIME | 50 | 65 | |\n| CHIPPER | 40 | 55 | |\n| ESCALERA | 55 | 70 | |\n| EMOM | 55 | 70 | |\n| EVERY | 60 | 75 | P1: cargas que permitan el 90 % de intensidad |\n| INTERVALOS | 45 | 60 | |\n| VENTANAS | 75 | 88 | Ventana 1 al mínimo y ventana 2 al máximo |\n| SINCRO | 45 | 60 | Equipo: −10–15 % frente a individual |\n\n## TABLA · REGLAS\n\n| CLAVE | VALOR | EXPLICACIÓN |\n|---|---|---|\n| max_movs | 4 | Movimientos por parte (con el erg incluido) |\n| transicion_min | 2 | Minutos de transición entre partes del mega WOD |\n| erg_cada_ronda | 1 | Con «intercalar X», X va entre todas las rondas |\n| min_metcon | 12 | Minutos por defecto de un metcon a medida si no los pones |\n| max_metcon | 40 | Tope de minutos de un metcon a medida |\n| sesiones_duras_48h | 1 | Las sesiones duras (P1–P4, metcon RPE ≥8) se separan 48 h |\n| tope_compensacion | 40 | % máximo de volumen extra al compensar |\n| reps_equipo | 0.75 | Factor de reps por atleta en pareja o equipo |\n\n## Claves de CrossFit (Road To Elite)\n\n- **Interferencia con intención:** Fabrik programa la interferencia como objetivo, por ejemplo:\n  - «squat snatch bajo interferencia directa de air bike»;\n  - «BMU bajo fatiga cardiorrespiratoria»;\n  - «T2B bajo fatiga tras la carrera».\n\n  El motor debe reproducir ese tipo de pares, no evitarlos, cuando el objetivo es competir.\n- **Fichas de Fabrik:** cada metcon trae\n  - WOD MATERIAL, INTENSIDAD (RPE) y CARGA;\n  - MODALIDAD y MODALIDAD WOD;\n  - OBJETIVO;\n  - LIMITANTE muscular, técnico, respiratorio y estratégico.\n\n  Son la etiqueta de cada WOD en `APP · MOTOR WODS` y lo que el motor imita.\n- **«Respeta %»:**\n  - la carga media es media;\n  - en metcon largo, la barra no debe ser lo que determine el WOD;\n  - en ventanas, la 1 ligera y la 2 exigente.\n- **Pacing:** empezar exigente pero repetible; registrar si la caída viene del aire, el agarre, el hombro o las transiciones (manual §6.4).\n- **Realización (semanas 9–12):**\n  - interferencia máxima;\n  - gimnásticos y barra con pulsaciones altas;\n  - erg mezclado con barra y gimnásticos;\n  - heavys aislados y en metcon;\n  - accesorios en mantenimiento.\n- **Z6–Z8 (P1–P4):**\n  - pocos minutos y de máxima calidad;\n  - P1: every 3–4′ al 90 % con descanso casi completo;\n  - P4: umbral en impares y pico en pares;\n  - si un metcon de Fabrik ya es de esa familia (4 bloques estables), cuenta como el estímulo de la semana.\n- **Segundo P integrado (R04):**\n  - thrusters, DU, STOH, front squat, burpees, hang snatch/clean y C2B/BMU en fatiga, con erg o carrera;\n  - nunca a menos de 48 h de otra sesión dura.\n- **Viaje:** lo que no siga la programación sube la intensidad:\n  - densidad;\n  - tempo;\n  - chaleco;\n  - final tipo P con sprints de 20″.\n- **Carencias:** salen de APP · METAS (peso = prioridad × lo que falta). El motor prioriza los movimientos de las metas menos cubiertas que tu material permite.\n\n## Claves del manual de rendimiento híbrido (resumen para el motor)\n\n- **Concurrente:**\n  - separa la fuerza pesada y la carrera de calidad ≥6 h, o mejor en días distintos;\n  - la Z2 no interfiere si es suave de verdad.\n- **48 h entre sesiones duras.** Tope semanal de minutos por turno: AM 75′, PM 120′.\n- **Taper:** −41–60 % de volumen sin bajar intensidad ni frecuencia.\n- **Competición física:**\n  - fuera P1–P4 y extras;\n  - 72–48 h antes, volumen medio-bajo con intensidad alta;\n  - 48–24 h antes, repaso;\n  - 24 h antes, descanso.\n- **Combustible:** 6–8 g/kg de hidratos el día previo a una carga alta; 1–2 g/kg 2–3 h antes de competir.\n";
