@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.21.0',
+  VERSION: '0.21.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -415,7 +415,7 @@ function migrarTestsAEventos_() {
 // ===================== v0.7 · DOMINGO EN CADENA: cierre → vídeos → backup =====================
 /** Un solo disparador hace las tres fases en orden y deja el resultado en APP · CONFIG (clave «ultimo_domingo»). */
 function domingoNoche() {
-  var fases = [['cierre', cierreSemanal], ['carrera', ajusteCarrera_], ['vídeos', copiarVideosGabi], ['backup', backupSemanal]], estado = [];
+  var fases = [['cierre', cierreSemanal], ['carrera', ajusteCarrera_], ['backup', backupSemanal]], estado = [];
   fases.forEach(function (f) {
     try { f[1](); estado.push(f[0] + ' OK ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'HH:mm')); }
     catch (e) { estado.push(f[0] + ' FALLO (' + String(e && e.message || e).slice(0, 120) + ')'); }
@@ -487,23 +487,8 @@ function leerVideos_() {
   });
 }
 
-/**
- * v0.18 · Sincroniza la biblioteca de vídeos de la app de Gabi (DICCIONARIO de ProgramAPP, SOLO LECTURA) con la base compartida
- * «Base de datos Vídeos» (Drive › 2DO CEREBRO): añade los ejercicios que falten. Domingo 23:00 y al ejecutar configurar.
- */
-function copiarVideosGabi() {
-  var dic = programApp_().getSheetByName('DICCIONARIO');
-  if (!dic) return 0;
-  var origen = dic.getDataRange().getDisplayValues().slice(1).filter(function (r) { return r[0] && r[2]; });
-  var ya = {};
-  listar_(HOJAS.VIDEOS).forEach(function (v) { ya[norm(v.EJERCICIO)] = 1; });
-  var hoy = hoyTxt_();
-  var nuevas = origen.filter(function (r) { return !ya[norm(r[0])]; })
-    .map(function (r) { return { EJERCICIO: r[0], ALIAS: r[1], 'VÍDEO': r[2], ESTADO: 'SIN COMPROBAR', FUENTE: 'App de Gabi (DICCIONARIO)', 'APROBADO POR': r[3], ALTA: r[4] || hoy, ACTUALIZADO: ahora_() }; });
-  filasEnHoja_(HOJAS.VIDEOS, nuevas);
-  PROPS.setProperty('ULTIMA_COPIA_VIDEOS', ahora_() + ' · ' + nuevas.length + ' nuevos');
-  return nuevas.length;
-}
+// v0.21.1 · Road To Elite ya NO lee el DICCIONARIO de la app de Gabi: esa app copia sus ejercicios en la «Base de datos Vídeos»
+// los martes a las 05:00, y Road To Elite lee de ahí (videosMartes, martes 06:00). Ver videosMartes() más abajo.
 
 // ===================== COPIA DE SEGURIDAD EN DRIVE =====================
 /**
@@ -1424,7 +1409,8 @@ function configurarSin_() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarVideosSiToca') borrarDisp_(t); });
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'competisLunes') borrarDisp_(t); });
   reintentar_(function () { return ScriptApp.newTrigger('competisLunes').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(15).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
-  reintentar_(function () { return ScriptApp.newTrigger('revisarVideosSiToca').timeBased().everyDays(1).atHour(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['videosMartes', 'copiarVideosGabi'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('videosMartes').timeBased().onWeekDay(ScriptApp.WeekDay.TUESDAY).atHour(6).nearMinute(0).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
@@ -3018,7 +3004,7 @@ function extrasSemana_(lunes, base) {
   var out = { refuerzos: [], notasBloque: [], grabacion: {}, avisosVistos: String(leerConfig_().avisos_vistos || '').split(',').filter(Boolean),
     enduranceManana: enduranceManana_(),
     eventosPorAprobar: listar_(HOJAS.EVENTOS).filter(function (r) { return r.ESTADO === 'Pendiente de aprobar'; }),
-    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '', competisPreguntas: preguntasCompetis_(), extrasParcial: (function () { try { return JSON.parse(leerConfig_()['extras_parcial_' + lunes] || 'null'); } catch (e) { return null; } })(),
+    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '', competisPreguntas: preguntasCompetis_(), videosVer: String(leerConfig_().videos_version || ''), extrasParcial: (function () { try { return JSON.parse(leerConfig_()['extras_parcial_' + lunes] || 'null'); } catch (e) { return null; } })(),
     fabrikDias: (base.plan || []).filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }).map(function (r) { return celdaIso_(r.FECHA); }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }) };
   try { out.refuerzos = refuerzosDe_(lunes); out.refuerzosSig = refuerzosDe_(sumarDias(lunes, 7)); } catch (e) {}
   try { out.notasBloque = listar_(HOJAS.NOTAS).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); }); } catch (e) {}
@@ -5131,8 +5117,8 @@ function menuNuevoTokenAgente() {
  * «Base de datos Vídeos» (CONFIG.VIDEOS_BD_ID): un solo sitio con los vídeos de técnica que leen las apps de Pablo.
  *   VÍDEOS: EJERCICIO · ALIAS (;) · VÍDEO (url) · ESTADO (OK / ROTO / REVISAR / SIN COMPROBAR) · ÚLTIMA REVISIÓN · DETALLE · FUENTE · APROBADO POR · ALTA · ACTUALIZADO
  *   REVISIONES: registro de cada revisión de enlaces.
- * Road To Elite la crea/prepara, copia lo nuevo del DICCIONARIO de la app de Gabi (solo lectura) y revisa los enlaces cada
- * CONFIG › videos_revision_dias (7 por defecto; 14 = cada dos semanas). Los ROTO no se muestran en la app y te llega un correo.
+ * La app de Gabi añade aquí los martes a las 05:00 lo que falte de su DICCIONARIO. Road To Elite la prepara, la lee los martes a las 06:00
+ * (videosMartes: comprueba lo nuevo y, cada CONFIG › videos_revision_dias = 7 o 14 días, todos los enlaces). Los ROTO no se muestran en la app y te llega un correo.
  */
 HOJAS.VIDEOS = 'VÍDEOS'; HOJAS.VID_REV = 'REVISIONES';
 var ESQ_VID_ = {};
@@ -5151,7 +5137,7 @@ var LEEME_VID_ = [['🎬 Base de datos de vídeos · compartida por las apps de 
   ['• VÍDEOS: un ejercicio por fila. ALIAS separados por «;». La app busca el vídeo por el nombre del ejercicio o por sus alias.'],
   ['• ESTADO lo pone la revisión automática de enlaces (cada semana o cada dos): OK · ROTO (el vídeo ya no existe; no se muestra) · REVISAR (privado, sin acceso o error puntual) · SIN COMPROBAR.'],
   ['• Para arreglar uno ROTO: cambia la URL y pon ESTADO = SIN COMPROBAR; la próxima revisión lo valida.'],
-  ['• Road To Elite copia aquí lo nuevo del DICCIONARIO de la app de Gabi (solo lectura) y hace la revisión. Otras apps pueden leer y añadir filas.'],
+  ['• La app de Gabi añade aquí los martes a las 05:00 los ejercicios de su DICCIONARIO que falten. Road To Elite lee de aquí los martes a las 06:00 y revisa los enlaces. Otras apps pueden leer y añadir filas.'],
   ['• No cambies el nombre de las pestañas ni de las columnas.']];
 function prepararVideos_() {
   var cf = leerConfig_(), r = [];
@@ -5177,13 +5163,13 @@ function prepararVideos_() {
     if (datos.every(function (row) { return !col(row, 'EJERCICIO') || tienen[norm(col(row, 'EJERCICIO'))]; })) { miLibro_().deleteSheet(vieja); r.push(n + ' vídeos traídos de APP · VÍDEOS y pestaña quitada'); }
     else r.push('AVISO: APP · VÍDEOS no se copió entera; se conserva');
   } else if (vieja) { miLibro_().deleteSheet(vieja); }
-  try { r.push(copiarVideosGabi() + ' nuevos de la app de Gabi'); } catch (e) { r.push('DICCIONARIO de Gabi no legible: ' + e); }
+  if (!leerConfig_().videos_version) ponerConfig_('videos_version', ahora_() + ' · instalación', 'Última lectura de la Base de datos Vídeos (martes 06:00)');
   r.push(listar_(HOJAS.VIDEOS).length + ' vídeos');
   return r.join(' · ');
 }
 /** Comprueba los enlaces. YouTube y Vimeo por oEmbed (404 = borrado → ROTO; 401/403 = privado o sin permiso → REVISAR); el resto por GET. */
-function revisarVideos_() {
-  var filas = listar_(HOJAS.VIDEOS).filter(function (r) { return r['VÍDEO']; }), res = { revisados: 0, ok: 0, rotos: [], revisar: [] }, hoy = hoyTxt_();
+function revisarVideos_(soloNuevos) {
+  var filas = listar_(HOJAS.VIDEOS).filter(function (r) { return r['VÍDEO'] && (!soloNuevos || !r.ESTADO || r.ESTADO === 'SIN COMPROBAR'); }), res = { revisados: 0, ok: 0, rotos: [], revisar: [] }, hoy = hoyTxt_();
   var urlCheck = function (u) {
     if (/youtu\.?be/i.test(u)) return 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(u);
     if (/vimeo\.com/i.test(u)) return 'https://vimeo.com/api/oembed.json?url=' + encodeURIComponent(u);
@@ -5213,12 +5199,22 @@ function revisarVideos_() {
   }
   return res;
 }
-/** Disparador diario: revisa solo si han pasado los días configurados (7 o 14). */
-function revisarVideosSiToca() {
+/**
+ * v0.21.1 · Martes 06:00 (después de la copia de la app de Gabi de las 05:00): Road To Elite lee la Base de datos Vídeos.
+ *  - comprueba los enlaces nuevos (SIN COMPROBAR) y, si tocan (7 o 14 días), todos;
+ *  - sube CONFIG › videos_version: la app ve el cambio y vuelve a pedir la lista (si no, usa la que tiene guardada).
+ */
+function videosMartes() {
+  VID_LIBRO_ = null; MEMO = null;
   var cf = leerConfig_(), cada = parseInt(cf.videos_revision_dias, 10) || 7, ult = String(cf.videos_ultima_revision || '').slice(0, 10);
-  if (ult && sumarDias(ult, cada) > hoyIso_()) return 'no toca';
-  return revisarVideos_();
+  var toca = !ult || sumarDias(ult, cada) <= hoyIso_(), nuevos = listar_(HOJAS.VIDEOS).filter(function (r) { return r['VÍDEO'] && (!r.ESTADO || r.ESTADO === 'SIN COMPROBAR'); }).length;
+  var res = toca ? revisarVideos_() : nuevos ? revisarVideos_(true) : null;
+  var total = leerVideos_().length;
+  ponerConfig_('videos_version', ahora_() + ' · ' + total + ' vídeos · ' + nuevos + ' nuevos' + (res ? ' · ' + res.rotos.length + ' rotos' : ''), 'Última lectura de la Base de datos Vídeos (martes 06:00, tras la copia de la app de Gabi de las 05:00). La app recarga los vídeos cuando cambia');
+  return { total: total, nuevos: nuevos, revision: toca ? 'completa' : nuevos ? 'solo nuevos' : 'no tocaba' };
 }
+/** Compatibilidad: el disparador diario antiguo ya no revisa nada (lo hace videosMartes). */
+function revisarVideosSiToca() { return 'sustituido por videosMartes (martes 06:00)'; }
 function menuRevisarVideos() { var r = revisarVideos_(); SpreadsheetApp.getActive().toast(r.revisados + ' revisados · ' + r.rotos.length + ' rotos · ' + r.revisar.length + ' a revisar', 'Vídeos'); }
 
 // ===================== v0.19 · KNOWLEDGE + APRENDIZAJE DEL CICLO =====================

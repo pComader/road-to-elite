@@ -378,7 +378,7 @@
       pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
       refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
       fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], enduranceManana: !!sem.enduranceManana,
-      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, competisPreguntas: sem.competisPreguntas || [], fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
+      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, videosVer: sem.videosVer || '', competisPreguntas: sem.competisPreguntas || [], fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -517,7 +517,9 @@
       vaciarCola();
       if (!semana || semana === lunesIso(res.semana.hoy)) precargarSiguiente(res.semana.lunes);
       if (!S.marcasFilas) api({ action: 'marcas' }).then(function (r) { if (r.ok) { S.marcasFilas = r.marcas; prepararMarcas(r.marcas); render(); } });
-      if (!S.videos || !S.videos.length) api({ action: 'videos' }).then(function (r) { if (r.ok) { S.videos = r.videos; guardar('rte-videos', r.videos); prepararVideos(S.videos); render(); } });
+      // v0.21.1 · los vídeos se releen cuando el servidor los ha leído de la Base de datos Vídeos (martes 06:00, tras la copia de la app de Gabi)
+      var vv = res.semana.videosVer || '';
+      if (!S.videos || !S.videos.length || (vv && leer('rte-videos-ver') !== vv)) api({ action: 'videos' }).then(function (r) { if (r.ok) { S.videos = r.videos; guardar('rte-videos', r.videos); guardar('rte-videos-ver', vv); prepararVideos(S.videos); render(); } });
     }).catch(function (e) {
       S.cargando = false;
       if (esFalloRed(e) && pintarCopia(semana || lunesIso(hoyLocal()), 'Sin conexión')) return;
@@ -1951,7 +1953,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.19';
+  var WEB_VERSION = 'web 0.20';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
