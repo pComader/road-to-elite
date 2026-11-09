@@ -23,6 +23,7 @@
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link reest-link" type="button" id="ir-reest"><span class="set-ico">🔀</span>Reestructurar · viaje, reorganizar, competi<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-competis"><span class="set-ico">🏆</span>Competis · España y Europa · seguimiento<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-extras"><span class="set-ico">⊕</span>Extras semana en curso<span class="go">›</span></button>';
@@ -53,6 +54,7 @@
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     $app.querySelectorAll('[data-unidad]').forEach(function (b) { b.onclick = function () { guardar('rte-unidad', b.dataset.unidad); S._abrir = 's-unid'; render(); toast('Cargas en ' + b.dataset.unidad); }; });
     document.getElementById('ir-reest').onclick = function () { S.vista = 'reest'; S.reest = {}; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-competis').onclick = function () { S.vista = 'competis'; S.competis = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
@@ -1316,4 +1318,47 @@
           var md = r2.extras.medida; toast(r2.extras.resumen + (md && !md.ok ? ' · metcon a medida: ' + (md.avisos || []).join(' ') : '')); }).catch(falloApi(b));
       };
     }).catch(function (er) { if (btn) btn.disabled = false; cerrarHoja(); toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
+  }
+
+
+  // ---------- v0.20 · Competis (copia de COMPETIS PROPUESTAS) con seguimiento en Google Calendar ----------
+  function renderCompetis() {
+    var html = cabeceraVista('Competis', 'Menú');
+    if (!S.competis) {
+      $app.innerHTML = html + '<div class="hint">Cargando competis…</div>';
+      document.getElementById('atras').onclick = function () { abrirAjustes(); };
+      api({ action: 'competis' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; if (S.vista === 'competis') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
+      return;
+    }
+    var filtro = S._compFiltro || 'proximas', L = S.competis.filter(function (x) { return filtro === 'seguimiento' ? x.SEGUIMIENTO === 'Sí' : filtro === 'todas' ? true : !x._pasada; });
+    var lnk = function (u, t) { u = urlSegura(u); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + t + '</a>' : ''; };
+    html += '<section class="me" style="display:block"><div class="seg" id="cp-f">' + [['proximas', 'Próximas'], ['seguimiento', 'En seguimiento'], ['todas', 'Todas']].map(function (o) { return '<button type="button" data-cpf="' + o[0] + '" aria-pressed="' + (filtro === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa); aquí se copian para Road To Elite. ' + esc(S._compCopia || '') + '</div><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Copiar ahora</button></section>';
+    html += L.length ? L.map(function (x) {
+      var seg = x.SEGUIMIENTO === 'Sí';
+      return '<div class="comp' + (seg ? ' on' : '') + (x._pasada ? ' pasada' : '') + '"><div class="comp-h"><b>' + esc(x.NOMBRE) + '</b>' + (seg ? '<span class="tag">En seguimiento</span>' : '') + '</div>' +
+        '<div class="hint">📅 ' + esc(x.INICIO) + (x.FIN && x.FIN !== x.INICIO ? ' – ' + esc(x.FIN) : '') + ' · 📍 ' + esc([x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', ')) + '</div>' +
+        (x['CATEGORÍAS'] ? '<div class="hint">Categorías: ' + esc(x['CATEGORÍAS']) + '</div>' : '') + (x.PRECIO ? '<div class="hint">Precio: ' + esc(x.PRECIO) + '</div>' : '') +
+        (x['APERTURA INSCRIPCIÓN'] || x['FECHA INSCRIPCIÓN'] ? '<div class="hint">📝 Inscripción: ' + esc(x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN']) + (x['INSCRIPCIÓN'] ? ' · ' + esc(x['INSCRIPCIÓN']) : '') + '</div>' : '') +
+        (x.CLASIFICATORIO ? '<div class="hint">🎯 Clasificatorio: ' + esc(x.CLASIFICATORIO) + (x['FECHA CLASIFICATORIO'] ? ' · ' + esc(x['FECHA CLASIFICATORIO']) : '') + (x['CLASIFICATORIO (hecho)'] ? ' · ' + esc(x['CLASIFICATORIO (hecho)']) : '') + '</div>' : '') +
+        (x.NOTAS ? '<div class="hint"><i>' + esc(x.NOTAS) + '</i></div>' : '') +
+        '<div class="comp-l">' + [lnk(x.WEB, 'Web'), lnk(x.WODBUSTER, 'WODBuster'), lnk(x.INSTAGRAM, 'Instagram')].filter(Boolean).join(' · ') + '</div>' +
+        '<button class="btn ' + (seg ? '' : 'btn-primary ') + 'sm" type="button" data-cseg="' + esc(x.ID) + '">' + (seg ? 'Quitar seguimiento' : '★ Seguir (al calendario)') + '</button></div>';
+    }).join('') : '<div class="empty">No hay competis en esta vista.</div>';
+    $app.innerHTML = html;
+    document.getElementById('atras').onclick = function () { abrirAjustes(); };
+    $app.querySelectorAll('[data-cpf]').forEach(function (b) { b.onclick = function () { S._compFiltro = b.dataset.cpf; render(); }; });
+    document.getElementById('cp-copiar').onclick = function () { var b = this; b.disabled = true; api({ action: 'competis_copiar' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; render(); toast('Competis copiadas'); }).catch(falloApi(b)); };
+    $app.querySelectorAll('[data-cseg]').forEach(function (b) { b.onclick = function () {
+      var x = S.competis.filter(function (c) { return c.ID === b.dataset.cseg; })[0];
+      if (x.SEGUIMIENTO === 'Sí') { b.disabled = true; api({ action: 'competi_seguir', id: x.ID, seguir: false }).then(ok).then(function (r) { S.competis = r.competis; S.data.competisPreguntas = r.preguntas; render(); toast('Quitada del seguimiento y del calendario'); }).catch(falloApi(b)); return; }
+      var aIn = function (v) { var i = aIso(v); return i || ''; };
+      abrirHoja('<div class="row"><h2>Seguir · ' + esc(x.NOMBRE) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+        '<form id="cpf" class="avf"><div class="hint">Van a tu Google Calendar: la competi (' + esc(x.INICIO) + '), la apertura de inscripción y el clasificatorio. Cuando llegue cada fecha te preguntaré si lo hiciste; si dices que no, se quita todo.</div>' +
+        '<label for="cp-ins">Apertura de inscripción</label><input type="date" id="cp-ins" value="' + esc(aIn(x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN'])) + '">' +
+        '<label for="cp-cla">Clasificatorio' + (x.CLASIFICATORIO ? ' (' + esc(x.CLASIFICATORIO) + ')' : '') + '</label><input type="date" id="cp-cla" value="' + esc(aIn(x['FECHA CLASIFICATORIO'])) + '">' +
+        '<div class="hint">Déjalo vacío si no hay o no se sabe aún.</div><button class="btn btn-primary" type="submit" id="cp-ok">Seguir y añadir al calendario</button></form>');
+      document.getElementById('cpf').onsubmit = function (ev) { ev.preventDefault(); var bb = document.getElementById('cp-ok'); bb.disabled = true; bb.textContent = 'Añadiendo…';
+        api({ action: 'competi_seguir', id: x.ID, seguir: true, inscripcion: val('cp-ins'), clasificatorio: val('cp-cla') }).then(ok).then(function (r) { S.competis = r.competis; S.data.competisPreguntas = r.preguntas; cerrarHoja(); render(); toast('En seguimiento · añadida a tu calendario'); }).catch(falloApi(bb)); };
+    }; });
   }

@@ -378,7 +378,7 @@
       pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
       refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
       fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], enduranceManana: !!sem.enduranceManana,
-      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
+      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, competisPreguntas: sem.competisPreguntas || [], fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -579,6 +579,7 @@
     if (S.vista === 'hoja') return renderHoja();
     if (S.vista === 'extras') return renderExtras();
     if (S.vista === 'reest') return renderReest();
+    if (S.vista === 'competis') return renderCompetis();
     TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
@@ -1061,6 +1062,10 @@
     var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
     if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Carga y confirma la semana del ' + fechaCorta(sig) + '</b><span>Fabrik + mañanas para doble, descansos y eventos, en un paso. Sin esto no se programa.</span></button>';
     if (!confOk && d.semana >= lunesIso(d.hoy)) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Carga y confirma esta semana</b><span>' + (d.hayFabrik && !d.fabrikCargado ? 'Fabrik sin cargar · ' : '') + 'mañanas, descansos y eventos en un paso.</span></button>';
+    (d.competisPreguntas || []).forEach(function (q) {
+      h += '<div class="draft-banner comp-q"><span>🏆 ' + esc(q.texto) + ' <small>(' + esc(q.fecha) + ')</small></span><span class="comp-q-b"><button class="btn btn-primary sm" type="button" data-cq="' + esc(q.id) + '|' + q.que + '|1">Sí</button>' +
+        '<button class="btn sm" type="button" data-cq="' + esc(q.id) + '|' + q.que + '|0">No</button></span></div>';
+    });
     var np = (d.pendientes || []).filter(function (p) { return p.ESTADO === 'Pendiente'; }).length;
     if (np) h += '<button class="pend-banner" type="button" data-ver-pend>' + np + ' pendiente' + (np > 1 ? 's' : '') + ' para reincorporar · se te propondrán al programar la semana</button>';
     return h;
@@ -1766,7 +1771,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1827,6 +1832,12 @@
       return;
     }
     if (t.closest('[data-ir-hoja]')) { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); return; }
+    if ((b = t.closest('[data-cq]'))) {
+      var cq = b.dataset.cq.split('|'); b.disabled = true;
+      api({ action: 'competi_responder', id: cq[0], que: cq[1], hecho: cq[2] === '1' }).then(ok).then(function (r) {
+        S.data.competisPreguntas = r.preguntas; S.competis = r.competis; render(); toast(r.quitada ? 'Quitada del calendario y del seguimiento' : '¡Apuntado!'); }).catch(falloApi(b));
+      return;
+    }
     if ((b = t.closest('[data-resto-semana]'))) {
       b.disabled = true; b.textContent = 'Leyendo Fabrik…';
       api({ action: 'cargar_fabrik', lunes: S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); abrirPreviaExtras(S.data.semana, null, { resto: true }); }).catch(falloApi(b));
@@ -1931,7 +1942,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.15';
+  var WEB_VERSION = 'web 0.16';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

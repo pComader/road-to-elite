@@ -950,3 +950,8 @@ details.alt .exp-body{padding:0 10px 10px}
 .ro-ver{margin:2px 0 6px 28px}.ro-ver summary{font-size:.85rem;opacity:.8;cursor:pointer}.pend-i .ro-ver{margin-left:0}
 .pv-alc{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px}
 .pv-alc .seg{display:flex;gap:6px}.pv-alc .seg button{flex:1}
+.comp{border:1px solid var(--line,#333);border-radius:14px;padding:12px;margin:10px 0;display:flex;flex-direction:column;gap:4px}
+.comp.on{border-color:var(--oro,#f59e0b)}.comp.pasada{opacity:.55}
+.comp-h{display:flex;justify-content:space-between;gap:8px;align-items:center}.comp-l a{text-decoration:underline}
+.comp .btn{align-self:flex-start;margin-top:6px}
+.comp-q-b{display:flex;gap:6px}

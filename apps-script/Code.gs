@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.19.0',
+  VERSION: '0.20.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -134,6 +134,10 @@ function accion_(a, body, user) {
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'hoja_semana': return json_({ ok: true, filas: pintarHojaSemana_(body.lunes) });
       case 'enviar_resumen': return json_({ ok: true, enviado: enviarResumenSemana_(body.lunes) });
+      case 'competis': return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
+      case 'competi_seguir': seguirCompeti_(body); return json_({ ok: true, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
+      case 'competi_responder': var rcp = responderCompeti_(body); return json_({ ok: true, quitada: !!rcp.quitada, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
+      case 'competis_copiar': copiarCompetis_(); return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
       case 'metcon_generar': return json_({ ok: true, metcon: metconGuiado_(body.deseo, { min: body.min, material: body.material, lunes: body.lunes, formato: body.formato }) });
       case 'motor_wods': return json_({ ok: true, wods: listar_(HOJAS.MOTOR).slice(-80).map(function (r) { return { id: r.ID, fuente: r.FUENTE, nombre: r.NOMBRE, formato: r.FORMATO, min: r.MIN, movimientos: r.MOVIMIENTOS, interferencias: r.INTERFERENCIAS, ciencia: r.CIENCIA, conceptos: r['CONCEPTOS (Ollama)'], por: r['ANALIZADO POR'] }; }) });
       case 'backup_ahora': var bk = backupJueves(); return json_({ ok: true, backup: bk, config: leerConfig_() });
@@ -1394,11 +1398,14 @@ function configurarSin_() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
   reintentar_(function () { return ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarVideosSiToca') borrarDisp_(t); });
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'competisLunes') borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('competisLunes').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(15).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('revisarVideosSiToca').timeBased().everyDays(1).atHour(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
   try { logc_('OK · Base de datos de WODs: ' + prepararBd_()); } catch (e) { logc_('AVISO · Base de datos de WODs: ' + e); }
+  try { logc_('OK · Competis copiadas de ProgramAPP: ' + copiarCompetis_() + ' nuevas'); } catch (e) { logc_('AVISO · Competis: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
   logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
@@ -2977,7 +2984,7 @@ function extrasSemana_(lunes, base) {
   var out = { refuerzos: [], notasBloque: [], grabacion: {}, avisosVistos: String(leerConfig_().avisos_vistos || '').split(',').filter(Boolean),
     enduranceManana: enduranceManana_(),
     eventosPorAprobar: listar_(HOJAS.EVENTOS).filter(function (r) { return r.ESTADO === 'Pendiente de aprobar'; }),
-    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '', extrasParcial: (function () { try { return JSON.parse(leerConfig_()['extras_parcial_' + lunes] || 'null'); } catch (e) { return null; } })(),
+    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '', competisPreguntas: preguntasCompetis_(), extrasParcial: (function () { try { return JSON.parse(leerConfig_()['extras_parcial_' + lunes] || 'null'); } catch (e) { return null; } })(),
     fabrikDias: (base.plan || []).filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }).map(function (r) { return celdaIso_(r.FECHA); }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }) };
   try { out.refuerzos = refuerzosDe_(lunes); out.refuerzosSig = refuerzosDe_(sumarDias(lunes, 7)); } catch (e) {}
   try { out.notasBloque = listar_(HOJAS.NOTAS).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); }); } catch (e) {}
@@ -4565,6 +4572,7 @@ function motorDiario() {
   try { est.push('reanalizados ' + reanalizarMotor_()); } catch (e) { est.push('reanalizar FALLO ' + e); }
   try { est.push('Gemini ' + geminiExplicar_(8)); } catch (e) { est.push('Gemini FALLO ' + String(e).slice(0, 120)); }
   try { est.push('JSON ' + exportarBdJson_().wods + ' WODs'); } catch (e) { est.push('JSON FALLO ' + String(e).slice(0, 120)); }
+  try { avisarCompetis_(); } catch (e) { est.push('competis FALLO ' + String(e).slice(0, 80)); }
   try { var kk = indexarKnowledge_(false); est.push('KNOWLEDGE ' + kk.archivos + ' .md' + (kk.igual ? ' (sin cambios)' : ' · ' + kk.secciones + ' secciones')); } catch (e) { est.push('KNOWLEDGE FALLO ' + String(e).slice(0, 120)); }
   try { var ac = aprenderCiclo_(2); est.push('ciclo ' + ac.dias + ' días'); } catch (e) { est.push('ciclo FALLO ' + String(e).slice(0, 120)); }
   try { var lu = lunesDe_(hoyIso_()); est.push('lectura ' + lecturaSemana_(lu)); var ls = lecturaSemana_(sumarDias(lu, 7)); if (ls !== 'sin semana') est.push('lectura sig. ' + ls); } catch (e) { est.push('lectura FALLO ' + String(e).slice(0, 120)); }
@@ -5357,6 +5365,115 @@ function lecturaSemana_(lunes) {
 function menuAprenderCiclo() {
   var k = indexarKnowledge_(true), a = aprenderCiclo_(16), l = ''; try { l = lecturaSemana_(lunesDe_(hoyIso_())); } catch (e) { l = String(e); }
   SpreadsheetApp.getActive().toast('KNOWLEDGE: ' + k.archivos + ' .md · ' + k.secciones + ' secciones · ciclo: ' + a.dias + ' días · lectura: ' + l, 'Motor', 8);
+}
+
+// ===================== v0.20 · COMPETIS (copia de «COMPETIS PROPUESTAS» de ProgramAPP) + SEGUIMIENTO EN CALENDAR =====================
+/*
+ * «Road to Elite · Motor WODs» es la base de datos de Road To Elite para todo lo que no es el día a día (WODs, KNOWLEDGE, ciclo, competis…).
+ * COMPETIS: copia (SOLO LECTURA del origen) de ProgramAPP › «COMPETIS PROPUESTAS», que la app de Gabi rellena cada lunes.
+ *   Se copia los lunes a las 15:00 y con configurar; lo de Gabi se actualiza, lo de Road To Elite (seguimiento, fechas, respuestas) se conserva.
+ * Seguimiento: al marcarla, van a Google Calendar la competi, la apertura de inscripción y el clasificatorio (si hay fecha).
+ *   Llegada la fecha de inscripción / clasificatorio, la app pregunta si se hizo: «No» → se borra todo del calendario y sale del seguimiento.
+ */
+HOJAS.COMPETIS = 'COMPETIS';
+ESQ_BD_[HOJAS.COMPETIS] = { cab: ['ID', 'ESTADO (Gabi)', 'NOMBRE', 'INICIO', 'FIN', 'CIUDAD', 'PROVINCIA', 'WEB', 'WODBUSTER', 'INSTAGRAM', 'APERTURA INSCRIPCIÓN', 'CLASIFICATORIO', 'CATEGORÍAS CLASIFICATORIO',
+  'CATEGORÍAS', 'PRECIO', 'FUENTE', 'ENCONTRADA', 'NOTAS', 'SEGUIMIENTO', 'FECHA INSCRIPCIÓN', 'FECHA CLASIFICATORIO', 'INSCRIPCIÓN', 'CLASIFICATORIO (hecho)', 'GCAL', 'COPIADA'],
+  anchos: [80, 90, 240, 90, 90, 120, 100, 200, 200, 200, 110, 120, 160, 200, 140, 200, 90, 300, 90, 110, 110, 100, 110, 160, 130], negrita: 'NOMBRE', color: '#f59e0b',
+  fechas: ['INICIO', 'FIN', 'FECHA INSCRIPCIÓN', 'FECHA CLASIFICATORIO'],
+  listas: { SEGUIMIENTO: ['Sí', 'No'], 'INSCRIPCIÓN': ['Pendiente', 'Hecha', 'No'], 'CLASIFICATORIO (hecho)': ['Pendiente', 'Hecho', 'No'] },
+  colores: [['SEGUIMIENTO', '^Sí$', '#fef3c7', '#78350f']] };
+var CAMPOS_GABI_COMPETI_ = ['ESTADO', 'NOMBRE', 'INICIO', 'FIN', 'CIUDAD', 'PROVINCIA', 'WEB', 'WODBUSTER', 'INSTAGRAM', 'APERTURA INSCRIPCIÓN', 'CLASIFICATORIO', 'CATEGORÍAS CLASIFICATORIO', 'CATEGORÍAS', 'PRECIO', 'FUENTE', 'ENCONTRADA', 'NOTAS'];
+/** Una celda de fecha (Date, número de serie o texto) → dd/mm/aaaa, o el texto tal cual si no es fecha. */
+function fechaCelda_(v) {
+  if (v instanceof Date && !isNaN(v)) return Utilities.formatDate(v, CONFIG.ZONA, 'dd/MM/yyyy');
+  if (typeof v === 'number' || /^\d{5}(\.\d+)?$/.test(String(v).trim())) { var n = +v; if (n > 30000 && n < 80000) return isoAFecha(sumarDias('1899-12-30', Math.floor(n))); }
+  var s = String(v == null ? '' : v).trim(), iso = celdaIso_(s);
+  return iso ? isoAFecha(iso) : s;
+}
+/** Primera fecha que aparezca en un texto («Sí, online del 3 al 9/1/2027»…). */
+function fechaEnTexto_(t) {
+  var m = String(t || '').match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/); if (!m) return '';
+  var y = m[3].length === 2 ? '20' + m[3] : m[3]; return isoAFecha(y + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2));
+}
+function copiarCompetis_() {
+  var sh = programApp_().getSheetByName('COMPETIS PROPUESTAS');
+  if (!sh || sh.getLastRow() < 4) return 0;
+  var v = sh.getRange(3, 1, sh.getLastRow() - 2, sh.getLastColumn()).getValues(), cab = v[0].map(function (h) { return String(h).trim(); });
+  var ix = function (h) { return cab.indexOf(h); }, ya = {}, nuevas = [], act = 0;
+  listar_(HOJAS.COMPETIS).forEach(function (r) { ya[r.ID] = r; });
+  v.slice(1).forEach(function (row) {
+    var id = String(row[ix('ID')] || '').trim(); if (!id || !String(row[ix('NOMBRE')] || '').trim()) return;
+    var o = {};
+    CAMPOS_GABI_COMPETI_.forEach(function (h) { var k = ix(h); if (k < 0) return; var val = row[k]; o[h === 'ESTADO' ? 'ESTADO (Gabi)' : h] = /INICIO|FIN|APERTURA|ENCONTRADA/.test(h) ? fechaCelda_(val) : String(val == null ? '' : val).trim(); });
+    o.COPIADA = ahora_();
+    var r = ya[id];
+    if (r) {
+      var cambia = Object.keys(o).some(function (k) { return k !== 'COPIADA' && String(r[k] || '') !== String(o[k] || ''); });
+      if (cambia) { actualizarFila_(HOJAS.COMPETIS, r._fila, o); act++; }
+    } else {
+      o.ID = id; o.SEGUIMIENTO = 'No';
+      o['FECHA INSCRIPCIÓN'] = /^\d{2}\/\d{2}\/\d{4}$/.test(o['APERTURA INSCRIPCIÓN'] || '') ? o['APERTURA INSCRIPCIÓN'] : '';
+      o['FECHA CLASIFICATORIO'] = fechaEnTexto_(o.CLASIFICATORIO);
+      nuevas.push(o);
+    }
+  });
+  filasEnHoja_(HOJAS.COMPETIS, nuevas);
+  ponerConfig_('competis_copia', ahora_() + ' · ' + nuevas.length + ' nuevas · ' + act + ' actualizadas', 'Última copia de COMPETIS PROPUESTAS (ProgramAPP, solo lectura) a Road to Elite · Motor WODs');
+  return nuevas.length;
+}
+function competisLunes() { try { copiarCompetis_(); } catch (e) { Logger.log('Competis: ' + e); } }
+function listaCompetis_() {
+  var hoy = hoyIso_();
+  return listar_(HOJAS.COMPETIS).filter(function (r) { return r.NOMBRE; }).map(function (r) {
+    var o = {}; ESQ_BD_[HOJAS.COMPETIS].cab.forEach(function (h) { o[h] = r[h] == null ? '' : String(r[h]); }); o._iso = celdaIso_(r.INICIO) || ''; o._pasada = !!o._iso && (celdaIso_(r.FIN) || o._iso) < hoy; return o;
+  }).sort(function (a, b) { return (a._iso || '9999') < (b._iso || '9999') ? -1 : 1; });
+}
+/** Seguimiento de una competi en Google Calendar: competi + inscripción + clasificatorio (eventos de día completo, marcados [Road To Elite]). */
+function seguirCompeti_(b) {
+  var r = listar_(HOJAS.COMPETIS).filter(function (x) { return x.ID === String(b.id || ''); })[0];
+  if (!r) throw new Error('competi_no_encontrada');
+  borrarCalCompeti_(r);
+  if (!b.seguir) { actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'No', GCAL: '', 'INSCRIPCIÓN': '', 'CLASIFICATORIO (hecho)': '' }); return { ok: true }; }
+  var fi = celdaIso_(b.inscripcion || r['FECHA INSCRIPCIÓN']), fc = celdaIso_(b.clasificatorio || r['FECHA CLASIFICATORIO']), ini = celdaIso_(r.INICIO), fin = celdaIso_(r.FIN) || ini;
+  var cal = calendario_(), ids = [], lugar = [r.CIUDAD, r.PROVINCIA].filter(Boolean).join(', ');
+  var desc = MARCA_CAL + ' competi ' + r.ID + '\n' + [r['CATEGORÍAS'], r.PRECIO, r.WEB || r.WODBUSTER || r.INSTAGRAM, r.NOTAS].filter(Boolean).join('\n');
+  var dia = function (iso) { return new Date(iso + 'T12:00:00Z'); };
+  if (ini) ids.push('C:' + cal.createAllDayEvent('🏆 ' + r.NOMBRE, dia(ini), dia(sumarDias(fin, 1)), { description: desc, location: lugar }).getId());
+  if (fi) ids.push('I:' + cal.createAllDayEvent('📝 Inscripción · ' + r.NOMBRE, dia(fi), { description: desc + '\n\nAbre la inscripción: ' + (r.WODBUSTER || r.WEB || '') }).getId());
+  if (fc) ids.push('Q:' + cal.createAllDayEvent('🎯 Clasificatorio · ' + r.NOMBRE, dia(fc), { description: desc + '\n\nClasificatorio: ' + (r.CLASIFICATORIO || '') + (r['CATEGORÍAS CLASIFICATORIO'] ? ' (' + r['CATEGORÍAS CLASIFICATORIO'] + ')' : '') }).getId());
+  actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'Sí', 'FECHA INSCRIPCIÓN': fi ? isoAFecha(fi) : '', 'FECHA CLASIFICATORIO': fc ? isoAFecha(fc) : '', 'INSCRIPCIÓN': fi ? 'Pendiente' : '', 'CLASIFICATORIO (hecho)': fc ? 'Pendiente' : '', GCAL: ids.join('|') });
+  return { ok: true, eventos: ids.length };
+}
+function borrarCalCompeti_(r) {
+  String(r.GCAL || '').split('|').filter(Boolean).forEach(function (x) { try { var ev = calendario_().getEventById(x.slice(2)); if (ev) ev.deleteEvent(); } catch (e) { Logger.log('Calendar competi: ' + e); } });
+}
+/** Respuesta a «¿te has inscrito? / ¿has hecho el clasificatorio?». No → fuera del calendario y del seguimiento. */
+function responderCompeti_(b) {
+  var r = listar_(HOJAS.COMPETIS).filter(function (x) { return x.ID === String(b.id || ''); })[0];
+  if (!r) throw new Error('competi_no_encontrada');
+  if (!b.hecho) { borrarCalCompeti_(r); actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'No', GCAL: '', 'INSCRIPCIÓN': b.que === 'inscripcion' ? 'No' : r['INSCRIPCIÓN'], 'CLASIFICATORIO (hecho)': b.que === 'clasificatorio' ? 'No' : r['CLASIFICATORIO (hecho)'] }); return { ok: true, quitada: true }; }
+  var o = {}; if (b.que === 'inscripcion') o['INSCRIPCIÓN'] = 'Hecha'; else o['CLASIFICATORIO (hecho)'] = 'Hecho';
+  actualizarFila_(HOJAS.COMPETIS, r._fila, o);
+  return { ok: true };
+}
+/** Preguntas pendientes: seguidas cuya fecha de inscripción o de clasificatorio ya ha llegado y aún no se ha contestado. */
+function preguntasCompetis_() {
+  var hoy = hoyIso_(), out = [];
+  try {
+    listar_(HOJAS.COMPETIS).filter(function (r) { return r.SEGUIMIENTO === 'Sí'; }).forEach(function (r) {
+      var fi = celdaIso_(r['FECHA INSCRIPCIÓN']), fc = celdaIso_(r['FECHA CLASIFICATORIO']);
+      if (fi && fi <= hoy && r['INSCRIPCIÓN'] === 'Pendiente') out.push({ id: r.ID, que: 'inscripcion', nombre: r.NOMBRE, fecha: r['FECHA INSCRIPCIÓN'], texto: '¿Te has inscrito en ' + r.NOMBRE + '?' });
+      if (fc && fc <= hoy && r['CLASIFICATORIO (hecho)'] === 'Pendiente') out.push({ id: r.ID, que: 'clasificatorio', nombre: r.NOMBRE, fecha: r['FECHA CLASIFICATORIO'], texto: '¿Has hecho el clasificatorio de ' + r.NOMBRE + '?' });
+    });
+  } catch (e) {}
+  return out;
+}
+/** Aviso por correo (una vez por pregunta) cuando llega la fecha. */
+function avisarCompetis_() {
+  preguntasCompetis_().forEach(function (q) {
+    var k = 'COMPETI_AVISO_' + q.id + '_' + q.que; if (PROPS.getProperty(k)) return;
+    try { MailApp.sendEmail({ to: CONFIG.EMAIL_PERMITIDO, name: 'Road To Elite', subject: q.texto, htmlBody: '<p>' + esc_(q.texto) + ' (fecha: ' + esc_(q.fecha) + ')</p><p>Contéstalo en la app: si es «No», se quita del calendario y del seguimiento.</p><p><a href="' + CONFIG.URL_APP + '">Abrir Road To Elite</a></p>' }); PROPS.setProperty(k, hoyIso_()); } catch (e) { Logger.log('Aviso competi: ' + e); }
+  });
 }
 
 // Copia de MOTOR_GUIA.md (docs/MOTOR_GUIA.md del repositorio): se usa si la de Drive no se puede leer y para crearla la primera vez.
