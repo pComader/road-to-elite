@@ -97,6 +97,7 @@ try {
           "Vocabulario correcto: el peso muerto es una bisagra (no una sentadilla); los double unders son un salto (no una bisagra); el remo, la bici, el ski y la carrera son monoestructurales.`n`n" +
           "WOD (" + $x.fuente + ' · ' + $x.nombre + "):`n" + $x.texto +
           "`n`nAnálisis del motor (fiable): formato " + $x.formato + ' · movimientos ' + $x.movimientos + ' · interferencias ' + $x.interferencias + ' · ' + $x.objetivo + "`nCiencia (fiable): " + $x.ciencia
+        if ($w.vocab -and $w.vocab.Count -gt 0) { $prompt += "`n`nVocabulario de la base de conocimiento KNOWLEDGE (úsalo en las palabras clave cuando aplique): " + (($w.vocab | Select-Object -First 40) -join '; ') }
         $cuerpoO = @{ model = $modelo; prompt = $prompt; stream = $false; options = @{ temperature = 0.1; num_predict = 350 } }
         if ($modelo -match '^(qwen3|deepseek-r1)') { $cuerpoO['think'] = $false }
         $body = $cuerpoO | ConvertTo-Json -Depth 4
