@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.17.0',
+  VERSION: '0.18.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -26,7 +26,9 @@ var CONFIG = {
   FABRIK_ID: '1DRBQteuUHesG2gMODigDBTr5LK5PHMsqRIdHpCtT82g',     // FABRIK PROGRAM · SOLO LECTURA
   PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · SOLO LECTURA (copia semanal de vídeos)
   BACKUPS_ID: '1X2gFr5Wd-HfI5JsMcfiKscCu5GPXO-aS',
-  BD_WOD_ID: '1FfIO-LR5_DutRo6SUHWyAhM5qWItMemWpnV6iQRs-RY',   // Base_de_datos_WOD de la app de Gabi: Road To Elite SOLO LA LEE (v0.17)             // Drive: APP / Configuración / Backups
+  CARPETA_2DO_CEREBRO: '1FWPEKf0AsbXBjemd8IMFqaURVFCH-U-n',
+  BD_WOD_ID: '1FfIO-LR5_DutRo6SUHWyAhM5qWItMemWpnV6iQRs-RY',
+  VIDEOS_BD_ID: '1UhfMpqreVbhn7EDK6bFzTm5lMn4aIkDw7gkmhHK2NnU',   // v0.18 · Drive › 2DO CEREBRO › «Base de datos Vídeos» (compartida por las apps de Pablo)   // Base_de_datos_WOD de la app de Gabi: Road To Elite SOLO LA LEE (v0.17)             // Drive: APP / Configuración / Backups
   ZONA: 'Europe/Madrid',
   CACHE_SEG: 300
 };
@@ -92,7 +94,7 @@ function accion_(a, body, user) {
       case 'eventos':    return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
       case 'evento':     var idEv = guardarEvento_(body.evento || {}); return json_({ ok: true, id: idEv, eventos: listar_(HOJAS.EVENTOS) });
       case 'evento_borrar': borrarEvento_(body.id); return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
-      case 'semana_conf': guardarSemanaConf_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'semana_conf': guardarSemanaConf_(body); var cfab = null; if (body.cargar) { try { cfab = cargarFabrikSemana_(body.lunes); } catch (e) { cfab = { ok: false, motivo: String(e && e.message || e) }; } } return json_({ ok: true, carga: cfab, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'plan_aprobar': var nAp = aprobarPlanSemana_(body.lunes); refrescarResumen_(); if (leerConfig_().resumen_auto !== 'No') { try { enviarResumenSemana_(body.lunes); } catch (e) { Logger.log('Correo: ' + e); } } return json_({ ok: true, aprobados: nAp, semana: semanaCompleta_(body.lunes) });
       case 'cambio':     var idC = solicitarCambio_(body); return json_({ ok: true, id: idC, semana: semanaCompleta_(body.ver) });
       case 'cambio_resolver': resolverCambio_(body.cambio, !!body.aprobar); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -121,11 +123,11 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
-      case 'extras_previa': return json_({ ok: true, previa: generarExtras_(body.lunes, { simular: true }) });
+      case 'extras_previa': return json_({ ok: true, previa: generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto }) });
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
-      case 'generar_extras': var rg = generarExtras_(body.lunes); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'generar_extras': var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -213,7 +215,7 @@ function fabrik_() { return SpreadsheetApp.openById(CONFIG.FABRIK_ID); }
 function programApp_() { return SpreadsheetApp.openById(CONFIG.PROGRAMAPP_ID); }
 
 function hojaMia_(nombre) {
-  var sh = (ESQ_BD_[nombre] ? motorLibro_() : miLibro_()).getSheetByName(nombre);
+  var sh = (ESQ_BD_[nombre] ? motorLibro_() : ESQ_VID_[nombre] ? videosLibro_() : miLibro_()).getSheetByName(nombre);
   if (!sh) throw new Error('Falta la pestaña ' + nombre);
   return sh;
 }
@@ -474,26 +476,25 @@ function borrarRegistro_(r) {
 
 // ===================== VÍDEOS =====================
 function leerVideos_() {
-  return listar_(HOJAS.VIDEOS).filter(function (r) { return r.EJERCICIO && r['VÍDEO']; }).map(function (r) {
-    return { nombre: r.EJERCICIO.trim(), alias: String(r.ALIAS || '').split(';').map(function (a) { return a.trim(); }).filter(Boolean), url: r['VÍDEO'].trim() };
+  return listar_(HOJAS.VIDEOS).filter(function (r) { return r.EJERCICIO && r['VÍDEO'] && r.ESTADO !== 'ROTO'; }).map(function (r) {
+    return { nombre: String(r.EJERCICIO).trim(), alias: String(r.ALIAS || '').split(';').map(function (a) { return a.trim(); }).filter(Boolean), url: String(r['VÍDEO']).trim(), estado: r.ESTADO || '' };
   });
 }
 
 /**
- * Copia de seguridad semanal de la biblioteca de vídeos de la app de Gabi → APP · VÍDEOS.
- * LEE el DICCIONARIO de ProgramAPP (no lo modifica) y AÑADE aquí solo los ejercicios que aún no estén.
- * Se ejecuta sola los domingos a las 23:00 (ver configurar()).
+ * v0.18 · Sincroniza la biblioteca de vídeos de la app de Gabi (DICCIONARIO de ProgramAPP, SOLO LECTURA) con la base compartida
+ * «Base de datos Vídeos» (Drive › 2DO CEREBRO): añade los ejercicios que falten. Domingo 23:00 y al ejecutar configurar.
  */
 function copiarVideosGabi() {
   var dic = programApp_().getSheetByName('DICCIONARIO');
   if (!dic) return 0;
   var origen = dic.getDataRange().getDisplayValues().slice(1).filter(function (r) { return r[0] && r[2]; });
   var ya = {};
-  leerVideos_().forEach(function (v) { ya[norm(v.nombre)] = 1; });
+  listar_(HOJAS.VIDEOS).forEach(function (v) { ya[norm(v.EJERCICIO)] = 1; });
   var hoy = hoyTxt_();
   var nuevas = origen.filter(function (r) { return !ya[norm(r[0])]; })
-    .map(function (r) { return { EJERCICIO: r[0], ALIAS: r[1], 'VÍDEO': r[2], 'APROBADO POR': r[3], FECHA: r[4], 'COPIADO DE APP GABI': hoy }; });
-  nuevas.forEach(function (o) { anadirFila_(HOJAS.VIDEOS, o); });
+    .map(function (r) { return { EJERCICIO: r[0], ALIAS: r[1], 'VÍDEO': r[2], ESTADO: 'SIN COMPROBAR', FUENTE: 'App de Gabi (DICCIONARIO)', 'APROBADO POR': r[3], ALTA: r[4] || hoy, ACTUALIZADO: ahora_() }; });
+  filasEnHoja_(HOJAS.VIDEOS, nuevas);
   PROPS.setProperty('ULTIMA_COPIA_VIDEOS', ahora_() + ' · ' + nuevas.length + ' nuevos');
   return nuevas.length;
 }
@@ -1391,6 +1392,8 @@ function configurarSin_() {
   // v0.15: motor diario (Fabrik → MOTOR · ANÁLISIS, Gemini) y backup completo de los jueves
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['motorDiario', 'backupJueves'].indexOf(t.getHandlerFunction()) >= 0) borrarDisp_(t); });
   reintentar_(function () { return ScriptApp.newTrigger('motorDiario').timeBased().everyDays(1).atHour(4).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'revisarVideosSiToca') borrarDisp_(t); });
+  reintentar_(function () { return ScriptApp.newTrigger('revisarVideosSiToca').timeBased().everyDays(1).atHour(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   reintentar_(function () { return ScriptApp.newTrigger('backupJueves').timeBased().onWeekDay(ScriptApp.WeekDay.THURSDAY).atHour(BACKUP_HORA_).nearMinute(5).inTimezone(CONFIG.ZONA).create(); }, 'disparador');
   try { logc_('OK · Unificación: ' + unificar_()); } catch (e) { logc_('AVISO · Unificación (no se ha borrado nada): ' + e); }
   prepararHojas();
@@ -1420,7 +1423,7 @@ function configurarSin_() {
   try { pintarResumen_(); logc_('OK · Pestaña «APP · RESUMEN» pintada (mismos % que la app)'); } catch (e) { logc_('AVISO · Resumen: ' + e); }
   logc_('OK · Pestañas visibles: ' + ordenarHojas_() + ' · las internas de la app quedan ocultas');
   logc_('OK · Pestañas de la app: ' + Object.keys(HOJAS).map(function (k) { var sh = miLibro_().getSheetByName(HOJAS[k]); return sh ? sh.getName() : HOJAS[k] + ' (se crea al usarla)'; }).join(', '));
-  logc_('OK · Vídeos en tu copia: ' + leerVideos_().length);
+  try { logc_('OK · Base de datos Vídeos: ' + prepararVideos_()); } catch (e) { logc_('AVISO · Base de datos Vídeos: ' + e); }
 }
 
 // ===================== FABRIK: ESTRUCTURA POR POSICIÓN (copiado de la app de Gabi, solo lectura) =====================
@@ -2186,6 +2189,7 @@ function puntuarHuecos_(cand, ctx, todo) {
   var out = [], libre = cand.codigos.some(function (c) { return LIBRES_TURNO.test(c); });
   var enduAM = ctx.modoAM && cand.codigos.some(function (c) { return /^W0[123]$/.test(c); }) && !cand.codigos.some(function (c) { return /^(R01|W04)$/.test(c); });
   ctx.dias.forEach(function (d, i) {
+    if (ctx.permitidos && !ctx.permitidos[d.iso]) return;   // v0.18 · solo los días elegidos
     ['AM', 'PM'].forEach(function (t) {
       var motivos = [], p = 0, malos = [];
       // todo = true: se puntúa también lo no disponible (para enseñarte qué pasa donde TÚ lo pones)
@@ -2274,7 +2278,15 @@ function generarExtras_(lunes, opts) {
   if (!conf || !/Confirmada|Programada/.test(conf.ESTADO)) throw new Error('semana_sin_confirmar');
   if (!sim && !listar_(HOJAS.PLAN).some(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6); })) cargarFabrikSemana_(lunes);
   var cat = catalogo_(), fin = sumarDias(lunes, 6), sello = 'auto ' + ahora_(), modoAM = enduranceManana_();
-  var esAuto = function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && /^(BORRADOR|SIN HUECO)$/.test(r.ESTADO) && /^auto/.test(r.GENERADO || ''); };
+  // v0.18 · alcance: toda la semana, solo unos días, o «resto de semana» (los días que aún no se programaron; lo ya hecho se mantiene)
+  var parcialPrev = {}; try { parcialPrev = JSON.parse(leerConfig_()['extras_parcial_' + lunes] || '{}'); } catch (e) { parcialPrev = {}; }
+  var semanaIsos = [0, 1, 2, 3, 4, 5, 6].map(function (k) { return sumarDias(lunes, k); });
+  var diasSel = null;
+  if (opts.resto) diasSel = semanaIsos.filter(function (x) { return (parcialPrev.dias || []).indexOf(x) < 0; });
+  else if (opts.dias && opts.dias.length) diasSel = semanaIsos.filter(function (x) { return opts.dias.indexOf(x) >= 0; });
+  var permitidos = diasSel ? diasSel.reduce(function (a, x) { a[x] = 1; return a; }, {}) : null;
+  var modoDesc = String(opts.descanso || 'nada');
+  var esAuto = function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && (!permitidos || permitidos[d]) && /^(BORRADOR|SIN HUECO)$/.test(r.ESTADO) && /^auto/.test(r.GENERADO || ''); };
   // 6.1 · fuera los borradores automáticos anteriores (se regeneran); lo bloqueado con candado, lo tuyo y lo aprobado no se toca
   var refsLiberar = {}, pendLiberar = {};
   if (!sim) bloqueo_(function () {
@@ -2287,11 +2299,21 @@ function generarExtras_(lunes, opts) {
   });
   MEMO = null;
   var ctx = contextoSemana_(lunes, null, sim ? esAuto : null), nuevos = [], sinHueco = [], log = [], anadidos = {};
+  ctx.permitidos = permitidos;
+  var descansoZ2 = [];
+  ctx.dias.forEach(function (d) {
+    if (!d.descanso || (permitidos && !permitidos[d.iso])) return;
+    if (modoDesc === 'extras' || modoDesc === 'ambos') { d.descanso = false; d.descansoAbierto = true; }
+    if (modoDesc === 'z2' || modoDesc === 'ambos') descansoZ2.push(d);
+  });
+  if (diasSel) log.push((opts.resto ? 'Resto de semana: ' : 'Solo ') + diasSel.map(function (x) { return diaDe_(x).slice(0, 3).toLowerCase(); }).join(', '));
   var domingo = ctx.dias[6];
   var esEndurance = function (cand) { return cand.codigos.some(function (c) { return /^W0[123]$/.test(c); }) && !cand.codigos.some(function (c) { return /^(R01|W04)$/.test(c); }); };
   var colocar = function (o, cand, h) {
     var d = ctx.dias.filter(function (x) { return x.iso === h.iso; })[0];
     o.ID = nuevoId_(); o.FECHA = isoAFecha(h.iso); o['DÍA'] = h.dia; o.TURNO = h.turno; o.ORDEN = h.turno === 'AM' ? 10 + d.min.AM / 10 : 80 + d.min.PM / 10;
+    var ante = ordenAntesMetcon_(o, cand, h, nuevos);   // v0.18 · extras antes del metcon, donde menos interfieren
+    if (ante) { o.ORDEN = ante.orden; h.motivos = [ante.motivo].concat(h.motivos || []); }
     o.ESTADO = 'BORRADOR'; o.GENERADO = sello; o.ACTUALIZADO = ahora_(); o.BLOQUE = o['TÍTULO'];
     o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], 'Va el ' + h.dia.toLowerCase() + ' ' + h.turno + ': ' + (h.motivos.join('; ') || 'mejor hueco disponible') + (h.choques.length ? ' (a vigilar: ' + h.choques.join('; ') + ')' : '') + '.'].filter(Boolean).join(' ');
     d.min[h.turno] += cand.min || 10; d.nExtra[h.turno]++; d.cargas[h.turno] = d.cargas[h.turno].concat(cand.carga || []); d.codigos = d.codigos.concat(cand.codigos); if (cand.duro) d.duro = true;
@@ -2359,8 +2381,17 @@ function generarExtras_(lunes, opts) {
     z2Pend.forEach(function (p) { z2Usados[p.ID] = 1; if (!sim) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Propuesto', 'SEMANA DESTINO': isoAFecha(lunes), NOTAS: '+25 % sumado a la Z2 «' + z2Dest['TÍTULO'] + '»' }); });
     log.push('Z2 pendiente: +' + z2Extra + '′ en «' + z2Dest['TÍTULO'] + '»');
   }
+  var yaSem = {};   // v0.18 · al completar solo unos días, lo que ya está programado en el resto de la semana cuenta
+  if (permitidos) listar_(HOJAS.PLAN).forEach(function (r) { var dd = celdaIso_(r.FECHA); if (dd >= lunes && dd <= fin && !permitidos[dd] && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && norm(r.ORIGEN) === 'CARRERA') codigosDe_(r['CÓDIGOS']).forEach(function (k) { yaSem[k] = (yaSem[k] || 0) + 1; }); });
+  descansoZ2.forEach(function (d) {
+    var o = deCatalogo('W03', { 'TÍTULO': 'Z2 · recuperación (día de descanso)', MIN: 30, CONTENIDO: '25–30′ en Z2 muy suave: bici, remo, ski o trote ligero · RPE 2 · respiración por la nariz. Nada de series ni de cambios de ritmo.',
+      'POR QUÉ (cursiva)': 'Lo pediste para tu día de descanso: flujo sanguíneo y recuperación activa sin sumar fatiga.' });
+    var cand = candDe(o), h = { iso: d.iso, dia: diaDe_(d.iso), turno: d.am ? 'AM' : 'PM', motivos: ['día de descanso con Z2 de recuperación (elegido por ti)'], choques: [] };
+    colocar(o, cand, h); o._prio = 'carrera';
+  });
   CARR.sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
     if (codigosDe_(s['CÓDIGOS']).every(yaCarrera)) return;                          // ya lo tienes con candado
+    var kS = codigosDe_(s['CÓDIGOS'])[0]; if (kS && yaSem[kS] > 0) { yaSem[kS]--; return; }   // ya programado en los otros días de la semana
     var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO;
     // v0.13 · manual v2.0: la Z2 corta va el día de la Z2 de Fabrik
     if (s._fabrikZ2) {
@@ -2492,8 +2523,36 @@ function generarExtras_(lunes, opts) {
   MEMO = null;
   interferenciasFabrik_(lunes);
   ponerConfig_('extras_' + lunes, ahora_() + ' · ' + resumen, 'Último «Cargar extras» de esa semana');
+  if (diasSel && !opts.resto) { var uni = (parcialPrev.dias || []).concat(diasSel).filter(function (x, i, a) { return a.indexOf(x) === i; }).sort();
+    ponerConfig_('extras_parcial_' + lunes, uni.length >= 7 ? '' : JSON.stringify({ dias: uni, descanso: modoDesc }), 'Extras programados solo para unos días: queda «Programar resto de semana»'); }
+  else ponerConfig_('extras_parcial_' + lunes, '', 'Extras programados solo para unos días: queda «Programar resto de semana»');
   try { escribirBalance_(lunes, 'Plan'); } catch (e) { Logger.log('Balance: ' + e); }
   return { creados: colocados.length, sinHueco: sinHueco, pctMes: pct, resumen: resumen };
+}
+/**
+ * v0.18 · Posición de un extra dentro de una sesión con Fabrik: SIEMPRE antes del metcon, en el hueco que menos interferencia genera
+ * con el bloque de antes y el de después (cargas compartidas). Nunca antes del primer bloque (el calentamiento y la haltero van frescos).
+ * Carrera, ergos y Z6–Z8 no se mueven: van al final o en sesión aparte (manual: los sprints, 10′ después de la barra).
+ */
+function ordenAntesMetcon_(o, cand, h, nuevos) {
+  if (/CARRERA|Z6/.test(norm(o.ORIGEN)) || (cand.codigos || []).some(function (k) { return /^(W0[1-4]|R0[1-4])$/.test(k); })) return null;
+  var act = function (r) { return !/NO HACER|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
+  var filas = listar_(HOJAS.PLAN).concat(nuevos).filter(function (r) { return celdaIso_(r.FECHA) === h.iso && r.TURNO === h.turno && act(r) && r.ID !== o.ID; })
+    .sort(function (a, b) { return (parseFloat(a.ORDEN) || 0) - (parseFloat(b.ORDEN) || 0); });
+  var im = -1; filas.forEach(function (r, k) { if (im < 0 && /METCON/.test(norm((r['TÍTULO'] || '') + ' ' + (r.BLOQUE || '') + ' ' + String(r.CONTENIDO || '').slice(0, 20)))) im = k; });
+  if (im < 0) return null;   // sin metcon: se queda al final
+  if (im === 0) return { orden: (parseFloat(filas[0].ORDEN) || 50) - 1, motivo: 'antes del metcon (es el primer bloque de la sesión)' };
+  var mia = cand.carga || [], comp = function (r) { var cr = cargasFila_(r); return mia.filter(function (x) { return cr.indexOf(x) >= 0; }); };
+  var mejor = null;
+  for (var j = 1; j <= im; j++) {
+    var a = filas[j - 1], b = filas[j], ca = comp(a), cb = comp(b), pts = ca.length + cb.length * 1.2;
+    if (!mejor || pts < mejor.pts || (pts === mejor.pts && j > mejor.j)) mejor = { j: j, pts: pts, a: a, b: b, ca: ca, cb: cb };
+  }
+  var oa = parseFloat(mejor.a.ORDEN) || 0, ob = parseFloat(mejor.b.ORDEN) || oa + 1;
+  var orden = Math.round((oa + (ob - oa) / 2) * 100) / 100;
+  var tit = function (r) { return '«' + (r['TÍTULO'] || r.BLOQUE || '') + '»'; };
+  var comparte = mejor.ca.concat(mejor.cb).filter(function (x, i, l) { return l.indexOf(x) === i; });
+  return { orden: orden, motivo: 'entre ' + tit(mejor.a) + ' y ' + tit(mejor.b) + ', antes del metcon: ' + (comparte.length ? 'es donde menos se solapa (comparte ' + comparte.join(', ').toLowerCase() + ')' : 'no comparte carga con los bloques de al lado') };
 }
 /** Balance de estímulos de la semana en APP · SEMANAS (al cargar extras y al cerrar la semana). */
 function escribirBalance_(lunes, momento) {
@@ -2895,7 +2954,7 @@ function onOpen() {
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
     .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
     .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
-    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
+    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
     .addItem('Base de datos WODs · token de lectura para otras apps', 'menuTokenBd').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
@@ -2907,7 +2966,8 @@ function extrasSemana_(lunes, base) {
   var out = { refuerzos: [], notasBloque: [], grabacion: {}, avisosVistos: String(leerConfig_().avisos_vistos || '').split(',').filter(Boolean),
     enduranceManana: enduranceManana_(),
     eventosPorAprobar: listar_(HOJAS.EVENTOS).filter(function (r) { return r.ESTADO === 'Pendiente de aprobar'; }),
-    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '' };
+    fabrikCargado: (base.plan || []).some(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }), extras: leerConfig_()['extras_' + lunes] || '', extrasParcial: (function () { try { return JSON.parse(leerConfig_()['extras_parcial_' + lunes] || 'null'); } catch (e) { return null; } })(),
+    fabrikDias: (base.plan || []).filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }).map(function (r) { return celdaIso_(r.FECHA); }).filter(function (x, i, l) { return x && l.indexOf(x) === i; }) };
   try { out.refuerzos = refuerzosDe_(lunes); out.refuerzosSig = refuerzosDe_(sumarDias(lunes, 7)); } catch (e) {}
   try { out.notasBloque = listar_(HOJAS.NOTAS).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); }); } catch (e) {}
   try { out.grabacion = grabacionSemana_(base); } catch (e) {}
@@ -4762,6 +4822,8 @@ function backupJueves() {
     var bx = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + motorLibro_().getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
     if (bx.getResponseCode() === 200) blobs.push(bx.getBlob().setName('Road_to_Elite_Motor_WODs_' + fecha + '.xlsx')); else notas.push('BD HTTP ' + bx.getResponseCode());
     blobs.push(Utilities.newBlob(JSON.stringify(datosBdJson_(), null, 1), 'application/json', 'motor_wods_' + fecha + '.json'));
+    var bv = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + videosLibro_().getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    if (bv.getResponseCode() === 200) blobs.push(bv.getBlob().setName('Base_de_datos_Videos_' + fecha + '.xlsx'));
   } catch (e) { notas.push('BD: ' + e); }
   try {
     var gh = UrlFetchApp.fetch('https://codeload.github.com/pComader/road-to-elite/zip/refs/heads/main', { muteHttpExceptions: true });
@@ -5005,6 +5067,101 @@ function menuNuevoTokenAgente() {
   PROPS.setProperty('AGENTE_TOKEN', Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 12));
   menuTokenAgente();
 }
+
+// ===================== v0.18 · BASE DE DATOS DE VÍDEOS COMPARTIDA (Drive › 2DO CEREBRO) =====================
+/*
+ * «Base de datos Vídeos» (CONFIG.VIDEOS_BD_ID): un solo sitio con los vídeos de técnica que leen las apps de Pablo.
+ *   VÍDEOS: EJERCICIO · ALIAS (;) · VÍDEO (url) · ESTADO (OK / ROTO / REVISAR / SIN COMPROBAR) · ÚLTIMA REVISIÓN · DETALLE · FUENTE · APROBADO POR · ALTA · ACTUALIZADO
+ *   REVISIONES: registro de cada revisión de enlaces.
+ * Road To Elite la crea/prepara, copia lo nuevo del DICCIONARIO de la app de Gabi (solo lectura) y revisa los enlaces cada
+ * CONFIG › videos_revision_dias (7 por defecto; 14 = cada dos semanas). Los ROTO no se muestran en la app y te llega un correo.
+ */
+HOJAS.VIDEOS = 'VÍDEOS'; HOJAS.VID_REV = 'REVISIONES';
+var ESQ_VID_ = {};
+ESQ_VID_[HOJAS.VIDEOS] = { cab: ['EJERCICIO', 'ALIAS', 'VÍDEO', 'ESTADO', 'ÚLTIMA REVISIÓN', 'DETALLE', 'FUENTE', 'APROBADO POR', 'ALTA', 'ACTUALIZADO'],
+  anchos: [220, 220, 320, 110, 120, 260, 180, 120, 90, 130], negrita: 'EJERCICIO', color: '#0ea5e9',
+  listas: { ESTADO: ['OK', 'ROTO', 'REVISAR', 'SIN COMPROBAR'] }, colores: [['ESTADO', '^ROTO$', '#fde2e2', '#7f1d1d'], ['ESTADO', '^REVISAR$', '#fef3c7', '#78350f'], ['ESTADO', '^OK$', '#dcfce7', '#14532d']] };
+ESQ_VID_[HOJAS.VID_REV] = { cab: ['FECHA', 'REVISADOS', 'OK', 'ROTOS', 'REVISAR', 'DETALLE'], anchos: [130, 80, 60, 60, 70, 600], color: '#0ea5e9' };
+var VID_LIBRO_ = null;
+function videosLibro_() {
+  if (VID_LIBRO_) return VID_LIBRO_;
+  var id = ''; try { id = leerConfig_().videos_bd_id; } catch (e) {}
+  VID_LIBRO_ = SpreadsheetApp.openById(String(id || CONFIG.VIDEOS_BD_ID).trim());
+  return VID_LIBRO_;
+}
+var LEEME_VID_ = [['🎬 Base de datos de vídeos · compartida por las apps de Pablo'], [''],
+  ['• VÍDEOS: un ejercicio por fila. ALIAS separados por «;». La app busca el vídeo por el nombre del ejercicio o por sus alias.'],
+  ['• ESTADO lo pone la revisión automática de enlaces (cada semana o cada dos): OK · ROTO (el vídeo ya no existe; no se muestra) · REVISAR (privado, sin acceso o error puntual) · SIN COMPROBAR.'],
+  ['• Para arreglar uno ROTO: cambia la URL y pon ESTADO = SIN COMPROBAR; la próxima revisión lo valida.'],
+  ['• Road To Elite copia aquí lo nuevo del DICCIONARIO de la app de Gabi (solo lectura) y hace la revisión. Otras apps pueden leer y añadir filas.'],
+  ['• No cambies el nombre de las pestañas ni de las columnas.']];
+function prepararVideos_() {
+  var cf = leerConfig_(), r = [];
+  if (!cf.videos_bd_id) ponerConfig_('videos_bd_id', CONFIG.VIDEOS_BD_ID, 'Base de datos Vídeos (Drive › 2DO CEREBRO): la leen las apps de Pablo; Road To Elite la sincroniza y revisa los enlaces');
+  if (!cf.videos_revision_dias) ponerConfig_('videos_revision_dias', '7', 'Cada cuántos días se revisan los enlaces de los vídeos (7 o 14)');
+  var ss = videosLibro_();
+  prepararEsquema_(ss, ESQ_VID_);
+  var le = ss.getSheetByName('LÉEME') || ss.insertSheet('LÉEME', 0);
+  le.clear(); le.getRange(1, 1, LEEME_VID_.length, 1).setValues(LEEME_VID_); le.getRange(1, 1).setFontWeight('bold').setFontSize(14); le.setColumnWidth(1, 1000);
+  ['Hoja 1', 'Sheet1'].forEach(function (n) { var h = ss.getSheetByName(n); if (h && ss.getSheets().length > 1) ss.deleteSheet(h); });
+  // migración: la antigua «APP · VÍDEOS» del Sheet de Road To Elite
+  var vieja = miLibro_().getSheetByName('APP · VÍDEOS');
+  if (vieja && vieja.getLastRow() > 1) {
+    var cabV = cabeceras_(vieja), datos = vieja.getRange(2, 1, vieja.getLastRow() - 1, cabV.length).getDisplayValues(), ya = {};
+    listar_(HOJAS.VIDEOS).forEach(function (x) { ya[norm(x.EJERCICIO)] = 1; });
+    var col = function (row, h) { var k = cabV.indexOf(h); return k >= 0 ? row[k] : ''; };
+    var filas = datos.filter(function (row) { return col(row, 'EJERCICIO') && col(row, 'VÍDEO') && !ya[norm(col(row, 'EJERCICIO'))]; }).map(function (row) {
+      ya[norm(col(row, 'EJERCICIO'))] = 1;
+      return { EJERCICIO: col(row, 'EJERCICIO'), ALIAS: col(row, 'ALIAS'), 'VÍDEO': col(row, 'VÍDEO'), ESTADO: 'SIN COMPROBAR', FUENTE: col(row, 'COPIADO DE APP GABI') ? 'App de Gabi (DICCIONARIO)' : 'Road To Elite',
+        'APROBADO POR': col(row, 'APROBADO POR'), ALTA: col(row, 'FECHA'), ACTUALIZADO: ahora_() };
+    });
+    var n = filasEnHoja_(HOJAS.VIDEOS, filas), tienen = {}; listar_(HOJAS.VIDEOS).forEach(function (x) { tienen[norm(x.EJERCICIO)] = 1; });
+    if (datos.every(function (row) { return !col(row, 'EJERCICIO') || tienen[norm(col(row, 'EJERCICIO'))]; })) { miLibro_().deleteSheet(vieja); r.push(n + ' vídeos traídos de APP · VÍDEOS y pestaña quitada'); }
+    else r.push('AVISO: APP · VÍDEOS no se copió entera; se conserva');
+  } else if (vieja) { miLibro_().deleteSheet(vieja); }
+  try { r.push(copiarVideosGabi() + ' nuevos de la app de Gabi'); } catch (e) { r.push('DICCIONARIO de Gabi no legible: ' + e); }
+  r.push(listar_(HOJAS.VIDEOS).length + ' vídeos');
+  return r.join(' · ');
+}
+/** Comprueba los enlaces. YouTube y Vimeo por oEmbed (404 = borrado → ROTO; 401/403 = privado o sin permiso → REVISAR); el resto por GET. */
+function revisarVideos_() {
+  var filas = listar_(HOJAS.VIDEOS).filter(function (r) { return r['VÍDEO']; }), res = { revisados: 0, ok: 0, rotos: [], revisar: [] }, hoy = hoyTxt_();
+  var urlCheck = function (u) {
+    if (/youtu\.?be/i.test(u)) return 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(u);
+    if (/vimeo\.com/i.test(u)) return 'https://vimeo.com/api/oembed.json?url=' + encodeURIComponent(u);
+    return u;
+  };
+  for (var i = 0; i < filas.length; i += 25) {
+    var lote = filas.slice(i, i + 25), resp;
+    try { resp = UrlFetchApp.fetchAll(lote.map(function (r) { return { url: urlCheck(String(r['VÍDEO']).trim()), muteHttpExceptions: true, followRedirects: true }; })); }
+    catch (e) { resp = lote.map(function () { return null; }); }
+    lote.forEach(function (r, k) {
+      var x = resp[k], code = x ? x.getResponseCode() : 0, est, det;
+      if (code >= 200 && code < 400) { est = 'OK'; det = ''; res.ok++; }
+      else if (code === 404 || code === 410 || code === 400) { est = 'ROTO'; det = 'HTTP ' + code + ': el vídeo ya no existe o la URL no es válida'; res.rotos.push(r.EJERCICIO); }
+      else { est = 'REVISAR'; det = code ? 'HTTP ' + code + (code === 401 || code === 403 ? ': privado o sin permiso para insertarlo' : ': error del servidor, se reintenta en la próxima revisión') : 'sin respuesta'; res.revisar.push(r.EJERCICIO); }
+      res.revisados++;
+      if (r.ESTADO !== est || r.DETALLE !== det || !r['ÚLTIMA REVISIÓN']) actualizarFila_(HOJAS.VIDEOS, r._fila, { ESTADO: est, DETALLE: det, 'ÚLTIMA REVISIÓN': hoy });
+    });
+  }
+  anadirFila_(HOJAS.VID_REV, { FECHA: ahora_(), REVISADOS: res.revisados, OK: res.ok, ROTOS: res.rotos.length, REVISAR: res.revisar.length,
+    DETALLE: (res.rotos.length ? 'Rotos: ' + res.rotos.join(', ') : '') + (res.revisar.length ? (res.rotos.length ? ' · ' : '') + 'Revisar: ' + res.revisar.join(', ') : '') });
+  ponerConfig_('videos_ultima_revision', hoyIso_() + ' · ' + res.revisados + ' revisados · ' + res.rotos.length + ' rotos · ' + res.revisar.length + ' a revisar', 'Última revisión de enlaces de la Base de datos Vídeos');
+  if (res.rotos.length || res.revisar.length) {
+    try { MailApp.sendEmail({ to: CONFIG.EMAIL_PERMITIDO, name: 'Road To Elite', subject: 'Vídeos: ' + res.rotos.length + ' rotos y ' + res.revisar.length + ' a revisar',
+      htmlBody: '<p>Revisión de la <b>Base de datos Vídeos</b> (Drive › 2DO CEREBRO).</p>' + (res.rotos.length ? '<p><b>Rotos</b> (no se muestran en las apps): ' + esc_(res.rotos.join(', ')) + '</p>' : '') +
+        (res.revisar.length ? '<p><b>A revisar</b> (privados o error puntual): ' + esc_(res.revisar.join(', ')) + '</p>' : '') +
+        '<p>Para arreglarlos: cambia la URL en la hoja y pon ESTADO = SIN COMPROBAR.</p><p><a href="https://docs.google.com/spreadsheets/d/' + videosLibro_().getId() + '/edit">Abrir la base de datos</a></p>' }); } catch (e) { Logger.log('Correo vídeos: ' + e); }
+  }
+  return res;
+}
+/** Disparador diario: revisa solo si han pasado los días configurados (7 o 14). */
+function revisarVideosSiToca() {
+  var cf = leerConfig_(), cada = parseInt(cf.videos_revision_dias, 10) || 7, ult = String(cf.videos_ultima_revision || '').slice(0, 10);
+  if (ult && sumarDias(ult, cada) > hoyIso_()) return 'no toca';
+  return revisarVideos_();
+}
+function menuRevisarVideos() { var r = revisarVideos_(); SpreadsheetApp.getActive().toast(r.revisados + ' revisados · ' + r.rotos.length + ' rotos · ' + r.revisar.length + ' a revisar', 'Vídeos'); }
 
 // Copia de MOTOR_GUIA.md (docs/MOTOR_GUIA.md del repositorio): se usa si la de Drive no se puede leer y para crearla la primera vez.
 var MOTOR_GUIA_BASE_ = "# MOTOR_GUIA · Road To Elite\n\nGuía que sigue el motor que genera los entrenamientos (metcons a medida, mega WOD, extras con «Estímulos que quiero»).\n\n- **Las tablas `## TABLA · …` las lee el servidor de verdad.** Si cambias una fila, cambia lo que genera el motor, sin tocar código.\n  - Mantén las columnas y el formato `| a | b |`.\n  - Los alias van separados por comas, en mayúsculas o minúsculas (da igual) y sin tildes obligatorias.\n  - Una fila que empieza por `#` se ignora.\n- **El texto de «Claves» lo leemos Claude y Gemini** para diseñar, revisar y explicar.\n- La copia de trabajo vive en Google Drive (`MOTOR_GUIA.md`, junto a los backups). El servidor la relee cada 6 h o al ejecutar `configurar`.\n- Fuentes:\n  - `Rendimiento_Hibrido_GuiaDefinitiva_md.md` (manual v2.0);\n  - las notas de coach de Fabrik: MODALIDAD, OBJETIVO, LIMITANTES;\n  - las claves de CrossFit acordadas en el proyecto «Road To Elite».\n\n## TABLA · FORMATOS\n\n| CLAVE | NOMBRE | MIN | MAX | VENTANA | SISTEMA | ZONA | RPE | REPS x | CUÁNDO | ESTRATEGIA |\n|---|---|---|---|---|---|---|---|---|---|---|\n| SPRINT | For time corto | 3 | 8 | cap | glucolítico | Z6–Z7 | 9 | 0.8 | Sprint de competición, 2–3 movimientos, cargas medias | Salida fuerte; tandas grandes desde el principio; transiciones de menos de 3″ |\n| AMRAP_C | AMRAP corto | 6 | 10 | continuo | glucolítico | Z5–Z6 | 8–9 | 1 | Potencia con fatiga, pocas transiciones | 85–90 % desde la ronda 1 y tandas fijas |\n| AMRAP | AMRAP medio | 11 | 20 | continuo | mixto (umbral) | Z4–Z5 | 7–8 | 1.2 | Ritmo sostenido con interferencia | Ronda 1 al 80 %; mira el tiempo por ronda y no lo dejes caer más de un 10 % |\n| AMRAP_L | AMRAP largo | 21 | 40 | continuo | aeróbico | Z3 | 6–7 | 1.4 | Capacidad aeróbica, movimientos de baja demanda técnica | Sin picos; misma carrera o erg por ronda (como pide Fabrik) |\n| FOR_TIME | For time con cap | 8 | 20 | cap | mixto | Z4–Z6 | 8 | 1.2 | Gestión de WOD, chipper corto o rondas | No te vayas en el primer tercio; acelera en el último |\n| CHIPPER | Chipper | 15 | 30 | cap | mixto-aeróbico | Z3–Z5 | 7–8 | 1.5 | Muchos apartados; administrar para llegar con energía al final | Cada apartado al 75–80 %; el último es el que suma |\n| ESCALERA | 21-15-9 / ascendente | 6 | 15 | cap | glucolítico | Z5–Z6 | 8–9 | 1 | Movimientos de la misma familia con interferencia directa | Rompe antes del fallo: 21 = 12+9, 15 = 8+7, 9 = seguidas |\n| EMOM | EMOM | 10 | 30 | 60″ | mixto | Z4–Z5 | 7–8 | 0.5 | Densidad y calidad técnica en fatiga; alterna minutos | Trabajo de 35–45″ y descanso de 15–25″; si pasas de 50″, baja reps |\n| EVERY | Every 3–4′ (P1) | 12 | 30 | 3–4′ (60–90″ ON) | potencia con fatiga | Z6–Z8 | 9 | 0.7 | Potencia con fatiga: series al 90 % con recuperación casi completa | Cada serie al 90 %; si la caída pasa del 10 %, para |\n| INTERVALOS | Trabajo:descanso | 12 | 30 | 2:1 · 1:1 · 1:2 | umbral / VO₂ | Z5–Z7 | 8–9 | 0.7 | Ergos + gimnásticos; P4 umbral/pico | Mismo ritmo en todas las series; la última igual que la primera |\n| VENTANAS | Heavy en ventanas | 10 | 20 | E2–3′ | fuerza en fatiga | — | 8–9 | 0.4 | Halterofilia o fuerza pesada tras erg o gimnásticos | Ventana 1 ligera, ventana 2 exigente (estilo Fabrik); calidad antes que velocidad |\n| SINCRO | Pareja o equipo | 15 | 60 | variable | mixto | Z4–Z6 | 8 | 1.6 | Mega WOD o equipo | Reparto por fuerzas; el más fuerte en el movimiento limitante |\n\n## TABLA · MOVIMIENTOS\n\n`PATRÓN`:\n- OLY = olímpico\n- OH = empuje vertical / por encima de la cabeza\n- SENT = sentadilla\n- BISAGRA\n- TIRON = tirón gimnástico\n- EMPUJE_G = empuje gimnástico\n- SALTO\n- MONO = erg o carrera\n- CORE\n- ACARREO\n- CUERPO = peso corporal\n\n`CARGA` (etiquetas del motor): PIERNA · HOMBRO · AGARRE · CORE · IMPACTO · SNC · GLUC · AERO.\n\n`1RM DE`: la marca de APP · MARCAS de la que sale el peso, con su factor, por ejemplo «FRONT SQUAT 0.8». Si no tienes esa marca, se usa KG ♂ RX.\n\n| CLAVE | NOMBRE | ALIAS | MATERIAL | ALTERNATIVA | PATRÓN | CARGA | UNIDAD | REPS | KG ♂ RX | KG ♀ RX | 1RM DE | CÓDIGO |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| THRUSTER | THRUSTERS | thruster, thrusters | barra | db | OH | PIERNA, HOMBRO, GLUC | reps | 12 | 43 | 29 | FRONT SQUAT 0.75 | T02 |\n| STOH | SHOULDER TO OVERHEAD | stoh, s2oh, shoulder to overhead, push press, push jerk, jerk | barra | db | OH | HOMBRO | reps | 12 | 61 | 43 | PUSH JERK 1 | M07 |\n| SNATCH | POWER SNATCH | snatch, power snatch, arrancada | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 8 | 43 | 29 | SNATCH 1 | |\n| SQ_SNATCH | SQUAT SNATCH | squat snatch | barra | db | OLY | SNC, HOMBRO, PIERNA | reps | 6 | 43 | 29 | SNATCH 1 | |\n| HANG_SN | HANG POWER SNATCH | hang snatch, hang power snatch | barra | db | OLY | SNC, HOMBRO | reps | 8 | 43 | 29 | SNATCH 1 | C04 |\n| OHS | OVERHEAD SQUAT | ohs, overhead squat | barra | db | OH | HOMBRO, PIERNA, CORE | reps | 10 | 43 | 29 | SNATCH 1 | |\n| DB_SNATCH | DB SNATCH (alternos) | db snatch, dumbbell snatch | db | kb | OLY | HOMBRO, GLUC | reps | 16 | 22.5 | 15 | | |\n| DB_C2OH | DB HANG CLEAN TO OVERHEAD | c2oh, clean to overhead, db hang clean to overhead | db | kb | OH | HOMBRO, PIERNA | reps | 12 | 22.5 | 15 | | |\n| OH_LUNGE | DB OVERHEAD WALKING LUNGE | oh lunge, overhead lunge, lunge oh | db | sandbag | OH | HOMBRO, PIERNA, CORE | m | 15 | 22.5 | 15 | | |\n| CLEAN | POWER CLEAN | clean, power clean, cargada | barra | db | OLY | SNC, PIERNA, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | |\n| SQ_CLEAN | SQUAT CLEAN | squat clean | barra | db | OLY | SNC, PIERNA | reps | 8 | 61 | 43 | CLEAN 1 | |\n| HANG_CL | HANG POWER CLEAN | hang clean, hang power clean | barra | db | OLY | SNC, AGARRE | reps | 10 | 61 | 43 | CLEAN 1 | C04 |\n| FRONT_SQ | FRONT SQUAT | front squat | barra | db | SENT | PIERNA, CORE | reps | 12 | 61 | 43 | FRONT SQUAT 1 | C02 |\n| DEADLIFT | DEADLIFT | deadlift, peso muerto | barra | kb | BISAGRA | PIERNA, AGARRE, CORE | reps | 10 | 102 | 70 | DEADLIFT 1 | |\n| WALLBALL | WALL BALLS | wall ball, wallball, wall balls | slamball | | OH | PIERNA, HOMBRO, GLUC | reps | 20 | 9 | 6 | | |\n| DU | DOUBLE UNDERS | du, dus, double under, double unders, comba | comba | | SALTO | IMPACTO, GLUC | reps | 50 | | | | C01 |\n| BURPEE | BURPEES | burpee, burpees | | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BOB | BURPEES OVER THE BAR | burpee over the bar, bar facing burpee, bfb | barra | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| LAT_BURPEE | LATERAL BURPEES OVER DB | lateral burpee, burpee over db | db | | CUERPO | GLUC, IMPACTO | reps | 12 | | | | C03 |\n| BJO | BOX JUMP OVERS | box jump, box jump over, bjo, cajon | cajon | | SALTO | PIERNA, IMPACTO | reps | 12 | | | | W07 |\n| C2B | CHEST TO BAR | c2b, chest to bar | rack_dominadas | | TIRON | AGARRE, HOMBRO | reps | 12 | | | | M01 |\n| PULLUP | PULL-UPS | pull up, pull-up, dominadas | rack_dominadas | | TIRON | AGARRE | reps | 15 | | | | |\n| T2B | TOES TO BAR | t2b, toes to bar | rack_dominadas | | CORE | AGARRE, CORE | reps | 15 | | | | |\n| BMU | BAR MUSCLE UPS | bmu, bar muscle up | bmu | | TIRON | AGARRE, HOMBRO, SNC | reps | 6 | | | | M48 |\n| RMU | RING MUSCLE UPS | rmu, ring muscle up | anillas | | TIRON | AGARRE, HOMBRO, SNC | reps | 5 | | | | M49 |\n| HSPU | HSPU | hspu, handstand push up, pino flexion | hspu | | EMPUJE_G | HOMBRO | reps | 10 | | | | W31 |\n| HSWALK | HANDSTAND WALK | hs walk, handstand walk, pino andando | hspu | | EMPUJE_G | HOMBRO, CORE | m | 15 | | | | |\n| WALLWALK | WALL WALKS | wall walk | hspu | | EMPUJE_G | HOMBRO, CORE | reps | 5 | | | | |\n| ROPE | ROPE CLIMBS | rope, rope climb, cuerda | cuerda | | TIRON | AGARRE | reps | 3 | | | | M36 |\n| GHD | GHD SIT-UPS | ghd | box | | CORE | CORE | reps | 15 | | | | |\n| KBS | KB SWINGS | kb swing, kettlebell swing, swing | kb | db | BISAGRA | AGARRE, GLUC | reps | 20 | 24 | 16 | | |\n| DEVIL | DEVIL PRESS | devil press | db | | OLY | HOMBRO, GLUC | reps | 10 | 22.5 | 15 | | |\n| SANDBAG | SANDBAG CLEANS | sandbag, sandbag clean | sandbag | | OLY | PIERNA, CORE | reps | 10 | 70 | 45 | | M57 |\n| SB_LUNGE | SANDBAG LUNGES | sandbag lunge, lunges hyrox | sandbag_hyrox | db | SENT | PIERNA | m | 20 | 20 | 10 | | |\n| LUNGE | DB WALKING LUNGES | lunge, lunges, zancadas | db | | SENT | PIERNA | reps | 16 | 22.5 | 15 | | |\n| SLED | SLED PUSH 15 m | sled, trineo | trineo | | ACARREO | PIERNA, GLUC | reps | 2 | | | | M38 |\n| FARMER | FARMER CARRY | farmer, farmers carry | db | kb | ACARREO | AGARRE, CORE | m | 40 | 32 | 24 | | |\n| GUSANO | WORM CLEANS + CARRY 20 m | gusano, worm | gusano | | ACARREO | PIERNA, CORE | reps | 6 | | | | |\n| LODGE | SANDBAG OVER LODGE | lodge, over the wall | lodge_lanzar | | OLY | PIERNA, HOMBRO | reps | 8 | | | | M57 |\n| LODGE_JUMP | JUMP OVER LODGE | jump over lodge, jump over | lodge_saltar | | SALTO | PIERNA, IMPACTO | reps | 10 | | | | W07 |\n| ROW | ROW | row, remo, rower | ergos | | MONO | AERO, GLUC | cal | 15 | | | | |\n| SKI | SKIERG | ski, skierg | ergos | | MONO | AERO, HOMBRO | cal | 15 | | | | |\n| ASSAULT | ASSAULT BIKE | assault, air bike, airbike, echo, assault bike | ergos | | MONO | AERO, GLUC, PIERNA | cal | 15 | | | | |\n| BIKE | BIKE ERG | bike erg, bikeerg | ergos | | MONO | AERO, PIERNA | cal | 20 | | | | |\n| RUN | RUN | run, carrera, correr, running | _correr | | MONO | AERO, IMPACTO | m | 400 | | | | |\n\n## TABLA · PATRONES\n\nPalabras sueltas del campo «Estímulos que quiero» que no nombran un movimiento sino una familia. El motor añade el movimiento de esa familia que más falta (según APP · METAS) y que tu material permite.\n\n| PALABRA | PATRÓN | CARGA |\n|---|---|---|\n| oh, overhead, por encima | OH | HOMBRO |\n| empuje, push | OH | HOMBRO |\n| tiron, pull, gimnasticos | TIRON | AGARRE |\n| agarre, grip | TIRON | AGARRE |\n| pierna, legs | SENT | PIERNA |\n| bisagra, cadena posterior | BISAGRA | PIERNA |\n| halterofilia, oly, olimpico | OLY | SNC |\n| saltos, salto, plio | SALTO | IMPACTO |\n| core, abdomen | CORE | CORE |\n| acarreo, carry | ACARREO | AGARRE |\n| erg, ergos, monoestructural | MONO | AERO |\n\n## TABLA · INTERFERENCIAS\n\n- `A` y `B`: CLAVE de movimiento o PATRÓN; `*` = cualquiera.\n- `TIPO`:\n  - `buscada`: el motor los pone seguidos en ese orden porque es la interferencia de competición que se quiere entrenar;\n  - `complementaria`: alternarlos da densidad sin que uno limite al otro;\n  - `evitar`: no los pone seguidos salvo que lo pidas.\n- `ORDEN`: `A>B` (A antes que B) o `A<>B` (da igual).\n\n| A | B | TIPO | ORDEN | EFECTO BUSCADO | CIENCIA |\n|---|---|---|---|---|---|\n| RUN | THRUSTER | buscada | A>B | Correr y llegar a la barra con cuádriceps pre-fatigado y la respiración alta, como en competición e HYROX | Tras la carrera el lactato y la ventilación están altos: el thruster exige estabilizar el tronco con alta demanda respiratoria. Entrena el aclarado de H⁺ en el músculo que sigue trabajando y la eficiencia del bracing con hiperventilación. |\n| ASSAULT | OH | buscada | A>B | Estabilidad de hombro y core por encima de la cabeza con la frecuencia cardiaca muy alta | La air bike recluta piernas y brazos a la vez y dispara la FC y el CO₂. Bloquear por encima de la cabeza así obliga al control motor (manguito, serrato, core) a funcionar con fatiga sistémica: es lo que limita en competición. |\n| ASSAULT | SQ_SNATCH | buscada | A>B | Squat snatch bajo interferencia directa de la air bike (objetivo literal de Fabrik) | La precisión del segundo tirón y la recepción profunda se degradan con fatiga cardiorrespiratoria. Practicarlo con cargas medias consolida el patrón (aprendizaje motor en fatiga) sin el riesgo de hacerlo pesado. |\n| ASSAULT | BMU | buscada | A>B | BMU con fatiga cardiorrespiratoria (Fabrik) | El kipping depende del timing; con FC alta se pierde coordinación. Entrenarlo así mejora la economía del gesto cuando importa. |\n| DU | THRUSTER | buscada | A<>B | Limitante respiratorio alto (Fabrik: «thruster + DU») | Los DU mantienen la FC alta con bajo coste muscular. El thruster suma carga de pierna y hombro, y entre los dos fuerzan la tolerancia ventilatoria. |\n| RUN | T2B | buscada | A>B | Sostener eficiencia de T2B tras la carrera; usar la carrera para bajar pulsaciones (Fabrik) | Pacing estratégico: regular la intensidad de la carrera para llegar al gimnástico limitante con FC más baja. Aprende a usar lo monoestructural como recuperación activa. |\n| ROW | WALLBALL | buscada | A>B | Erg sostenido y después un movimiento de baja demanda coordinativa (Fabrik) | Tras el remo el gasto cardiaco sigue alto. El wall ball, poco técnico, permite seguir en umbral sin que la técnica limite: estímulo aeróbico-glucolítico sostenido. |\n| BURPEE | BJO | buscada | A<>B | Gestión de WOD: llegar con energía al apartado final (burpee box jump over, Fabrik) | Combina impacto y extensión de cadera con alta demanda metabólica. Administrar los apartados previos entrena la distribución de esfuerzo (pacing). |\n| MONO | VENTANAS | buscada | A>B | Fuerza o heavy en fatiga: levantar pesado después del erg | Tras un esfuerzo glucolítico la fosfocreatina está parcialmente vaciada. Levantar pesado así entrena la expresión de fuerza con fatiga metabólica (PAPE limitado; el estímulo es la tolerancia). |\n| SKI | C2B | buscada | A>B | Limitante de hombro y dorsal: tirón doble (Fabrik: C2B + ski) | Los dos tiran con dorsal y tríceps largo: la fatiga local se acumula y obliga a romper series. Útil si la meta es resistencia de tirón. |\n| OH | TIRON | complementaria | A<>B | Densidad: empuje vertical y tirón alternos (Fran, 24.3) | Agonistas y antagonistas alternos: mientras uno trabaja el otro se recupera. Más trabajo total por minuto con menos fallo local. |\n| T2B | OH | complementaria | A<>B | Core flexor y empuje vertical alternos | Patrones distintos: permiten densidad sin solapar fatiga local. |\n| LUNGE | RUN | buscada | A>B | Transición de pierna estilo HYROX | Las zancadas fatigan cuádriceps y glúteo excéntricamente, y la carrera posterior exige economía con el músculo fatigado (específico de HYROX). |\n| SLED | RUN | buscada | A>B | Sled y después carrera (HYROX) | El trineo es concéntrico pesado con alta demanda glucolítica. Correr después entrena el «compromised running». |\n| SANDBAG | RUN | buscada | A<>B | Carga incómoda y carrera | La carga asimétrica pide core y respiración contra presión intraabdominal; la carrera exige recuperarse en movimiento. |\n| C2B | T2B | evitar | A<>B | Doble agarre seguido | Los flexores del antebrazo se fatigan y caen las dos series. Solo si quieres resistencia de agarre (escribe «agarre»). |\n| PULLUP | T2B | evitar | A<>B | Doble agarre seguido | Igual que arriba. |\n| DEADLIFT | ROW | evitar | A<>B | Cadena posterior y lumbar doble en volumen | El erector espinal acumula fatiga y la técnica del peso muerto se resiente. Sepáralos con otro movimiento. |\n| WALLBALL | THRUSTER | evitar | A<>B | Mismo patrón seguido (sentadilla + empuje) | Mono-fatiga: limita el volumen total sin un estímulo nuevo. Solo si buscas «pierna/hombro» al límite. |\n| HSPU | STOH | evitar | A<>B | Doble empuje vertical | El tríceps y el deltoides anterior fallan pronto; si se busca, que sea con reps bajas. |\n| OLY | BURPEE | buscada | A<>B | Halterofilia con pulsaciones altas | Mantener la técnica de la barra con FC alta: interferencia típica de los WODs de competición en la fase de realización. |\n\n## TABLA · PESOS\n\nRango de carga en % del 1RM según el formato. El motor usa la marca del ejercicio (o la de `1RM DE`) y redondea a 2,5 kg.\n\n| FORMATO | % MIN | % MAX | NOTA |\n|---|---|---|---|\n| SPRINT | 60 | 75 | Cargas medias que permitan tandas grandes |\n| AMRAP_C | 55 | 70 | |\n| AMRAP | 45 | 60 | |\n| AMRAP_L | 35 | 50 | Barra ligera: no es el objetivo (Fabrik: «no buscamos una barra exigente») |\n| FOR_TIME | 50 | 65 | |\n| CHIPPER | 40 | 55 | |\n| ESCALERA | 55 | 70 | |\n| EMOM | 55 | 70 | |\n| EVERY | 60 | 75 | P1: cargas que permitan el 90 % de intensidad |\n| INTERVALOS | 45 | 60 | |\n| VENTANAS | 75 | 88 | Ventana 1 al mínimo y ventana 2 al máximo |\n| SINCRO | 45 | 60 | Equipo: −10–15 % frente a individual |\n\n## TABLA · REGLAS\n\n| CLAVE | VALOR | EXPLICACIÓN |\n|---|---|---|\n| max_movs | 4 | Movimientos por parte (con el erg incluido) |\n| transicion_min | 2 | Minutos de transición entre partes del mega WOD |\n| erg_cada_ronda | 1 | Con «intercalar X», X va entre todas las rondas |\n| min_metcon | 12 | Minutos por defecto de un metcon a medida si no los pones |\n| max_metcon | 40 | Tope de minutos de un metcon a medida |\n| sesiones_duras_48h | 1 | Las sesiones duras (P1–P4, metcon RPE ≥8) se separan 48 h |\n| tope_compensacion | 40 | % máximo de volumen extra al compensar |\n| reps_equipo | 0.75 | Factor de reps por atleta en pareja o equipo |\n\n## Claves de CrossFit (Road To Elite)\n\n- **Interferencia con intención:** Fabrik programa la interferencia como objetivo, por ejemplo:\n  - «squat snatch bajo interferencia directa de air bike»;\n  - «BMU bajo fatiga cardiorrespiratoria»;\n  - «T2B bajo fatiga tras la carrera».\n\n  El motor debe reproducir ese tipo de pares, no evitarlos, cuando el objetivo es competir.\n- **Fichas de Fabrik:** cada metcon trae\n  - WOD MATERIAL, INTENSIDAD (RPE) y CARGA;\n  - MODALIDAD y MODALIDAD WOD;\n  - OBJETIVO;\n  - LIMITANTE muscular, técnico, respiratorio y estratégico.\n\n  Son la etiqueta de cada WOD en `MOTOR · ANÁLISIS («Road to Elite · Motor WODs»)` y lo que el motor imita.\n- **«Respeta %»:**\n  - la carga media es media;\n  - en metcon largo, la barra no debe ser lo que determine el WOD;\n  - en ventanas, la 1 ligera y la 2 exigente.\n- **Pacing:** empezar exigente pero repetible; registrar si la caída viene del aire, el agarre, el hombro o las transiciones (manual §6.4).\n- **Realización (semanas 9–12):**\n  - interferencia máxima;\n  - gimnásticos y barra con pulsaciones altas;\n  - erg mezclado con barra y gimnásticos;\n  - heavys aislados y en metcon;\n  - accesorios en mantenimiento.\n- **Z6–Z8 (P1–P4):**\n  - pocos minutos y de máxima calidad;\n  - P1: every 3–4′ al 90 % con descanso casi completo;\n  - P4: umbral en impares y pico en pares;\n  - si un metcon de Fabrik ya es de esa familia (4 bloques estables), cuenta como el estímulo de la semana.\n- **Segundo P integrado (R04):**\n  - thrusters, DU, STOH, front squat, burpees, hang snatch/clean y C2B/BMU en fatiga, con erg o carrera;\n  - nunca a menos de 48 h de otra sesión dura.\n- **Viaje:** lo que no siga la programación sube la intensidad:\n  - densidad;\n  - tempo;\n  - chaleco;\n  - final tipo P con sprints de 20″.\n- **Carencias:** salen de APP · METAS (peso = prioridad × lo que falta). El motor prioriza los movimientos de las metas menos cubiertas que tu material permite.\n\n## Claves del manual de rendimiento híbrido (resumen para el motor)\n\n- **Concurrente:**\n  - separa la fuerza pesada y la carrera de calidad ≥6 h, o mejor en días distintos;\n  - la Z2 no interfiere si es suave de verdad.\n- **48 h entre sesiones duras.** Tope semanal de minutos por turno: AM 75′, PM 120′.\n- **Taper:** −41–60 % de volumen sin bajar intensidad ni frecuencia.\n- **Competición física:**\n  - fuera P1–P4 y extras;\n  - 72–48 h antes, volumen medio-bajo con intensidad alta;\n  - 48–24 h antes, repaso;\n  - 24 h antes, descanso.\n- **Combustible:** 6–8 g/kg de hidratos el día previo a una carga alta; 1–2 g/kg 2–3 h antes de competir.\n";

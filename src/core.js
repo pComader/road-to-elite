@@ -378,7 +378,7 @@
       pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
       refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
       fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], enduranceManana: !!sem.enduranceManana,
-      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
+      sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
   function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
@@ -1052,14 +1052,15 @@
         '<button class="btn btn-primary sm" type="button" data-sin-hueco="' + esc(r.ID) + '">Colocar</button></div>';
     });
     var confOk = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
-    if (d.hayFabrik && !d.fabrikCargado && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik de esta semana sin cargar en tu plan</span><button class="btn sm" type="button" data-cargar-fabrik>Cargar Fabrik</button></div>';
+    if (d.hayFabrik && !d.fabrikCargado && confOk && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik de esta semana sin cargar en tu plan</span><button class="btn sm" type="button" data-cargar-fabrik>Cargar Fabrik</button></div>';
+    if (d.extrasParcial && confOk && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Extras programados solo para ' + esc((d.extrasParcial.dias || []).map(function (x) { return DIAS_CORTOS[(new Date(x + 'T12:00:00').getDay() + 6) % 7]; }).join(', ')) + '. Cuando Gabi suba el resto, complétala.</span><button class="btn btn-primary sm" type="button" data-resto-semana>Programar resto de semana</button></div>';
     else if (d.fabrikCargado && confOk && !d.extrasTxt && !d.borrador && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik cargado · faltan los extras, la carrera y los refuerzos</span><button class="btn btn-primary sm" type="button" data-cargar-extras>Cargar extras</button></div>';
     var hayPlan = (d.plan || []).some(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && /PROGRAMADO|BORRADOR/.test(norm(r.ESTADO)); });
     if (d.borrador) h += '<div class="draft-banner"><span>' + (hayPlan && (d.plan || []).some(function (r) { return norm(r.ESTADO) === 'PROGRAMADO' && norm(r.ORIGEN) !== 'FABRIK'; }) ? 'Hay cambios sin aprobar' : 'Plan de la semana pendiente de aprobar') + '</span><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar</button></div>';
     else if (hayPlan) h += '<div class="ok-banner"><span>✓ Plan aprobado</span><button class="btn-ghost sm" type="button" data-ir-hoja>Revisar</button></div>';
     var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
-    if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Confirma la semana del ' + fechaCorta(sig) + '</b><span>Mañanas para doble, descansos y eventos. Sin esto no se programa.</span></button>';
-    if (d.conf && /^Pendiente/.test(d.conf.ESTADO || '')) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Esta semana está sin confirmar</b><span>Confírmala para poder programarla.</span></button>';
+    if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Carga y confirma la semana del ' + fechaCorta(sig) + '</b><span>Fabrik + mañanas para doble, descansos y eventos, en un paso. Sin esto no se programa.</span></button>';
+    if (!confOk && d.semana >= lunesIso(d.hoy)) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Carga y confirma esta semana</b><span>' + (d.hayFabrik && !d.fabrikCargado ? 'Fabrik sin cargar · ' : '') + 'mañanas, descansos y eventos en un paso.</span></button>';
     var np = (d.pendientes || []).filter(function (p) { return p.ESTADO === 'Pendiente'; }).length;
     if (np) h += '<button class="pend-banner" type="button" data-ver-pend>' + np + ' pendiente' + (np > 1 ? 's' : '') + ' para reincorporar · se te propondrán al programar la semana</button>';
     return h;
@@ -1078,8 +1079,9 @@
     api({ action: 'eventos' }).then(ok).then(function (r) {
       var evs = r.eventos.filter(function (e) { var i = aIso(e.INICIO), f = aIso(e.FIN) || i; return i && f >= lunes && i <= fin; });
       S._evsConf = evs;
-      abrirHoja('<div class="row"><h2>Semana del ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
-        '<form id="conff" class="avf"><label>Mañanas libres para sesión doble</label>' + chipsDias('cf-dob', String(cs && cs['DOBLES (mañanas libres)'] || '')) +
+      abrirHoja('<div class="row"><h2>Cargar y confirmar · ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+        '<form id="conff" class="avf"><label class="toggle"><input type="checkbox" id="cf-carga" checked><span><b>Cargar Fabrik</b><small>Lo que Gabi haya subido de esa semana (aunque sean solo unos días). Lo que tengas con 🔒 no se toca.</small></span></label>' +
+        '<label>Mañanas libres para sesión doble</label>' + chipsDias('cf-dob', String(cs && cs['DOBLES (mañanas libres)'] || '')) +
         '<label>Días sin entrenar (descanso)</label>' + chipsDias('cf-des', String(cs && cs.DESCANSO || '')) +
         '<div class="part-lbl" style="margin-top:10px">Eventos de la semana</div>' +
         (evs.length ? evs.map(function (e, i) {
@@ -1091,7 +1093,7 @@
         }).join('') : '<div class="hint">No hay eventos esa semana. Si hay alguno, añádelo en el calendario.</div>') +
         '<button class="btn" type="button" data-nuevo-evento="' + lunes + '">＋ Añadir evento</button>' +
         '<label for="cf-not">Notas para la planificación</label><textarea id="cf-not" rows="2">' + esc(cs && cs.NOTAS || '') + '</textarea>' +
-        '<button class="btn btn-primary" type="submit" id="cf-ok">Confirmar semana</button>' +
+        '<button class="btn btn-primary" type="submit" id="cf-ok">Cargar y confirmar semana</button>' +
         '<div class="hint">Al confirmar, cada evento queda «Decidido». Hasta que la semana esté confirmada no se programa.</div></form>');
       document.getElementById('conff').onsubmit = function (ev) {
         ev.preventDefault();
@@ -1103,8 +1105,8 @@
         });
         var dec = cambios.map(function (o) { return o.EVENTO + ': ' + (o['CÓMO PROCEDER'] || o.BLOQUEA); }).join(' | ');
         cambios.reduce(function (p, o) { return p.then(function () { return api({ action: 'evento', evento: o }).then(ok); }); }, Promise.resolve())
-          .then(function () { return api({ action: 'semana_conf', lunes: lunes, ver: d.semana, dobles: leerChips('cf-dob'), descanso: leerChips('cf-des'), decisiones: dec, notas: val('cf-not'), confirmar: true }); })
-          .then(ok).then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Semana confirmada'); })
+          .then(function () { return api({ action: 'semana_conf', lunes: lunes, ver: d.semana, dobles: leerChips('cf-dob'), descanso: leerChips('cf-des'), decisiones: dec, notas: val('cf-not'), confirmar: true, cargar: document.getElementById('cf-carga').checked }); })
+          .then(ok).then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Semana confirmada' + (res.carga ? ' · ' + (res.carga.ok ? res.carga.cargados + ' bloques de Fabrik' : (res.carga.motivo || 'Fabrik sin cargar')) : '')); })
           .catch(falloApi(b));
       };
     }).catch(function (e) { toast(mensajeError(e.message)); });
@@ -1825,6 +1827,11 @@
       return;
     }
     if (t.closest('[data-ir-hoja]')) { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); return; }
+    if ((b = t.closest('[data-resto-semana]'))) {
+      b.disabled = true; b.textContent = 'Leyendo Fabrik…';
+      api({ action: 'cargar_fabrik', lunes: S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); abrirPreviaExtras(S.data.semana, null, { resto: true }); }).catch(falloApi(b));
+      return;
+    }
     if ((b = t.closest('[data-cargar-fabrik]'))) {
       b.disabled = true; b.textContent = 'Cargando…';
       api({ action: 'cargar_fabrik', lunes: b.dataset.cargarFabrik || S.data.semana, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast(r.carga.ok ? r.carga.cargados + ' bloques de Fabrik en tu plan' : r.carga.motivo); }).catch(falloApi(b));
@@ -1924,7 +1931,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.14';
+  var WEB_VERSION = 'web 0.15';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

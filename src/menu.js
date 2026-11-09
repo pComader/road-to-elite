@@ -1049,8 +1049,9 @@
     var html = cabeceraVista('Hoja de la semana', 'Semana') +
       '<section class="me" style="display:block"><b>Semana del ' + fechaCorta(d.semana) + '</b><div class="hint">' + esc(d.conf ? d.conf.ESTADO + (d.conf['DOBLES (mañanas libres)'] ? ' · dobles: ' + d.conf['DOBLES (mañanas libres)'] : '') + (d.conf.DESCANSO ? ' · descanso: ' + d.conf.DESCANSO : '') : 'Sin confirmar') + '</div>' +
       (d.extrasTxt ? '<div class="hint">Extras: ' + esc(d.extrasTxt) + '</div>' : '') + '</section>';
-    html += '<div class="hoja-acc">' + (!d.fabrikCargado ? '<button class="btn sm" type="button" data-cargar-fabrik="' + d.semana + '">Cargar Fabrik</button>' : '') +
-      (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '↻ Rehacer extras' : 'Cargar extras') + '</button>' : '<button class="btn sm" type="button" data-confirmar="' + d.semana + '">Confirmar semana</button>') +
+    html += '<div class="hoja-acc">' + (!d.fabrikCargado && conf ? '<button class="btn sm" type="button" data-cargar-fabrik="' + d.semana + '">Cargar Fabrik</button>' : '') +
+      (d.extrasParcial && conf ? '<button class="btn btn-primary sm" type="button" data-resto-semana>Programar resto de semana</button>' : '') +
+      (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '↻ Rehacer extras' : 'Cargar extras') + '</button>' : '<button class="btn btn-primary sm" type="button" data-confirmar="' + d.semana + '">Cargar y confirmar semana</button>') +
       (d.borrador ? '<button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button>' : '') +
       '<button class="btn-ghost sm" type="button" id="h-xc">Extras semana en curso</button><button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>' +
       '<label class="toggle"><input type="checkbox" id="h-endu"' + (d.enduranceManana ? ' checked' : '') + '><span><b>Endurance de mañana</b><small>Z2 de carrera y erg solo en tus mañanas libres (el domingo, de comodín). Z6–Z8, calidad en series, RMU y cuerda: donde tú quieras.</small></span></label>';
@@ -1277,14 +1278,24 @@
   }
 
   // ---------- aviso previo a «Cargar extras» ----------
-  function abrirPreviaExtras(lunes, btn) {
+  function abrirPreviaExtras(lunes, btn, op) {
+    op = op || {};
     if (btn) btn.disabled = true;
-    abrirHoja('<div class="row"><h2>Cargar extras</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><div class="hint">Calculando la propuesta…</div>');
-    api({ action: 'extras_previa', lunes: lunes }).then(ok).then(function (r) {
+    var d0 = S.data, des = String(d0.conf && d0.conf.DESCANSO || ''), isos = [0, 1, 2, 3, 4, 5, 6].map(function (k) { return sumarDias(lunes, k); });
+    var corto = function (x) { return DIAS_CORTOS[(new Date(x + 'T12:00:00').getDay() + 6) % 7]; };
+    var hechos = op.resto ? (d0.extrasParcial && d0.extrasParcial.dias || []) : [];
+    if (op.resto && !op.descanso) op.descanso = d0.extrasParcial && d0.extrasParcial.descanso || 'nada';
+    var params = { action: 'extras_previa', lunes: lunes, dias: op.modo === 'dias' ? op.dias : null, descanso: op.descanso || 'nada', resto: !!op.resto };
+    abrirHoja('<div class="row"><h2>' + (op.resto ? 'Programar resto de semana' : 'Cargar extras') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><div class="hint">Calculando la propuesta…</div>');
+    api(params).then(ok).then(function (r) {
+      var opHtml = '<div class="pv-alc">' + (op.resto ? '<div class="hint">Se mantiene lo ya programado (' + esc(hechos.map(corto).join(', ')) + ') y se completa el resto de la semana: ahí sí se cubren todos los estímulos semanales, sumando todos los días.</div>' :
+        '<label>¿Para qué días?</label><div class="seg" id="pv-modo"><button type="button" data-pvm="semana" aria-pressed="' + (op.modo !== 'dias') + '">Toda la semana</button><button type="button" data-pvm="dias" aria-pressed="' + (op.modo === 'dias') + '">Días concretos</button></div>' +
+        (op.modo === 'dias' ? '<div class="dchips" id="pv-dias">' + isos.map(function (x) { var fab = (d0.fabrikDias || []).indexOf(x) >= 0; return '<button type="button" data-pvd="' + x + '" aria-pressed="' + ((op.dias || []).indexOf(x) >= 0) + '">' + corto(x) + (fab ? ' ·F' : '') + '</button>'; }).join('') + '</div><div class="hint">·F = Gabi ya lo ha subido. Lo que no quepa en esos días queda para «Programar resto de semana».</div>' : '')) +
+        (des ? '<label for="pv-des">En tus días de descanso (' + esc(des) + ')</label><select id="pv-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + ((op.descanso || 'nada') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') + '</div>';
       if (btn) btn.disabled = false;
       var P = r.previa, li = function (l) { return l.length ? '<ul class="pv">' + l.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<div class="hint">—</div>'; };
       var PR = { carrera: 'Carrera', refuerzo: 'Refuerzo', pendiente: 'Pendiente', semana: 'Meta semanal', mes: 'Meta mensual' };
-      abrirHoja('<div class="row"><h2>Cargar extras · ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      abrirHoja('<div class="row"><h2>' + (op.resto ? 'Resto de semana · ' : 'Cargar extras · ') + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' + opHtml +
         '<div class="pv-kpi"><span><b>' + P.bloques.length + '</b> bloques</span><span><b>' + P.pctMes + ' %</b> del mes (17–27 %)</span><span>Endurance de mañana: <b>' + (P.modoAM ? 'sí' : 'no') + '</b></span></div>' +
         '<div class="part-lbl">Mañanas libres</div><div class="hint">' + esc(P.mananas.join(', ') || 'ninguna') + '</div>' +
         '<div class="part-lbl">Endurance</div>' + li(P.endurance) +
@@ -1294,9 +1305,14 @@
         '<label for="pv-de">⚙ Estímulos que quiero esta semana (opcional)</label><textarea id="pv-de" rows="2" maxlength="300" placeholder="ej. intercalar carrera, calorías de assault, thrusters · el motor añade un metcon a medida en el mejor hueco"></textarea>' +
         '<div class="hint">Lo que tenga 🔒 candado (movido o editado a mano) y lo ya aprobado no se toca. Todo entra en borrador.</div>' +
         '<button class="btn btn-primary" type="button" id="pv-ok">Generar</button>');
+      var rehacer = function (cambio) { abrirPreviaExtras(lunes, null, Object.assign({}, op, cambio)); };
+      $scrim.querySelectorAll('[data-pvm]').forEach(function (x) { x.onclick = function () { rehacer({ modo: x.dataset.pvm, dias: x.dataset.pvm === 'dias' ? (op.dias || []) : null }); }; });
+      $scrim.querySelectorAll('[data-pvd]').forEach(function (x) { x.onclick = function () { var l = (op.dias || []).slice(), k = l.indexOf(x.dataset.pvd); if (k >= 0) l.splice(k, 1); else l.push(x.dataset.pvd); rehacer({ dias: l }); }; });
+      var sd = document.getElementById('pv-des'); if (sd) sd.onchange = function () { rehacer({ descanso: sd.value }); };
       document.getElementById('pv-ok').onclick = function () {
+        if (op.modo === 'dias' && !(op.dias || []).length) { toast('Elige al menos un día'); return; }
         var b = this; b.disabled = true; b.textContent = 'Programando…';
-        api({ action: 'generar_extras', lunes: lunes, ver: S.data.semana, deseo: val('pv-de') }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); S.vista = 'hoja'; render();
+        api({ action: 'generar_extras', lunes: lunes, ver: S.data.semana, deseo: val('pv-de'), dias: params.dias, descanso: params.descanso, resto: params.resto }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); S.vista = 'hoja'; render();
           var md = r2.extras.medida; toast(r2.extras.resumen + (md && !md.ok ? ' · metcon a medida: ' + (md.avisos || []).join(' ') : '')); }).catch(falloApi(b));
       };
     }).catch(function (er) { if (btn) btn.disabled = false; cerrarHoja(); toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
