@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.20.2',
+  VERSION: '0.21.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -125,11 +125,11 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
-      case 'extras_previa': var pvx = generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); pvx.dobles = String((filaSemana_(lunesDe_(body.lunes)) || {})['DOBLES (mañanas libres)'] || ''); return json_({ ok: true, previa: pvx });
+      case 'extras_previa': return json_(previaExtras_(body));
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
-      case 'generar_extras': var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'generar_extras': if (body.dobles != null) guardarDobles_(body); var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } if (body.aprobar) { try { rg.aprobados = aprobarPlanSemana_(body.lunes); } catch (e) { rg.aprobarError = String(e && e.message || e); } } refrescarResumen_(); MEMO = null; return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -1241,6 +1241,17 @@ function guardarSemanaConf_(b) {
   });
 }
 
+/** v0.21 · «Calcular» de Programar semana: en UNA llamada guarda las mañanas (si cambian), relee Fabrik (si hace falta) y devuelve la propuesta sin escribir el plan. */
+function previaExtras_(body) {
+  var lunes = lunesDe_(body.lunes), cambio = false;
+  if (body.dobles != null && String(body.dobles) !== String((filaSemana_(lunes) || {})['DOBLES (mañanas libres)'] || '')) { guardarDobles_(body); cambio = true; }
+  if (body.refrescar) { try { cargarFabrikSemana_(lunes); cambio = true; } catch (e) { /* sin Fabrik nuevo se calcula con lo que hay */ } }
+  MEMO = null;
+  var pvx = generarExtras_(lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir });
+  pvx.dobles = String((filaSemana_(lunes) || {})['DOBLES (mañanas libres)'] || '');
+  return { ok: true, previa: pvx, semana: cambio ? semanaCompleta_(body.ver || lunes) : null };
+}
+
 /** Solo cambia las mañanas libres para doble (desde Cargar extras o Reestructurar). No toca descanso, notas, decisiones ni el estado. */
 function guardarDobles_(b) {
   var lunes = lunesDe_(b.lunes), dob = String(b.dobles || '').slice(0, 200);
@@ -2275,8 +2286,10 @@ function posicionOptima_(b) {
   r = Object.assign({}, r || {}, b.campos || {});
   if (!r['TÍTULO'] && !r['CÓDIGOS']) throw new Error('faltan_datos');
   var ctx = contextoSemana_(lunes, b.id), cand = candidatoDe_(r, cat), lista = puntuarHuecos_(cand, ctx);
-  var actual = r.FECHA && r.ESTADO !== 'SIN HUECO' ? puntuarHuecos_(cand, ctx, true).filter(function (h) { return h.iso === celdaIso_(r.FECHA) && h.turno === (norm(r.TURNO) === 'AM' ? 'AM' : 'PM'); })[0] : null;
-  return { mejores: lista.slice(0, 3), actual: actual || null, libre: cand.codigos.some(function (c) { return LIBRES_TURNO.test(c); }), modoAM: ctx.modoAM };
+  var todos = puntuarHuecos_(cand, ctx, true);
+  var actual = r.FECHA && r.ESTADO !== 'SIN HUECO' ? todos.filter(function (h) { return h.iso === celdaIso_(r.FECHA) && h.turno === (norm(r.TURNO) === 'AM' ? 'AM' : 'PM'); })[0] : null;
+  // v0.21 · todos los huecos de la semana: la app cambia de día o turno sin volver a preguntar al servidor
+  return { mejores: lista.slice(0, 3), actual: actual || null, todos: todos.map(function (h) { return { iso: h.iso, turno: h.turno, dia: h.dia, choques: h.choques, motivos: h.motivos }; }), libre: cand.codigos.some(function (c) { return LIBRES_TURNO.test(c); }), modoAM: ctx.modoAM };
 }
 
 // ---------- 5 · Generar los extras de la semana («Cargar extras») ----------
@@ -2547,6 +2560,9 @@ function generarExtras_(lunes, opts) {
     endurance: colocados.filter(function (o) { return esEndurance(candDe(o)); }).map(function (o) { return o['TÍTULO'] + ' → ' + o['DÍA'] + ' ' + o.TURNO; }),
     refuerzos: refs.map(function (r) { return r.TEXTO; }), pendientes: cola.length >= 0 ? nuevos.filter(function (o) { return o.PENDIENTE_ID; }).map(function (o) { return o['TÍTULO']; }) : [],
     sinHueco: sinHueco, sinR04: sinR04, excepcion: EXC, bloques: colocados.map(function (o) { return { titulo: o['TÍTULO'], dia: o['DÍA'], turno: o.TURNO, min: o.MIN, codigos: o['CÓDIGOS'], prio: o._prio || 'carrera' }; }), pctMes: pct, resumen: resumen };
+  previa.yaCuenta = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && norm(r.ORIGEN) !== 'FABRIK' && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && !esAuto(r); })
+    .map(function (r) { return { titulo: r['TÍTULO'], dia: diaDe_(celdaIso_(r.FECHA)), turno: r.TURNO, estado: r.ESTADO }; });
+  previa.dias = diasSel || semanaIsos;
   if (sim) return previa;
   nuevos.forEach(function (o) { delete o._prio; delete o._fabrikZ2; delete o._condicional; });
   if (sinR04) ponerConfig_('r04_' + lunes, sinR04, '2.ª P integrada: motivo por el que no se programó esa semana');

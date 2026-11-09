@@ -1056,3 +1056,8 @@ details.alt .exp-body{padding:0 10px 10px}
 .comp-h{display:flex;justify-content:space-between;gap:8px;align-items:center}.comp-l a{text-decoration:underline}
 .comp .btn{align-self:flex-start;margin-top:6px}
 .comp-q-b{display:flex;gap:6px}
+/* v0.21 · Programar semana */
+.pv-res{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:4px 0 8px;font-size:14px}
+.pv-dia{border-left:3px solid var(--line);padding:4px 0 4px 10px;margin:6px 0}
+.pv-dia .pr-row{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.row-sm{display:flex;align-items:center;gap:8px;margin-top:6px}

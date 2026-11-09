@@ -1058,7 +1058,7 @@
       (d.extrasTxt ? '<div class="hint">Extras: ' + esc(d.extrasTxt) + '</div>' : '') + '</section>';
     html += '<div class="hoja-acc">' + (!d.fabrikCargado && conf ? '<button class="btn sm" type="button" data-cargar-fabrik="' + d.semana + '">Cargar Fabrik</button>' : '') +
       (d.extrasParcial && conf ? '<button class="btn btn-primary sm" type="button" data-resto-semana>Programar resto de semana</button>' : '') +
-      (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '↻ Rehacer extras' : 'Cargar extras') + '</button>' : '<button class="btn btn-primary sm" type="button" data-confirmar="' + d.semana + '">Cargar y confirmar semana</button>') +
+      (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '📅 Programar · resto o día a día' : '📅 Programar extras') + '</button>' : '<button class="btn btn-primary sm" type="button" data-confirmar="' + d.semana + '">Cargar y confirmar semana</button>') +
       (d.borrador ? '<button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button>' : '') +
       (conf ? '<button class="btn sm" type="button" data-mananas>☀ Mañanas</button>' : '') +
       '<button class="btn-ghost sm" type="button" id="h-xc">Extras semana en curso</button><button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>' +
@@ -1126,13 +1126,16 @@
       '<button class="btn btn-primary" type="submit" id="eb-ok">Guardar cambios</button>' + (/^PROGRAMADO$/.test(norm(b.estado)) || (!b.extra && !b.estado) ? '<div class="hint">Mover de día, turno u orden mantiene el bloque aprobado. Si cambias su contenido, vuelve a borrador para que lo apruebes.</div>' : '') +
       '<div class="two-btn">' + (fab || norm(b.estado) === 'SIN HUECO' ? '' : '<button class="btn" type="button" id="eb-q">' + (norm(b.estado) === 'BORRADOR' ? 'Quitar borrador' : 'No hacer') + '</button>') +
       '<button class="btn" type="button" id="eb-pd">' + (norm(b.estado) === 'SIN HUECO' ? 'Dejar en pendientes' : 'No hacer · a pendientes') + '</button></div></form>');
+    var cacheP = null, claveP = '';
     var pedir = function () {
       var el = document.getElementById('eb-pos'); if (!el) return;
-      el.innerHTML = '<div class="hint">Calculando la posición óptima…</div>';
       var campos = { FECHA: aTxt(val('eb-f')), TURNO: val('eb-t') };
       if (!fab) { campos['CÓDIGOS'] = val('eb-cd'); campos['TÍTULO'] = val('eb-ti'); campos.CONTENIDO = val('eb-co'); campos.MIN = val('eb-mi'); }
-      api({ action: 'posicion', id: idb, lunes: S.data.semana, campos: campos }).then(ok).then(function (res) {
-        var P = res.posicion, a = P.actual, m = P.mejores[0], esOpt = a && m && a.iso === m.iso && a.turno === m.turno;
+      var clave = fab ? '' : [campos['CÓDIGOS'], campos['TÍTULO'], campos.MIN].join('|');
+      // v0.21 · una sola consulta: al cambiar de día o turno se usa la lista de huecos ya calculada
+      var pinta = function (P0) {
+        var iso = val('eb-f'), tu = val('eb-t'), a = (P0.todos || []).filter(function (h) { return h.iso === iso && h.turno === tu; })[0] || (P0.todos ? null : P0.actual);
+        var P = Object.assign({}, P0, { actual: a }), m = P.mejores[0], esOpt = a && m && a.iso === m.iso && a.turno === m.turno;
  el.innerHTML = (P.libre ? '<div class="hint">Este bloque (Z6–Z8, calidad en series, RMU o cuerda) puede ir por la mañana o por la tarde: elige tú.</div>' : '') +
           (a ? '<div class="pos-act ' + (esOpt ? 'ok' : a.choques.length ? 'warn' : '') + '"><b>' + (esOpt ? '✔ Es la posición óptima' : 'Donde lo has puesto') + '</b>' +
           (a.choques.length ? '<span>⚠ ' + esc(a.choques.join(' · ')) + '</span>' : '<span>' + esc(a.motivos.join(' · ')) + '</span>') + '</div>' : '<div class="pos-act warn"><b>Ese hueco no está disponible</b><span>Descanso, mañana no libre o bloqueado por un evento.</span></div>') +
@@ -1140,7 +1143,11 @@
             return '<button type="button" class="pos-op" data-usar="' + h.iso + '|' + h.turno + '"><b>' + esc(h.dia) + ' ' + diaMes(h.iso) + ' · ' + h.turno + '</b><span>' + esc(h.choques.length ? '⚠ ' + h.choques.join(' · ') : h.motivos.join(' · ')) + '</span><span class="go">Usar</span></button>';
           }).join(''));
         el.querySelectorAll('[data-usar]').forEach(function (u) { u.onclick = function () { var p = u.dataset.usar.split('|'); document.getElementById('eb-f').value = p[0]; document.getElementById('eb-t').value = p[1]; opciones(); pedir(); }; });
-      }).catch(function (e) { el.innerHTML = '<div class="hint">' + esc(mensajeError(e.message)) + '</div>'; });
+      };
+      if (cacheP && clave === claveP) { pinta(cacheP); return; }
+      el.innerHTML = '<div class="hint">Calculando la posición óptima…</div>';
+      api({ action: 'posicion', id: idb, lunes: S.data.semana, campos: campos }).then(ok).then(function (res) { cacheP = res.posicion; claveP = clave; pinta(cacheP); })
+        .catch(function (e) { el.innerHTML = '<div class="hint">' + esc(mensajeError(e.message)) + '</div>'; });
     };
     /** «Orden» = en qué lugar de la sesión de ese día y turno va el bloque (antes o después de cada bloque). */
     var opciones = function () {
@@ -1286,45 +1293,109 @@
   }
 
   // ---------- aviso previo a «Cargar extras» ----------
+  /**
+   * v0.21 · Programar semana en UNA ventana y en dos pasos:
+   *  1) Opciones (todo local, sin llamadas): qué días (resto de semana / días concretos / toda la semana), mañanas para doble, descanso, estímulos que quiero.
+   *  2) «Calcular» → una sola llamada (guarda mañanas + relee Fabrik si hace falta + propuesta) → resultado con «Modificar» o «Confirmar».
+   * Lo ya programado en otros días no se toca y cuenta para cubrir los estímulos de la semana.
+   */
   function abrirPreviaExtras(lunes, btn, op) {
-    op = op || {};
-    if (btn) btn.disabled = true;
-    var d0 = S.data, des = String(d0.conf && d0.conf.DESCANSO || ''), isos = [0, 1, 2, 3, 4, 5, 6].map(function (k) { return sumarDias(lunes, k); });
-    var corto = function (x) { return DIAS_CORTOS[(new Date(x + 'T12:00:00').getDay() + 6) % 7]; };
-    var hechos = op.resto ? (d0.extrasParcial && d0.extrasParcial.dias || []) : [];
-    if (op.resto && !op.descanso) op.descanso = d0.extrasParcial && d0.extrasParcial.descanso || 'nada';
-    var params = { action: 'extras_previa', lunes: lunes, dias: op.modo === 'dias' ? op.dias : null, descanso: op.descanso || 'nada', resto: !!op.resto, reabrir: !!op.reabrir };
-    abrirHoja('<div class="row"><h2>' + (op.resto ? 'Programar resto de semana' : 'Cargar extras') + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><div class="hint">Calculando la propuesta…</div>');
-    api(params).then(ok).then(function (r) {
-      var opHtml = '<div class="pv-alc">' + (op.resto ? '<div class="hint">Se mantiene lo ya programado (' + esc(hechos.map(corto).join(', ')) + ') y se completa el resto de la semana: ahí sí se cubren todos los estímulos semanales, sumando todos los días.</div>' :
-        '<label>¿Para qué días?</label><div class="seg" id="pv-modo"><button type="button" data-pvm="semana" aria-pressed="' + (op.modo !== 'dias') + '">Toda la semana</button><button type="button" data-pvm="dias" aria-pressed="' + (op.modo === 'dias') + '">Días concretos</button></div>' +
-        (op.modo === 'dias' ? '<div class="dchips" id="pv-dias">' + isos.map(function (x) { var fab = (d0.fabrikDias || []).indexOf(x) >= 0; return '<button type="button" data-pvd="' + x + '" aria-pressed="' + ((op.dias || []).indexOf(x) >= 0) + '">' + corto(x) + (fab ? ' ·F' : '') + '</button>'; }).join('') + '</div><div class="hint">·F = Gabi ya lo ha subido. Lo que no quepa en esos días queda para «Programar resto de semana».</div>' : '')) +
-        bloqueDobles('pv-dob', r.previa.dobles) + (des ? '<label for="pv-des">En tus días de descanso (' + esc(des) + ')</label><select id="pv-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + ((op.descanso || 'nada') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') + '</div>';
-      if (btn) btn.disabled = false;
-      var P = r.previa, li = function (l) { return l.length ? '<ul class="pv">' + l.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<div class="hint">—</div>'; };
+    op = Object.assign({}, op || {});
+    var d0 = S.data, esta = lunes === d0.semana, conf = (esta ? d0.conf : d0.confSiguiente) || {};
+    var isos = [0, 1, 2, 3, 4, 5, 6].map(function (k) { return sumarDias(lunes, k); });
+    var par = esta ? d0.extrasParcial : null;
+    var programados = par ? (par.dias || []) : (esta && d0.extrasTxt ? isos.slice() : []);
+    var fabDias = esta ? (d0.fabrikDias || []) : [];
+    var fabCargados = esta ? (d0.plan || []).filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; }).map(function (r) { return aIso(r.FECHA); }) : [];
+    var des = String(conf.DESCANSO || ''), hoy = d0.hoy || hoyLocal();
+    if (op.resto) op.modo = 'resto';
+    if (!op.modo) op.modo = par ? 'resto' : 'semana';
+    if (op.modo === 'resto' && !par) op.modo = 'semana';
+    if (!op.dias) { var libres = isos.filter(function (x) { return programados.indexOf(x) < 0 && x >= hoy; }); op.dias = libres.filter(function (x) { return fabDias.indexOf(x) >= 0; }).slice(0, 1); if (!op.dias.length) op.dias = libres.slice(0, 1); }
+    if (op.dobles == null) op.dobles = String(conf['DOBLES (mañanas libres)'] || '');
+    if (!op.descanso) op.descanso = par && par.descanso || 'nada';
+    if (op.aprobar == null) op.aprobar = true;
+    if (op.deseo == null) op.deseo = '';
+    var corto = diaCortoIso;
+    var titulo = '<div class="row"><h2>Programar · semana del ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>';
+    var diasDe = function () { return op.modo === 'resto' ? isos.filter(function (x) { return programados.indexOf(x) < 0; }) : op.modo === 'dias' ? op.dias.slice().sort() : isos; };
+    var etiq = function (l) { return l.map(corto).join(', ') || '—'; };
+
+    function leer() {
+      var e;
+      if ((e = document.getElementById('pg-dob'))) op.dobles = leerDias('pg-dob');
+      if ((e = document.getElementById('pg-des'))) op.descanso = e.value;
+      if ((e = document.getElementById('pg-de'))) op.deseo = e.value.trim();
+    }
+    function pintar() {
+      var est = function (x) { return programados.indexOf(x) >= 0 ? '✓' : fabDias.indexOf(x) >= 0 ? '·F' : ''; };
+      abrirHoja(titulo +
+        (op.reabrir ? '<div class="hint">Plan ya aprobado: lo automático de hoy en adelante que no hayas hecho se recoloca; lo hecho, lo pasado y lo que tenga 🔒 candado no se toca.</div>' : '') +
+        '<div class="pv-alc"><label>¿Qué programo?</label><div class="seg" id="pg-modo">' +
+        (par ? '<button type="button" data-pgm="resto" aria-pressed="' + (op.modo === 'resto') + '">Resto de semana</button>' : '') +
+        '<button type="button" data-pgm="dias" aria-pressed="' + (op.modo === 'dias') + '">Día a día</button>' +
+        '<button type="button" data-pgm="semana" aria-pressed="' + (op.modo === 'semana') + '">' + (programados.length ? 'Toda (rehacer)' : 'Toda la semana') + '</button></div>' +
+        (op.modo === 'dias' ? '<div class="dchips" id="pg-dias">' + isos.map(function (x) { return '<button type="button" data-pgd="' + x + '" aria-pressed="' + (op.dias.indexOf(x) >= 0) + '">' + corto(x) + (est(x) ? ' ' + est(x) : '') + '</button>'; }).join('') + '</div>' : '') +
+        '<div class="hint">' + (op.modo === 'resto' ? 'Se programan <b>' + esc(etiq(diasDe())) + '</b>. ' : op.modo === 'dias' ? 'Elige uno o varios días. ' : '') +
+        (programados.length && op.modo !== 'semana' ? 'Lo ya programado (' + esc(etiq(programados)) + ') no se toca y cuenta para los estímulos de la semana.' : op.modo === 'semana' && programados.length ? 'Rehace los borradores de toda la semana; lo aprobado y lo que tenga 🔒 no se toca.' : '') +
+        (op.modo === 'dias' ? ' ✓ = ya programado · ·F = Gabi ya lo ha subido.' : '') + '</div></div>' +
+        '<label>Mañanas libres para sesión doble</label>' + chipsDias('pg-dob', op.dobles) +
+        (des ? '<label for="pg-des">En tus días de descanso (' + esc(des) + ')</label><select id="pg-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + (op.descanso === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') +
+        '<label for="pg-de">⚙ Estímulos que quiero (opcional)</label><textarea id="pg-de" rows="2" maxlength="300" placeholder="ej. intercalar carrera, calorías de assault, thrusters · metcon a medida en el mejor hueco">' + esc(op.deseo) + '</textarea>' +
+        '<button class="btn btn-primary" type="button" id="pg-calc">Calcular</button>');
+      $scrim.querySelectorAll('[data-pgm]').forEach(function (b) { b.onclick = function () { leer(); op.modo = b.dataset.pgm; pintar(); }; });
+      $scrim.querySelectorAll('[data-pgd]').forEach(function (b) { b.onclick = function () { var k = op.dias.indexOf(b.dataset.pgd); if (k >= 0) op.dias.splice(k, 1); else op.dias.push(b.dataset.pgd); b.setAttribute('aria-pressed', String(k < 0)); }; });
+      document.getElementById('pg-calc').onclick = calcular;
+    }
+    function params() {
+      var dias = diasDe();
+      var refrescar = op.modo === 'resto' || dias.some(function (x) { return fabDias.indexOf(x) >= 0 && fabCargados.indexOf(x) < 0; }) || (esta && d0.hayFabrik && !d0.fabrikCargado);
+      return { lunes: lunes, ver: S.data.semana, dias: op.modo === 'semana' ? null : dias, resto: op.modo === 'resto', descanso: op.descanso || 'nada', reabrir: !!op.reabrir,
+        dobles: op.dobles !== String(conf['DOBLES (mañanas libres)'] || '') ? op.dobles : null, refrescar: refrescar };
+    }
+    function calcular() {
+      leer();
+      if (op.modo === 'dias' && !op.dias.length) { toast('Elige al menos un día'); return; }
+      var pr = params();
+      abrirHoja(titulo + '<div class="hint">Calculando ' + esc(etiq(diasDe())) + (pr.refrescar ? ' (releyendo Fabrik)' : '') + '…</div>');
+      api(Object.assign({ action: 'extras_previa' }, pr)).then(ok).then(function (r) {
+        if (r.semana) { aplicarSemana(r.semana); conf = (lunes === S.data.semana ? S.data.conf : S.data.confSiguiente) || conf; render(); }
+        resultado(r.previa);
+      }).catch(function (er) {
+        if (/semana_sin_confirmar/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana no está confirmada</b><span>Confirma mañanas, descansos y eventos y vuelve aquí.</span></div><button class="btn btn-primary" type="button" data-confirmar="' + lunes + '">Cargar y confirmar semana</button>'); return; }
+        abrirHoja(titulo + '<div class="pos-act warn"><b>No se pudo calcular</b><span>' + esc(mensajeError(er.message)) + '</span></div><button class="btn" type="button" id="pg-vol">✎ Volver a las opciones</button>');
+        document.getElementById('pg-vol').onclick = pintar;
+      });
+    }
+    function resultado(P) {
       var PR = { carrera: 'Carrera', refuerzo: 'Refuerzo', pendiente: 'Pendiente', semana: 'Meta semanal', mes: 'Meta mensual' };
-      abrirHoja('<div class="row"><h2>' + (op.resto ? 'Resto de semana · ' : 'Cargar extras · ') + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' + opHtml +
-        '<div class="pv-kpi"><span><b>' + P.bloques.length + '</b> bloques</span><span><b>' + P.pctMes + ' %</b> del mes (17–27 %)</span><span>Endurance de mañana: <b>' + (P.modoAM ? 'sí' : 'no') + '</b></span></div>' +
-        '<div class="part-lbl">Mañanas libres</div><div class="hint">' + esc(P.mananas.join(', ') || 'ninguna') + '</div>' +
-        '<div class="part-lbl">Endurance</div>' + li(P.endurance) +
-        '<div class="part-lbl">Refuerzos pedidos</div>' + li(P.refuerzos) + '<div class="part-lbl">Pendientes que entran</div>' + li(P.pendientes) +
-        (P.sinHueco.length ? '<div class="pos-act warn"><b>No caben</b><span>' + esc(P.sinHueco.join(', ')) + '</span><span>Quedarán avisados para que elijas día y turno o los pases a pendientes.</span></div>' : '') +
-        '<details><summary>Ver todos los bloques</summary><div class="exp-body">' + P.bloques.map(function (x) { return '<div class="pr-row"><b>' + esc(x.titulo) + '</b><span class="hint">' + esc(x.dia + ' ' + x.turno + ' · ' + (x.min || '') + '′ · ' + (PR[x.prio] || x.prio)) + '</span></div>'; }).join('') + '</div></details>' +
-        '<label for="pv-de">⚙ Estímulos que quiero esta semana (opcional)</label><textarea id="pv-de" rows="2" maxlength="300" placeholder="ej. intercalar carrera, calorías de assault, thrusters · el motor añade un metcon a medida en el mejor hueco"></textarea>' +
-        (op.reabrir ? '<div class="hint">Reajuste con el plan aprobado: lo automático de hoy en adelante no hecho se recoloca. Lo hecho, lo pasado y lo que tenga 🔒 candado no se toca. Todo entra en borrador.</div>' : '<div class="hint">Lo que tenga 🔒 candado (movido o editado a mano) y lo ya aprobado no se toca. Todo entra en borrador.</div>') +
-        '<button class="btn btn-primary" type="button" id="pv-ok">Generar</button>');
-      var rehacer = function (cambio) { abrirPreviaExtras(lunes, null, Object.assign({}, op, cambio)); };
-      $scrim.querySelectorAll('[data-pvm]').forEach(function (x) { x.onclick = function () { rehacer({ modo: x.dataset.pvm, dias: x.dataset.pvm === 'dias' ? (op.dias || []) : null }); }; });
-      $scrim.querySelectorAll('[data-pvd]').forEach(function (x) { x.onclick = function () { var l = (op.dias || []).slice(), k = l.indexOf(x.dataset.pvd); if (k >= 0) l.splice(k, 1); else l.push(x.dataset.pvd); rehacer({ dias: l }); }; });
-      var sd = document.getElementById('pv-des'); if (sd) sd.onchange = function () { rehacer({ descanso: sd.value }); };
-      cablearDobles('pv-dob', lunes, function () { rehacer({}); });
-      document.getElementById('pv-ok').onclick = function () {
-        if (op.modo === 'dias' && !(op.dias || []).length) { toast('Elige al menos un día'); return; }
-        var b = this; b.disabled = true; b.textContent = 'Programando…';
-        api({ action: 'generar_extras', lunes: lunes, ver: S.data.semana, deseo: val('pv-de'), dias: params.dias, descanso: params.descanso, resto: params.resto, reabrir: params.reabrir }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); S.vista = 'hoja'; render();
-          var md = r2.extras.medida; toast(r2.extras.resumen + (md && !md.ok ? ' · metcon a medida: ' + (md.avisos || []).join(' ') : '')); }).catch(falloApi(b));
+      var li = function (l) { return l.length ? '<ul class="pv">' + l.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<div class="hint">—</div>'; };
+      var porDia = {}; P.bloques.forEach(function (x) { (porDia[x.dia] = porDia[x.dia] || []).push(x); });
+      var ya = P.yaCuenta || [];
+      abrirHoja(titulo +
+        '<div class="pv-res"><b>' + esc(op.modo === 'semana' ? 'Toda la semana' : etiq(diasDe())) + '</b> · ' + P.bloques.length + ' bloques nuevos · ' + P.pctMes + ' % del mes (17–27 %)' +
+        (ya.length ? ' · ya cuentan ' + ya.length + ' bloques programados' : '') + '</div>' +
+        '<div class="pv-kpi"><span>Dobles: <b>' + esc(P.dobles || 'ninguna') + '</b></span><span>Mañanas que usa: <b>' + esc(P.mananas.join(', ') || 'ninguna') + '</b></span><span>Endurance de mañana: <b>' + (P.modoAM ? 'sí' : 'no') + '</b></span>' +
+        (op.descanso !== 'nada' && des ? '<span>Descanso: <b>' + esc(op.descanso) + '</b></span>' : '') + '</div>' +
+        (P.sinHueco.length ? '<div class="pos-act warn"><b>No caben</b><span>' + esc(P.sinHueco.join(', ')) + '</span><span>Quedarán avisados para que elijas día y turno o los pases a pendientes. Prueba a añadir mañanas.</span></div>' : '') +
+        '<div class="part-lbl">Qué entra y dónde</div>' + (Object.keys(porDia).length ? Object.keys(porDia).map(function (k) { return '<div class="pv-dia"><b>' + esc(k) + '</b>' + porDia[k].map(function (x) { return '<div class="pr-row"><span>' + esc(x.turno + ' · ' + x.titulo) + '</span><span class="hint">' + esc((x.min ? x.min + '′ · ' : '') + (PR[x.prio] || x.prio)) + '</span></div>'; }).join('') + '</div>'; }).join('') : '<div class="hint">Nada nuevo: lo de la semana ya está cubierto.</div>') +
+        (op.deseo ? '<div class="hint">+ metcon a medida con «' + esc(op.deseo) + '» en el mejor hueco al confirmar.</div>' : '') +
+        '<details><summary>Endurance, refuerzos y pendientes</summary><div class="exp-body"><div class="part-lbl">Endurance</div>' + li(P.endurance) + '<div class="part-lbl">Refuerzos pedidos</div>' + li(P.refuerzos) + '<div class="part-lbl">Pendientes que entran</div>' + li(P.pendientes) + '</div></details>' +
+        (ya.length ? '<details><summary>Ya programado que cuenta (no se toca)</summary><div class="exp-body">' + ya.map(function (x) { return '<div class="pr-row"><span>' + esc(x.dia + ' ' + x.turno + ' · ' + x.titulo) + '</span><span class="hint">' + (x.estado === 'BORRADOR' ? 'borrador' : 'aprobado') + '</span></div>'; }).join('') + '</div></details>' : '') +
+        '<label class="sh-b"><input type="checkbox" id="pg-apr"' + (op.aprobar ? ' checked' : '') + '><span>Aprobar al confirmar (si no, queda en borrador para revisarlo)</span></label>' +
+        '<div class="two-btn"><button class="btn" type="button" id="pg-mod">✎ Modificar</button><button class="btn btn-primary" type="button" id="pg-ok">Confirmar</button></div>');
+      document.getElementById('pg-mod').onclick = function () { op.aprobar = document.getElementById('pg-apr').checked; pintar(); };
+      document.getElementById('pg-ok').onclick = function () {
+        var b = this; op.aprobar = document.getElementById('pg-apr').checked; b.disabled = true; b.textContent = 'Programando…';
+        var pr = params(); pr.refrescar = false;
+        api(Object.assign({ action: 'generar_extras', deseo: op.deseo, aprobar: op.aprobar }, pr)).then(ok).then(function (r2) {
+          aplicarSemana(r2.semana); cerrarHoja(); render();
+          var md = r2.extras.medida; toast(r2.extras.resumen + (op.aprobar ? ' · aprobado' : ' · en borrador') + (md && !md.ok ? ' · metcon a medida: ' + (md.avisos || []).join(' ') : ''));
+        }).catch(falloApi(b));
       };
-    }).catch(function (er) { if (btn) btn.disabled = false; cerrarHoja(); toast(/semana_sin_confirmar/.test(er.message) ? 'Primero confirma la semana (dobles y descansos)' : mensajeError(er.message)); });
+    }
+    if (btn) btn.disabled = false;
+    pintar();
   }
 
 
