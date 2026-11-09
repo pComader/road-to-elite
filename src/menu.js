@@ -714,9 +714,11 @@
          ['Reorganización', '🧩', 'Te quedan cosas sin hacer: marcas huecos y bloques pendientes y te monto una sesión clásica o un mega WOD.'],
          ['Competi', '🏆', 'Online (grabación) o física: descanso, −50 % de volumen protegiendo lo que implica el WOD y compensación después.']].map(function (m) {
           return '<button class="reest-card" type="button" data-rm="' + m[0] + '"><span class="rc-ico">' + m[1] + '</span><span><b>' + m[0] + '</b><span class="hint">' + m[2] + '</span></span></button>'; }).join('');
+      html += '<div class="avf">' + bloqueDobles('re-dob', d.conf && d.conf['DOBLES (mañanas libres)']) + '</div>';
       if ((d.reest || []).length) html += '<h3 class="sec-t">Aplicadas esta semana</h3>' + d.reest.map(function (r) { return '<div class="xb reest"><div class="xb-h"><span class="tag">' + esc(r.modo) + '</span><b class="xb-t">' + esc(r.resumen) + '</b></div><button class="btn-ghost sm" type="button" data-rdes="' + esc(r.id) + '">Deshacer</button></div>'; }).join('');
       $app.innerHTML = html;
       document.getElementById('atras').onclick = function () { S.reest = null; abrirAjustes(); };
+      cablearDobles('re-dob', d.semana);
       $app.querySelectorAll('[data-rm]').forEach(function (b) { b.onclick = function () { R.modo = b.dataset.rm; render(); window.scrollTo({ top: 0 }); }; });
       $app.querySelectorAll('[data-rdes]').forEach(function (b) { b.onclick = function () { if (!confirmar(b, '¿Deshacer? Pulsa otra vez')) return; b.disabled = true;
         api({ action: 'reest_deshacer', id: b.dataset.rdes, lunes: d.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); toast('Deshecha'); render(); }).catch(falloApi(b)); }; });
@@ -742,9 +744,11 @@
       var bls = []; d.dias.forEach(function (x) { x.bloques.forEach(function (b) { if (!/NO HACER|OCULTO|PROPUESTA/.test(norm(b.estado || '')) && (b.idPlan || b.id)) bls.push({ x: x, b: b }); }); });
       var hecho = function (b) { return (d.registro || []).some(function (r) { return r.ID_PLAN === (b.idPlan || b.id) && r.HECHO === 'Sí'; }); };
       var corre = function (b) { return norm(b.origen || '') === 'CARRERA' || /\b(W01|W02|W04|V01)\b/.test(b.codigos || ''); };
+      var dobR = String(d.conf && d.conf['DOBLES (mañanas libres)'] || '');
       html += '<form id="rf" class="avf"><h3 class="sec-t">🧩 Reorganización</h3>' +
+        bloqueDobles('ro-dob', dobR) +
         '<label>Huecos que te quedan (y minutos)</label><div id="ro-h">' + dr.map(function (x) { return '<div class="rv-dia"><b>' + etqDia(x.iso) + '</b>' + ['AM', 'PM'].map(function (t) {
-          return '<label class="sh-b"><input type="checkbox" data-hk="' + x.iso + '|' + t + '"><span>' + t + '</span></label><input class="rv-min" inputmode="numeric" placeholder="min" data-hm="' + x.iso + '|' + t + '" value="' + (t === 'AM' ? 60 : 90) + '">'; }).join('') + '</div>'; }).join('') + '</div>' +
+          return '<label class="sh-b"><input type="checkbox" data-hk="' + x.iso + '|' + t + '"' + (t === 'AM' && dobR.indexOf(diaCortoIso(x.iso)) >= 0 ? ' checked' : '') + '><span>' + t + '</span></label><input class="rv-min" inputmode="numeric" placeholder="min" data-hm="' + x.iso + '|' + t + '" value="' + (t === 'AM' ? 60 : 90) + '">'; }).join('') + '</div>'; }).join('') + '</div>' +
         '<label>Marca lo que NO has hecho (lo no marcado se da por hecho)</label><div class="ro-bl">' + bls.map(function (o) { var id = o.b.idPlan || o.b.id, h = hecho(o.b);
           var otros = bls.filter(function (q) { return (q.b.idPlan || q.b.id) !== id && !hecho(q.b); });
           return '<div class="ro-b"><label class="sh-b"><input type="checkbox" data-nh="' + esc(id) + '"' + (h ? ' disabled' : '') + '><span data-ver-blq="' + esc(id) + '">' + etqDia(o.x.iso) + ' ' + (o.b.turno || '') + ' · ' + esc(o.b.titulo) + (h ? ' <i>(hecho)</i>' : '') + '</span></label>' + verBloqueDet(id) +
@@ -805,6 +809,7 @@
       enlazarSeg('ro-tipo', function (v) { R.tipo = v; document.getElementById('ro-b').hidden = v !== 'B'; });
       enlazarSeg('ro-f');
       document.getElementById('ro-chica').onchange = function () { document.getElementById('ro-chw').hidden = !this.checked; };
+      cablearDobles('ro-dob', d.semana, function (v) { $app.querySelectorAll('[data-hk$="|AM"]').forEach(function (c) { c.checked = v.indexOf(diaCortoIso(c.dataset.hk.split('|')[0])) >= 0; }); });
       document.getElementById('ro-add').onclick = function () { var e = val('ro-e'); if (!e) return; R.nuevos.push({ estimulo: e }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(e) + '</span>'); document.getElementById('ro-e').value = ''; };
       document.getElementById('ro-madd').onclick = function () { var t = val('ro-mt'), c = val('ro-mc'); if (!t && !c) return; R.nuevos.push({ titulo: t || 'Bloque nuevo', contenido: c, min: +val('ro-mm') || 15 }); document.getElementById('ro-n').insertAdjacentHTML('beforeend', '<span class="dchip">' + esc(t || 'Bloque nuevo') + '</span>'); ['ro-mt', 'ro-mc', 'ro-mm'].forEach(function (i) { document.getElementById(i).value = ''; }); };
       $app.querySelectorAll('[data-nh]').forEach(function (cb) { cb.onchange = function () { var id = cb.dataset.nh, bx = $app.querySelector('[data-dest-box="' + CSS.escape(id) + '"]'), cs = $app.querySelector('[data-car="' + CSS.escape(id) + '"]');
@@ -1293,7 +1298,7 @@
       var opHtml = '<div class="pv-alc">' + (op.resto ? '<div class="hint">Se mantiene lo ya programado (' + esc(hechos.map(corto).join(', ')) + ') y se completa el resto de la semana: ahí sí se cubren todos los estímulos semanales, sumando todos los días.</div>' :
         '<label>¿Para qué días?</label><div class="seg" id="pv-modo"><button type="button" data-pvm="semana" aria-pressed="' + (op.modo !== 'dias') + '">Toda la semana</button><button type="button" data-pvm="dias" aria-pressed="' + (op.modo === 'dias') + '">Días concretos</button></div>' +
         (op.modo === 'dias' ? '<div class="dchips" id="pv-dias">' + isos.map(function (x) { var fab = (d0.fabrikDias || []).indexOf(x) >= 0; return '<button type="button" data-pvd="' + x + '" aria-pressed="' + ((op.dias || []).indexOf(x) >= 0) + '">' + corto(x) + (fab ? ' ·F' : '') + '</button>'; }).join('') + '</div><div class="hint">·F = Gabi ya lo ha subido. Lo que no quepa en esos días queda para «Programar resto de semana».</div>' : '')) +
-        (des ? '<label for="pv-des">En tus días de descanso (' + esc(des) + ')</label><select id="pv-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + ((op.descanso || 'nada') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') + '</div>';
+        bloqueDobles('pv-dob', r.previa.dobles) + (des ? '<label for="pv-des">En tus días de descanso (' + esc(des) + ')</label><select id="pv-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + ((op.descanso || 'nada') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') + '</div>';
       if (btn) btn.disabled = false;
       var P = r.previa, li = function (l) { return l.length ? '<ul class="pv">' + l.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<div class="hint">—</div>'; };
       var PR = { carrera: 'Carrera', refuerzo: 'Refuerzo', pendiente: 'Pendiente', semana: 'Meta semanal', mes: 'Meta mensual' };
@@ -1311,6 +1316,7 @@
       $scrim.querySelectorAll('[data-pvm]').forEach(function (x) { x.onclick = function () { rehacer({ modo: x.dataset.pvm, dias: x.dataset.pvm === 'dias' ? (op.dias || []) : null }); }; });
       $scrim.querySelectorAll('[data-pvd]').forEach(function (x) { x.onclick = function () { var l = (op.dias || []).slice(), k = l.indexOf(x.dataset.pvd); if (k >= 0) l.splice(k, 1); else l.push(x.dataset.pvd); rehacer({ dias: l }); }; });
       var sd = document.getElementById('pv-des'); if (sd) sd.onchange = function () { rehacer({ descanso: sd.value }); };
+      cablearDobles('pv-dob', lunes, function () { rehacer({}); });
       document.getElementById('pv-ok').onclick = function () {
         if (op.modo === 'dias' && !(op.dias || []).length) { toast('Elige al menos un día'); return; }
         var b = this; b.disabled = true; b.textContent = 'Programando…';

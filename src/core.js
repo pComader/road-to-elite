@@ -1075,7 +1075,25 @@
   function chipsDias(id, sel) {
     return '<div class="dchips" id="' + id + '">' + DIAS_CORTOS.map(function (x) { return '<button type="button" data-dch="' + x + '" aria-pressed="' + (sel.indexOf(x) >= 0) + '">' + x + '</button>'; }).join('') + '</div>';
   }
-  function leerChips(id) { return [].map.call(document.querySelectorAll('#' + id + ' [aria-pressed="true"]'), function (b) { return b.dataset.dch; }).join(', '); }
+  function leerDias(id) { return [].map.call(document.querySelectorAll('#' + id + ' [aria-pressed="true"]'), function (b) { return b.dataset.dch; }).join(', '); }
+
+  function diaCortoIso(iso) { return DIAS_CORTOS[(new Date(iso + 'T12:00:00').getDay() + 6) % 7]; }
+  /** Selector de mañanas libres para doble que se guarda solo al tocarlo (Cargar extras y Reestructurar). */
+  function bloqueDobles(id, sel) { return '<label>Mañanas libres para sesión doble</label>' + chipsDias(id, sel || '') + '<div class="hint" id="' + id + '-st">Se guarda al tocar.</div>'; }
+  function cablearDobles(id, lunes, alGuardar) {
+    var box = document.getElementById(id); if (!box) return;
+    var t = null, ant = leerDias(id);
+    box.addEventListener('click', function (e) {
+      if (!e.target.closest('[data-dch]')) return;
+      clearTimeout(t);
+      t = setTimeout(function () {
+        var v = leerDias(id), st = document.getElementById(id + '-st'); if (v === ant) return;
+        if (st) st.textContent = 'Guardando…';
+        api({ action: 'semana_dobles', lunes: lunes, dobles: v, ver: S.data.semana }).then(ok).then(function (r) { ant = v; aplicarSemana(r.semana); if (st) st.textContent = 'Guardado: ' + (v || 'ninguna'); if (alGuardar) alGuardar(v); })
+          .catch(function (er) { if (st) st.textContent = mensajeError(er.message); });
+      }, 700);
+    });
+  }
 
   /** Confirmar una semana: mañanas libres para doble, descanso y decisión sobre cada evento. */
   function abrirConfirmar(lunes) {
@@ -1110,7 +1128,7 @@
         });
         var dec = cambios.map(function (o) { return o.EVENTO + ': ' + (o['CÓMO PROCEDER'] || o.BLOQUEA); }).join(' | ');
         cambios.reduce(function (p, o) { return p.then(function () { return api({ action: 'evento', evento: o }).then(ok); }); }, Promise.resolve())
-          .then(function () { return api({ action: 'semana_conf', lunes: lunes, ver: d.semana, dobles: leerChips('cf-dob'), descanso: leerChips('cf-des'), decisiones: dec, notas: val('cf-not'), confirmar: true, cargar: document.getElementById('cf-carga').checked }); })
+          .then(function () { return api({ action: 'semana_conf', lunes: lunes, ver: d.semana, dobles: leerDias('cf-dob'), descanso: leerDias('cf-des'), decisiones: dec, notas: val('cf-not'), confirmar: true, cargar: document.getElementById('cf-carga').checked }); })
           .then(ok).then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Semana confirmada' + (res.carga ? ' · ' + (res.carga.ok ? res.carga.cargados + ' bloques de Fabrik' : (res.carga.motivo || 'Fabrik sin cargar')) : '')); })
           .catch(falloApi(b));
       };
@@ -1942,7 +1960,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.16';
+  var WEB_VERSION = 'web 0.17';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

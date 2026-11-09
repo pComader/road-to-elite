@@ -95,6 +95,7 @@ function accion_(a, body, user) {
       case 'eventos':    return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
       case 'evento':     var idEv = guardarEvento_(body.evento || {}); return json_({ ok: true, id: idEv, eventos: listar_(HOJAS.EVENTOS) });
       case 'evento_borrar': borrarEvento_(body.id); return json_({ ok: true, eventos: listar_(HOJAS.EVENTOS) });
+      case 'semana_dobles': guardarDobles_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'semana_conf': guardarSemanaConf_(body); var cfab = null; if (body.cargar) { try { cfab = cargarFabrikSemana_(body.lunes); } catch (e) { cfab = { ok: false, motivo: String(e && e.message || e) }; } } return json_({ ok: true, carga: cfab, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'plan_aprobar': var nAp = aprobarPlanSemana_(body.lunes); refrescarResumen_(); if (leerConfig_().resumen_auto !== 'No') { try { enviarResumenSemana_(body.lunes); } catch (e) { Logger.log('Correo: ' + e); } } return json_({ ok: true, aprobados: nAp, semana: semanaCompleta_(body.lunes) });
       case 'cambio':     var idC = solicitarCambio_(body); return json_({ ok: true, id: idC, semana: semanaCompleta_(body.ver) });
@@ -124,7 +125,7 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
-      case 'extras_previa': return json_({ ok: true, previa: generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto }) });
+      case 'extras_previa': var pvx = generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto }); pvx.dobles = String((filaSemana_(lunesDe_(body.lunes)) || {})['DOBLES (mañanas libres)'] || ''); return json_({ ok: true, previa: pvx });
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
@@ -1236,6 +1237,18 @@ function guardarSemanaConf_(b) {
     if (!o.ESTADO) o.ESTADO = 'Pendiente de confirmar';
     var sh = hojaMia_(HOJAS.SEMANAS), cab = cabeceras_(sh);
     sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, o)]);
+    return lunes;
+  });
+}
+
+/** Solo cambia las mañanas libres para doble (desde Cargar extras o Reestructurar). No toca descanso, notas, decisiones ni el estado. */
+function guardarDobles_(b) {
+  var lunes = lunesDe_(b.lunes), dob = String(b.dobles || '').slice(0, 200);
+  return bloqueo_(function () {
+    var x = filaSemana_(lunes);
+    if (x) { actualizarFila_(HOJAS.SEMANAS, x._fila, { 'DOBLES (mañanas libres)': dob }); return lunes; }
+    var sh = hojaMia_(HOJAS.SEMANAS), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, { LUNES: isoAFecha(lunes), ESTADO: 'Pendiente de confirmar', 'DOBLES (mañanas libres)': dob })]);
     return lunes;
   });
 }
