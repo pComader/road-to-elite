@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.20.0',
+  VERSION: '0.20.2',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -125,11 +125,11 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
-      case 'extras_previa': var pvx = generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto }); pvx.dobles = String((filaSemana_(lunesDe_(body.lunes)) || {})['DOBLES (mañanas libres)'] || ''); return json_({ ok: true, previa: pvx });
+      case 'extras_previa': var pvx = generarExtras_(body.lunes, { simular: true, dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); pvx.dobles = String((filaSemana_(lunesDe_(body.lunes)) || {})['DOBLES (mañanas libres)'] || ''); return json_({ ok: true, previa: pvx });
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
-      case 'generar_extras': var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'generar_extras': var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } refrescarResumen_(); return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -2307,7 +2307,12 @@ function generarExtras_(lunes, opts) {
   else if (opts.dias && opts.dias.length) diasSel = semanaIsos.filter(function (x) { return opts.dias.indexOf(x) >= 0; });
   var permitidos = diasSel ? diasSel.reduce(function (a, x) { a[x] = 1; return a; }, {}) : null;
   var modoDesc = String(opts.descanso || 'nada');
-  var esAuto = function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && (!permitidos || permitidos[d]) && /^(BORRADOR|SIN HUECO)$/.test(r.ESTADO) && /^auto/.test(r.GENERADO || ''); };
+  // v0.20.2 · reabrir: con el plan ya aprobado, lo automático aprobado desde hoy que no esté hecho ni con candado también se recoloca (vuelve a borrador)
+  var hoyR = hoyIso_(), hechosR = {};
+  if (opts.reabrir) listar_(HOJAS.REGISTRO).forEach(function (x) { if (x.ID_PLAN && x.HECHO === 'Sí') hechosR[x.ID_PLAN] = 1; });
+  var esAuto = function (r) { var d = celdaIso_(r.FECHA); if (!(d >= lunes && d <= fin && (!permitidos || permitidos[d]) && /^auto/.test(r.GENERADO || ''))) return false;
+    if (/^(BORRADOR|SIN HUECO)$/.test(r.ESTADO)) return true;
+    return !!opts.reabrir && r.ESTADO === 'PROGRAMADO' && d >= hoyR && !hechosR[r.ID]; };
   // 6.1 · fuera los borradores automáticos anteriores (se regeneran); lo bloqueado con candado, lo tuyo y lo aprobado no se toca
   var refsLiberar = {}, pendLiberar = {};
   if (!sim) bloqueo_(function () {
@@ -2316,7 +2321,7 @@ function generarExtras_(lunes, opts) {
     filas.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
     MEMO = null;
     listar_(HOJAS.REFUERZOS).forEach(function (r) { if (refsLiberar[r.ID] && r.ESTADO === 'Programado') actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Pendiente' }); });
-    listar_(HOJAS.PENDIENTES).forEach(function (r) { if (pendLiberar[r.ID] && r.ESTADO === 'Propuesto') actualizarFila_(HOJAS.PENDIENTES, r._fila, { ESTADO: 'Pendiente', 'SEMANA DESTINO': '' }); });
+    listar_(HOJAS.PENDIENTES).forEach(function (r) { if (pendLiberar[r.ID] && (r.ESTADO === 'Propuesto' || (opts.reabrir && r.ESTADO === 'Reprogramado'))) actualizarFila_(HOJAS.PENDIENTES, r._fila, { ESTADO: 'Pendiente', 'SEMANA DESTINO': '' }); });
   });
   MEMO = null;
   var ctx = contextoSemana_(lunes, null, sim ? esAuto : null), nuevos = [], sinHueco = [], log = [], anadidos = {};

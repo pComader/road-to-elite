@@ -1057,8 +1057,8 @@
     if (d.extrasParcial && confOk && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Extras programados solo para ' + esc((d.extrasParcial.dias || []).map(function (x) { return DIAS_CORTOS[(new Date(x + 'T12:00:00').getDay() + 6) % 7]; }).join(', ')) + '. Cuando Gabi suba el resto, complétala.</span><button class="btn btn-primary sm" type="button" data-resto-semana>Programar resto de semana</button></div>';
     else if (d.fabrikCargado && confOk && !d.extrasTxt && !d.borrador && d.semana >= lunesIso(d.hoy)) h += '<div class="draft-banner"><span>Fabrik cargado · faltan los extras, la carrera y los refuerzos</span><button class="btn btn-primary sm" type="button" data-cargar-extras>Cargar extras</button></div>';
     var hayPlan = (d.plan || []).some(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && /PROGRAMADO|BORRADOR/.test(norm(r.ESTADO)); });
-    if (d.borrador) h += '<div class="draft-banner"><span>' + (hayPlan && (d.plan || []).some(function (r) { return norm(r.ESTADO) === 'PROGRAMADO' && norm(r.ORIGEN) !== 'FABRIK'; }) ? 'Hay cambios sin aprobar' : 'Plan de la semana pendiente de aprobar') + '</span><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar</button></div>';
-    else if (hayPlan) h += '<div class="ok-banner"><span>✓ Plan aprobado</span><button class="btn-ghost sm" type="button" data-ir-hoja>Revisar</button></div>';
+    if (d.borrador) h += '<div class="draft-banner"><span>' + (hayPlan && (d.plan || []).some(function (r) { return norm(r.ESTADO) === 'PROGRAMADO' && norm(r.ORIGEN) !== 'FABRIK'; }) ? 'Hay cambios sin aprobar' : 'Plan de la semana pendiente de aprobar') + '</span><button class="btn sm" type="button" data-mananas>☀ Mañanas</button><button class="btn sm" type="button" data-ir-hoja>Revisar</button><button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar</button></div>';
+    else if (hayPlan) h += '<div class="ok-banner"><span>✓ Plan aprobado</span><button class="btn-ghost sm" type="button" data-mananas>☀ Mañanas</button><button class="btn-ghost sm" type="button" data-ir-hoja>Revisar</button></div>';
     var sig = sumarDias(d.semana, 7), cs = d.confSiguiente;
     if (d.semana <= d.hoy && (!cs || /^Pendiente/.test(cs.ESTADO || ''))) h += '<button class="conf-banner" type="button" data-confirmar="' + sig + '"><b>Carga y confirma la semana del ' + fechaCorta(sig) + '</b><span>Fabrik + mañanas para doble, descansos y eventos, en un paso. Sin esto no se programa.</span></button>';
     if (!confOk && d.semana >= lunesIso(d.hoy)) h += '<button class="conf-banner" type="button" data-confirmar="' + d.semana + '"><b>Carga y confirma esta semana</b><span>' + (d.hayFabrik && !d.fabrikCargado ? 'Fabrik sin cargar · ' : '') + 'mañanas, descansos y eventos en un paso.</span></button>';
@@ -1087,12 +1087,25 @@
       if (!e.target.closest('[data-dch]')) return;
       clearTimeout(t);
       t = setTimeout(function () {
-        var v = leerDias(id), st = document.getElementById(id + '-st'); if (v === ant) return;
+        if (!box.isConnected) return; var v = leerDias(id), st = document.getElementById(id + '-st'); if (v === ant) return;
         if (st) st.textContent = 'Guardando…';
         api({ action: 'semana_dobles', lunes: lunes, dobles: v, ver: S.data.semana }).then(ok).then(function (r) { ant = v; aplicarSemana(r.semana); if (st) st.textContent = 'Guardado: ' + (v || 'ninguna'); if (alGuardar) alGuardar(v); })
           .catch(function (er) { if (st) st.textContent = mensajeError(er.message); });
       }, 700);
     });
+  }
+
+  /** Plan de la semana (pendiente de aprobar o aprobado): cambiar las mañanas libres y reajustar el plan a ellas. */
+  function abrirMananas(lunes) {
+    var d = S.data, aprobado = !d.borrador;
+    abrirHoja('<div class="row"><h2>Mañanas · semana del ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+      bloqueDobles('mn-dob', String(d.conf && d.conf['DOBLES (mañanas libres)'] || '')) +
+      '<div class="hint">' + (aprobado ? 'El plan ya está aprobado. Al ajustar, lo automático de hoy en adelante que no hayas hecho ni tenga 🔒 candado se recoloca según estas mañanas y vuelve a «pendiente de aprobar». Lo hecho, lo pasado y lo tuyo no se toca.' :
+        'Al ajustar, la propuesta pendiente se recalcula con estas mañanas. Lo que tenga 🔒 candado no se toca.') + '</div>' +
+      '<button class="btn btn-primary" type="button" id="mn-aj">Ajustar el plan a estas mañanas</button>');
+    cablearDobles('mn-dob', lunes);
+    document.getElementById('mn-aj').onclick = function () { var b = this; b.disabled = true; b.textContent = 'Guardando mañanas…';
+      api({ action: 'semana_dobles', lunes: lunes, dobles: leerDias('mn-dob'), ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); abrirPreviaExtras(lunes, null, { reabrir: aprobado }); }).catch(falloApi(b)); };
   }
 
   /** Confirmar una semana: mañanas libres para doble, descanso y decisión sobre cada evento. */
@@ -1871,6 +1884,7 @@
       api({ action: 'backup_ahora' }).then(ok).then(function (r) { S.config = r.config; render(); toast('Backup en Drive hecho (' + r.backup.kb + ' KB). El PC lo copiará a E: en la hora siguiente.'); }).catch(falloApi(b));
       return;
     }
+    if ((b = t.closest('[data-mananas]'))) { abrirMananas(S.data.semana); return; }
     if ((b = t.closest('[data-cargar-extras]'))) { abrirPreviaExtras(b.dataset.cargarExtras || S.data.semana, b); return; }
     if ((b = t.closest('[data-sin-hueco]'))) {
       var rsh = (S.data.sinHueco || []).filter(function (r) { return r.ID === b.dataset.sinHueco; })[0];
@@ -1960,7 +1974,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.17';
+  var WEB_VERSION = 'web 0.18';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
