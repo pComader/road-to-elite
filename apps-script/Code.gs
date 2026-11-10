@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.22.0',
+  VERSION: '0.22.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -103,6 +103,9 @@ function accion_(a, body, user) {
       case 'no_hacer':   noHacer_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'cancelar':   noHacer_(Object.assign({}, body, { cancelar: true })); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'reactivar':  reactivarBloque_(body.id); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'fusion_previa': return json_({ ok: true, fusion: fusionarBloques_(body.ids, { simular: true }) });
+      case 'fusionar':   var fr = fusionarBloques_(body.ids); refrescarHojaSemana_(lunesDe_(celdaIso_(fr.bloque.FECHA))); return json_({ ok: true, fusion: fr, semana: semanaCompleta_(body.ver) });
+      case 'desfusionar': desfusionar_(body.id); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar_sesion': var nis = intercambiarSesion_(body.a, body.b); refrescarHojaSemana_(lunesDe_(String(body.a).split('|')[0])); return json_({ ok: true, movidos: nis, semana: semanaCompleta_(body.ver) });
       // --- v0.5: metas editables, registro de carrera y análisis ---
       case 'metas':      return json_({ ok: true, metas: metasDe_(body.fecha), lista: listar_(HOJAS.METAS) });
@@ -1398,6 +1401,163 @@ function reactivarBloque_(id) {
     actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
     return x.ID;
   });
+}
+
+// ===================== v0.22 · FUSIONAR BLOQUES =====================
+/*
+ * Une 2–4 bloques (Fabrik, extras o ambos) en UNO ampliado sin cambiar el estímulo de cada parte:
+ *  - cada ejercicio conserva sus series, repeticiones, cargas (%, RIR, RPE) y su descanso original;
+ *  - fuerza / halterofilia / gimnásticos / accesorios → superserie en ventanas «EVERY W × N»: W = lo que dura una vuelta
+ *    o, si es mayor, el trabajo + descanso original del bloque más exigente (así lo pesado sigue descansando lo que pide Gabi);
+ *  - el orden alterna patrones (empuje / tirón / pierna / bisagra…) para no encadenar el mismo grupo muscular;
+ *  - con un metcon: el metcon NO se toca. Si tiene pausas (ON/OFF, REST entre sets), los accesorios ligeros van en esas pausas;
+ *    si no, la superserie va antes y el metcon después, en el mismo bloque;
+ *  - la fase del ciclo manda en la prioridad: en fases de fuerza / intensificación lo pesado va primero con su descanso completo;
+ *    en fases de volumen / acumulación se permite agrupar más; en descarga se avisa si la fusión sube la densidad.
+ * Los originales pasan a SUSTITUIDO (REEMPLAZA del nuevo) y se recuperan con «Deshacer fusión». Cuentan todos los estímulos (CÓDIGOS unidos).
+ */
+function segTexto_(s) { var m = Math.floor(s / 60), r = Math.round(s % 60); return m && r ? m + '′' + (r < 10 ? '0' : '') + r + '″' : m ? m + '′' : r + '″'; }
+function seg_(t) {   // «90"», «1'30"», «2′», «2'30»
+  var m = String(t || '').replace(/[′’]/g, "'").replace(/[″”]/g, '"').match(/(\d+)\s*'\s*(\d+)?\s*"?|(\d+)\s*"/);
+  if (!m) return 0; return m[3] ? +m[3] : +m[1] * 60 + (+m[2] || 0);
+}
+/** Patrones de fuerza y accesorios que la guía del motor (centrada en metcons) no tiene: solo para ordenar la fusión. */
+var FUERZA_PAT_ = [[/BACK SQUAT|FRONT SQUAT|BOX SQUAT|PAUSE SQUAT|BULGARIAN|SPLIT SQUAT|PISTOL|LUNGE|ZANCADA|STEP ?UPS?|LEG PRESS|SENTADILLA/, 'SENT', ['PIERNA']],
+  [/DEADLIFT|PESO MUERTO|\bRDL\b|ROMANIAN|GOOD ?MORNING|HIP THRUST|PULL THROUGH|SWING|NORDIC/, 'BISAGRA', ['PIERNA', 'CORE']],
+  [/BENCH|PRESS BANCA|PUSH ?UPS?|FLEXION|\bDIPS?\b|FLOOR PRESS/, 'EMPUJE_H', ['HOMBRO']],
+  [/STRICT PRESS|SHOULDER PRESS|MILITARY|PUSH PRESS|JERK|HSPU|HANDSTAND PUSH|Z ?PRESS/, 'EMPUJE_V', ['HOMBRO']],
+  [/PULL ?UPS?|CHIN|CHEST TO BAR|\bC2B\b|\bROWS?\b|REMO|PULLDOWN|MUSCLE ?UPS?|LEGLESS|ROPE CLIMB|FACE PULL/, 'TIRON', ['AGARRE']],
+  [/T2B|TOES|SIT ?UPS?|HOLLOW|PLANK|PLANCHA|L-?SIT|GHD|COPENHAGEN|PALLOF|AB WHEEL|DEAD BUG/, 'CORE', ['CORE']],
+  [/CARRY|FARMER|YOKE/, 'ACARREO', ['AGARRE', 'CORE']], [/SNATCH|CLEAN/, 'OLY', ['SNC', 'PIERNA']]];
+function movsFusion_(L, G) {
+  var mv = detectarMovs_(L, G); if (mv.length) return mv;
+  for (var i = 0; i < FUERZA_PAT_.length; i++) { var m = L.match(FUERZA_PAT_[i][0]); if (m) return [{ m: { k: m[0].replace(/\s+/g, '_'), patron: FUERZA_PAT_[i][1], carga: FUERZA_PAT_[i][2] } }]; }
+  return [];
+}
+function analizarParaFusion_(r, G) {
+  var raw = String(r.CONTENIDO || '').replace(/\r/g, ''), titulo = r['TÍTULO'] || r.BLOQUE || '';
+  var secciones = raw.split(/\n(?=\s*[A-Z](?:\.\d)?\s*[·)]\s)|\n\s*\n/), prep = [], main = [];
+  secciones.forEach(function (sx) { var cab = norm(sx.split('\n')[0]); if (RE_PREP_.test(cab)) prep.push(sx.trim()); else if (sx.trim()) main.push(sx.trim()); });
+  var mt = main.join('\n'), T = norm(mt), tipo = tipoBloqueTxt_(titulo + ' ' + mt.slice(0, 160));
+  var metcon = /METCON|AMRAP|FOR TIME|TIME ?CAP|CHIPPER|\bWOD\b/.test(norm(titulo + ' ' + T)) || norm(r.ORIGEN) === 'CARRERA';
+  var every = T.match(/(?:EVERY|CADA|E)\s*([0-9]{1,2}(?:\s*'\s*[0-9]{1,2})?\s*(?:'|"|MIN)?|[0-9]{2,3}\s*")\s*(?:X|×)\s*([0-9]{1,2})/), emom = T.match(/EMOM\s*([0-9]{1,2})/);
+  var sets = 0, win = 0;
+  if (every) { win = seg_(every[1].replace(/MIN/, "'")) || (+every[1] <= 10 ? +every[1] * 60 : +every[1]); sets = +every[2]; }
+  else if (emom) { win = 60; sets = +emom[1]; }
+  var ms = T.match(/([0-9]{1,2})(?:\/[0-9])?\s*(?:SETS|SERIES|RONDAS|ROUNDS)/) || T.match(/(^|\n)\s*([0-9]{1,2})\s*[X×]\s*[0-9]/);
+  if (!sets && ms) sets = +(ms[2] || ms[1]);
+  if (!sets) sets = 3;
+  var rest = 0; (T.match(/(?:REST|DESCANSO|RECUPERA\w*)\s*[0-9][0-9'"′″ ]*/g) || []).forEach(function (x) { rest += seg_(x.replace(/^\D+/, '')); });   // varios REST en una serie: se suman (descanso total por serie)
+  var pesado = /([89][0-9]|1[0-9]{2})\s*%|RIR\s*[0-2]\b|RPE\s*(8|9|10)|[0-9]RM|PESAD|HEAVY/.test(T);
+  if (!rest) rest = win ? 0 : tipo === 'haltero' || tipo === 'fuerza' ? (pesado ? 120 : 90) : tipo === 'gimnásticos' ? 90 : 60;
+  var ejer = [];
+  mt.split('\n').forEach(function (l) {
+    var L = norm(l).trim(); if (!L) return;
+    var ult = ejer[ejer.length - 1];
+    if (ult && /^[(*]/.test(L) && !/^\*\s*(NO|POR)/.test(L)) { ult.txt += ' ' + l.trim(); return; }   // «(RIR 1/2)» en la línea siguiente
+    var mvSet = /^SET\s*[0-9]/.test(L) ? movsFusion_(L, G) : [];
+    if (mvSet.length) {   // «SET 1/3: 6 BACK SQUAT (75/80%)»: series alternas del mismo ejercicio
+      if (ult && ult.k[0] === mvSet[0].m.k) { ult.txt += ' / ' + l.trim(); return; }
+      ejer.push({ txt: l.trim(), seg: pesado ? 30 : 25, patron: mvSet[0].m.patron || '', carga: mvSet[0].m.carga || [], k: mvSet.map(function (z) { return z.m.k; }) }); return;
+    }
+    if (/^([A-Z](\.\d)?\s*[·)]|EVERY|EMOM|CADA|E[0-9]|[0-9]{1,2}(\/[0-9])?\s*(SETS|SERIES|RONDAS|ROUNDS)\s*:?$|REST|DESCANSO|REGISTRA|\*|SET\s*[0-9]|METCON|ACCESOR|STRENG|GYMNAST|WEIGH)/.test(L)) return;
+    var mv = movsFusion_(L, G);
+    if (!/^[0-9]/.test(L) && !mv.length) return;
+    var x = L.replace(/^([0-9]+)\s*[X×]\s*/, function (a, n) { if (!every && !emom) sets = Math.max(sets, +n); return ''; });
+    var reps = parseFloat((x.match(/^([0-9]+(?:[.,][0-9]+)?)/) || [])[1] || '0'), w;
+    if (/^[0-9]+\s*("|″|SEG)/.test(x)) w = seg_(x); else if (/^[0-9.,]+\s*M\b/.test(x)) w = reps * 1.3; else if (/CAL/.test(x)) w = reps * 3; else w = reps * (pesado ? 4.5 : 3);
+    ejer.push({ txt: l.trim().replace(/^([0-9]+)\s*[X×]\s*/i, ''), seg: Math.max(15, Math.min(75, w || 30)), patron: (mv[0] && mv[0].m.patron) || '', carga: (mv[0] && mv[0].m.carga) || [], k: mv.map(function (z) { return z.m.k; }) });
+  });
+  var notasCarga = (mt.match(/^\s*SET\s*[0-9/ ]+:.*$/gim) || []).map(function (z) { return z.trim(); }).filter(function (z) { return !movsFusion_(norm(z), G).length; });
+  var ventanas = /ON\s*(X|\/)?\s*[0-9]+\s*'?\s*OFF|[0-9]+\s*'\s*OFF|REST\s*[0-9]/.test(T);
+  return { r: r, titulo: titulo, tipo: tipo, metcon: metcon, sets: sets, win: win, rest: rest, pesado: pesado, ejer: ejer, prep: prep, main: mt, notasCarga: notasCarga, ventanasMetcon: metcon && ventanas, min: minFila_(r) };
+}
+function fusionarBloques_(ids, opts) {
+  opts = opts || {};
+  ids = (ids || []).map(String).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  if (ids.length < 2) throw new Error('elige_dos');
+  if (ids.length > 4) throw new Error('maximo_cuatro');
+  var plan = listar_(HOJAS.PLAN), filas = ids.map(function (id) { return plan.filter(function (r) { return r.ID === id; })[0]; });
+  if (filas.some(function (r) { return !r; })) throw new Error('no_encontrado');
+  if (filas.some(function (r) { return /^(SUSTITUIDO|OCULTO|CANCELADO|NO HACER)$/.test(r.ESTADO); })) throw new Error('bloque_no_activo');
+  var lunes = lunesDe_(celdaIso_(filas[0].FECHA));
+  if (filas.some(function (r) { return lunesDe_(celdaIso_(r.FECHA)) !== lunes; })) throw new Error('otra_semana');
+  var G = guiaMotor_(), P = filas.map(function (r) { return analizarParaFusion_(r, G); });
+  var fase = { nombre: 'Sin fase' }; try { fase = faseDe_(celdaIso_(filas[0].FECHA), estructura_(fabrik_())); } catch (e) {}
+  var F = norm(fase.nombre), fFuerza = /FUERZA|INTENSIF|STRENG|MAXIM|POTENCIA|PEAK|REALIZ/.test(F), fVol = /ACUMUL|VOLUMEN|BASE|HIPERTROF|TRANSFORM|CAPACIDAD/.test(F), fDesc = /DESCARGA|DELOAD|TAPER/.test(F);
+  var met = P.filter(function (p) { return p.metcon; }), resto = P.filter(function (p) { return !p.metcon; }), avisos = [], lineas = [];
+  if (met.length > 1) throw new Error('dos_metcons');
+  // prioridad: en fases de fuerza lo pesado (y la halterofilia) primero; en volumen, el que más series tiene
+  var pri = function (p) { return (p.tipo === 'haltero' ? 40 : p.tipo === 'fuerza' ? 30 : p.tipo === 'gimnásticos' ? 20 : 10) + (p.pesado ? (fFuerza ? 25 : 10) : 0) + (fVol ? p.sets : 0); };
+  resto.sort(function (a, b) { return pri(b) - pri(a); });
+  var N = resto.reduce(function (m, p) { return Math.max(m, p.sets); }, 0), W = 0, total = 0, items = [];
+  if (resto.length) {
+    resto.forEach(function (p) { p.ejer.forEach(function (e) { items.push({ e: e, p: p }); }); });
+    // alternar patrones: no dos seguidos del mismo patrón ni de la misma carga local (agarre, hombro, pierna)
+    var orden = [], pend = items.slice();
+    while (pend.length) {
+      var ult = orden[orden.length - 1], k = 0;
+      if (ult) { var j = pend.findIndex(function (x) { return x.e.patron !== ult.e.patron && !x.e.carga.some(function (c) { return ult.e.carga.indexOf(c) >= 0; }) && !interfEntre_(G, { k: ult.e.k[0], patron: ult.e.patron }, { k: x.e.k[0], patron: x.e.patron }).some(function (r) { return /EVITAR/i.test(r.tipo); }); }); if (j > 0) k = j; }
+      orden.push(pend.splice(k, 1)[0]);
+    }
+    items = orden;
+    var vuelta = items.reduce(function (a, x) { return a + x.e.seg; }, 0) + 15 * items.length;
+    var exig = resto.reduce(function (m, p) { var w = p.ejer.reduce(function (a, e) { return a + e.seg; }, 0) + (p.win ? Math.max(0, p.win - p.ejer.reduce(function (a, e) { return a + e.seg; }, 0)) : p.rest); return Math.max(m, w); }, 0);
+    W = Math.max(vuelta, exig, 60); W = Math.ceil(W / 15) * 15;
+    if (fDesc && vuelta > exig) avisos.push('Fase de ' + fase.nombre + ': la fusión sube la densidad; si notas fatiga, quita la última serie.');
+    if (W > 300) { avisos.push('La vuelta dura ' + segTexto_(W) + ': son muchos ejercicios para una sola ventana. Valora dejar uno fuera.'); }
+    total = Math.round(W * N / 60);
+    lineas.push('EVERY ' + segTexto_(W) + ' X ' + N + ' SETS (≈' + total + '′)');
+    var L = 'ABCDEFGHIJ';
+    items.forEach(function (x, i) { lineas.push(L.charAt(i) + ') ' + x.e.txt + (x.p.sets < N ? ' · series 1–' + x.p.sets : '')); });
+    resto.forEach(function (p) { if (p.notasCarga.length) lineas.push('Cargas ' + p.titulo + ': ' + p.notasCarga.join(' · ')); });
+    lineas.push('Trabajo ≈' + segTexto_(vuelta) + ' por vuelta · cada ejercicio vuelve a tocarle a los ' + segTexto_(W) + ' (descanso original respetado: ' + resto.map(function (p) { return p.titulo + ' ' + segTexto_(p.win || p.rest + p.ejer.reduce(function (a, e) { return a + e.seg; }, 0)); }).join(' · ') + ').');
+    resto.forEach(function (p) { if (!p.ejer.length) avisos.push('«' + p.titulo + '»: no encontré ejercicios con repeticiones; revisa el resultado.'); });
+  }
+  var cuerpo;
+  if (met.length) {
+    var m = met[0];
+    if (resto.length && m.ventanasMetcon && resto.every(function (p) { return !p.pesado && (p.tipo === 'accesorios' || p.tipo === 'gimnásticos' || p.tipo === 'otro'); })) {
+      cuerpo = m.main + '\n\nEN CADA PAUSA (OFF / REST) DEL METCON:\n' + items.map(function (x) { return '+ ' + x.e.txt; }).join('\n') + '\n(Ritmo de recuperación activa: sin fallo, para que no cambie el estímulo del metcon)';
+      total = Math.round(m.min + 2); avisos.push('Los accesorios van en las pausas del metcon: el metcon no cambia.');
+    } else {
+      cuerpo = (lineas.length ? 'A) FUERZA / ACCESORIOS EN SUPERSERIE\n' + lineas.join('\n') + '\n\nB) ' : '') + m.main;
+      total = total + Math.round(m.min);
+      if (lineas.length) avisos.push('Superserie antes y metcon después (el metcon no se toca).');
+    }
+  } else cuerpo = lineas.join('\n');
+  var prep = P.filter(function (p) { return p.prep.length; }).map(function (p) { return p.titulo + ':\n' + p.prep.join('\n\n'); });
+  var contenido = (prep.length ? 'CALENTAMIENTO (de los bloques originales)\n' + prep.join('\n\n') + '\n\n' : '') + cuerpo;
+  var cods = []; filas.forEach(function (r) { String(r['CÓDIGOS'] || '').split('|').forEach(function (c) { c = c.trim(); if (c && cods.indexOf(c) < 0) cods.push(c); }); });
+  var porque = 'Fusión de ' + P.map(function (p) { return '«' + p.titulo + '» (' + p.tipo + (p.pesado ? ', pesado' : '') + ', ' + p.sets + ' series)'; }).join(' + ') + '. Fase: ' + fase.nombre +
+    (fFuerza ? ' → lo pesado primero y con su descanso completo.' : fVol ? ' → prioridad al volumen; se agrupa sin recortar series.' : fDesc ? ' → descarga: ojo a la densidad.' : '.') +
+    ' Se mantienen series, repeticiones y cargas de cada parte; cuentan todos sus estímulos (' + cods.join(', ') + ').';
+  var base = filas[0];   // va donde estaba el primero que marcaste
+  var iso = celdaIso_(base.FECHA), int = filas.map(function (r) { return r.INTENSIDAD || ''; }).filter(Boolean).sort().pop() || '';
+  var nuevo = { ID: 'FU' + nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: base.TURNO === 'AM' ? 'AM' : 'PM', ORDEN: base.ORDEN || 50, ORIGEN: 'FUSIÓN',
+    BLOQUE: '🔗 ' + P.map(function (p) { return p.titulo; }).join(' + '), 'TÍTULO': '🔗 ' + P.map(function (p) { return p.titulo; }).join(' + '), CONTENIDO: contenido.slice(0, 4000),
+    INTENSIDAD: int, MIN: String(total || Math.round(P.reduce(function (a, p) { return a + p.min; }, 0))), 'CÓDIGOS': cods.join('|'), 'POR QUÉ (cursiva)': porque.slice(0, 1500),
+    INTERFERENCIAS: avisos.join(' '), ESTADO: filas.every(function (r) { return r.ESTADO === 'PROGRAMADO'; }) ? 'PROGRAMADO' : 'BORRADOR',
+    GENERADO: 'manual ' + ahora_() + ' (candado · fusión)', REEMPLAZA: ids.join(','), ACTUALIZADO: ahora_() };
+  var res = { bloque: nuevo, avisos: avisos, fase: fase.nombre, partes: P.map(function (p) { return { titulo: p.titulo, tipo: p.tipo, series: p.sets, pesado: p.pesado, ejercicios: p.ejer.length, min: p.min }; }), minAntes: Math.round(P.reduce(function (a, p) { return a + p.min; }, 0)) };
+  if (opts.simular) return res;
+  bloqueo_(function () {
+    var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
+    sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, nuevo)]);
+    filas.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'SUSTITUIDO', CAMBIO_ID: 'FUSION:' + nuevo.ID + ':' + r.ESTADO, ACTUALIZADO: ahora_() }); });
+  });
+  return res;
+}
+/** Deshace una fusión: borra el bloque fusionado y devuelve cada original a su estado anterior. */
+function desfusionar_(id) {
+  var plan = listar_(HOJAS.PLAN), f = plan.filter(function (r) { return r.ID === String(id || ''); })[0];
+  if (!f || norm(f.ORIGEN) !== 'FUSION') throw new Error('no_es_fusion');
+  bloqueo_(function () {
+    plan.filter(function (r) { return String(r.CAMBIO_ID || '').indexOf('FUSION:' + f.ID + ':') === 0; }).forEach(function (r) {
+      actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: String(r.CAMBIO_ID).split(':')[2] || 'PROGRAMADO', CAMBIO_ID: '', ACTUALIZADO: ahora_() });
+    });
+  });
+  borrarFila_(HOJAS.PLAN, f._fila, { ID: f.ID });
 }
 
 // ===================== CAMBIOS (ha surgido algo) =====================

@@ -811,7 +811,7 @@
     var accMet = esMetcon(b) && !b.extra ? '<div class="b-acc"><button type="button" class="btn-ghost sm" data-guardar-wod="' + esc(JSON.stringify({ iso: x.iso, n: b.n })) + '">☆ Guardar WOD</button></div>' : '';
     var idMov = b.extra ? b.id : b.idPlan, puedeMover = idMov && !/^PROPUESTA/.test(est) && !/NO HACER|CANCELADO|OCULTO/.test(est);
     var botonMover = puedeMover ? '<button type="button" class="btn-ghost sm" data-mover="' + esc(S.dia + '|' + idMov) + '">↔ Mover' + (b.extra && esBloqueCarrera(b) || /W03/.test(b.codigos || '') ? ' / intercambiar' : '') + '</button>' : '';
-    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
+    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (norm(b.origen) === 'FUSION' ? '<button type="button" class="btn-ghost sm" data-desfusionar="' + esc(b.id) + '">↶ Deshacer fusión</button>' : '') + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
       '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : (botonMover ? '<div class="b-acc">' + botonMover + '</div>' : '');
     var sci = (b.porque || b.ciencia || b.interf) ? '<details class="sci"><summary>Por qué aquí · ciencia · interferencias</summary><div class="exp-body">' +
       (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
@@ -1286,7 +1286,8 @@
   }
   function urlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
   function mensajeError(m) {
-    return { marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
+    return { elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
+      marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
       evento_incompleto: 'Pon nombre y fecha al evento.', falta_evento: 'Escribe qué ha surgido.', faltan_datos: 'Faltan datos del bloque.', memoria_llena: 'La memoria del navegador está llena: no se pudo guardar sin conexión.', modulo_no_disponible: 'Sin conexión: esta parte aún no se ha descargado.', solo_borrador: 'Solo se pueden quitar bloques en borrador.', token_no_valido: 'No se pudo registrar el dispositivo.', meta_incompleta: 'Pon el estímulo y el ámbito.', falta_fecha: 'Falta la fecha.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');
@@ -1916,6 +1917,7 @@
     if ((b = t.closest('[data-nohacer]'))) { abrirNoHacer(JSON.parse(b.dataset.nohacer)); return; }
     if ((b = t.closest('[data-reactivar]'))) { b.disabled = true; api({ action: 'reactivar', id: b.dataset.reactivar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Reactivado'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-intercambio]'))) { abrirIntercambio(b.dataset.intercambio); return; }
+    if ((b = t.closest('[data-desfusionar]'))) { if (!confirmar(b, '¿Deshacer?')) return; b.disabled = true; api({ action: 'desfusionar', id: b.dataset.desfusionar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Fusión deshecha: vuelven los bloques originales'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-dch]'))) { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); return; }
     if ((b = t.closest('[data-surge]'))) { abrirSurge(b.dataset.surge); return; }
     if ((b = t.closest('[data-confirmar]'))) { abrirConfirmar(b.dataset.confirmar); return; }

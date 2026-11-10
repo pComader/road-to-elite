@@ -1061,6 +1061,7 @@
       (conf ? '<button class="btn ' + (d.extrasTxt ? '' : 'btn-primary ') + 'sm" type="button" data-cargar-extras="' + d.semana + '">' + (d.extrasTxt ? '📅 Programar · resto o día a día' : '📅 Programar extras') + '</button>' : '<button class="btn btn-primary sm" type="button" data-confirmar="' + d.semana + '">Cargar y confirmar semana</button>') +
       (d.borrador ? '<button class="btn btn-primary sm" type="button" data-aprobar-plan>Aprobar plan</button>' : '') +
       (conf ? '<button class="btn sm" type="button" data-mananas>☀ Mañanas</button>' : '') +
+      '<button class="btn sm' + (S.fusionSel ? ' btn-primary' : '') + '" type="button" id="h-fus">🔗 ' + (S.fusionSel ? 'Fusionando… toca los bloques' : 'Fusionar bloques') + '</button>' +
       '<button class="btn-ghost sm" type="button" id="h-xc">Extras semana en curso</button><button class="btn-ghost sm" type="button" id="h-claude">¿No te convence? Pedir a Claude</button></div>' +
       '<label class="toggle"><input type="checkbox" id="h-endu"' + (d.enduranceManana ? ' checked' : '') + '><span><b>Endurance de mañana</b><small>Z2 de carrera y erg solo en tus mañanas libres (el domingo, de comodín). Z6–Z8, calidad en series, RMU y cuerda: donde tú quieras.</small></span></label>';
     html += d.dias.map(function (x, i) {
@@ -1070,7 +1071,8 @@
         return '<div class="h-turno"><span class="h-t">' + (tu === 'AM' ? '☀️ AM' : '🌙 PM') + '</span>' + bl.map(function (b) {
           var est = norm(b.estado), gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
           var edit = b.extra || b.idPlan ? ' data-h-ed="' + i + '|' + esc(b.extra ? b.id : b.idPlan) + '"' : '';
-          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' || est === 'CANCELADO' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
+          var idSel = b.extra ? b.id : b.idPlan;
+          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (S.fusionSel && S.fusionSel.indexOf(idSel) >= 0 ? ' sel' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' || est === 'CANCELADO' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
             '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + (b.clave ? '🎯 ' : '') + esc(b.titulo) + '</span>' + (/^manual/.test((filaPlanDe(b) || {}).GENERADO || '') ? '<span title="Con candado: «Rehacer extras» no lo mueve">🔒</span>' : '') + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
             (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(String(b.codigos).split('|')[0]) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
         }).join('') + '</div>';
@@ -1078,7 +1080,8 @@
       return '<section class="h-dia' + (x.iso === d.hoy ? ' hoy' : '') + '"><div class="h-cab"><b>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</b>' + (x.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(x.rpe) + '">RPE ' + esc(x.rpe) + '</span>' : '') +
         (x.bloques.length ? '<button type="button" class="btn-ghost sm" data-intercambio="' + x.iso + '" title="Cambiar la mañana, la tarde o el día entero">⇄</button>' : '') + '<button type="button" class="btn-ghost sm" data-nuevo-bloque="' + x.iso + '">＋</button></div>' + (x.bloques.length ? t('AM') + t('PM') : '<div class="hint">Descanso</div>') + '</section>';
     }).join('');
-    html += htmlRefuerzos(d, d.semana, d.refuerzos, 'Esta semana') + htmlRefuerzos(d, sig, d.refuerzosSig, 'Semana que viene (' + fechaCorta(sig) + ')');
+    if (S.fusionSel) html += '<div class="fus-bar" id="h-fbar"><span>' + S.fusionSel.length + ' marcados' + (S.fusionSel.length < 2 ? ' · elige al menos 2' : '') + '</span><button class="btn-ghost sm" type="button" id="fb-x">Cancelar</button><button class="btn btn-primary sm" type="button" id="fb-ok"' + (S.fusionSel.length < 2 ? ' disabled' : '') + '>🔗 Fusionar</button></div>';
+        html += htmlRefuerzos(d, d.semana, d.refuerzos, 'Esta semana') + htmlRefuerzos(d, sig, d.refuerzosSig, 'Semana que viene (' + fechaCorta(sig) + ')');
     $app.innerHTML = html;
     document.getElementById('atras').onclick = volverSemana;
     document.getElementById('h-claude').onclick = function () { abrirPedirClaude(d.semana); };
@@ -1089,7 +1092,13 @@
       api({ action: 'config_set', clave: 'endurance_manana', valor: he.checked }).then(ok).then(function (r) { S.config = r.config; d.enduranceManana = he.checked; he.disabled = false;
         toast(he.checked ? 'Endurance de mañana activado: se aplica al cargar o rehacer los extras' : 'Endurance de mañana desactivado'); }).catch(function (e) { he.checked = !he.checked; he.disabled = false; toast(mensajeError(e.message)); });
     };
-    $app.querySelectorAll('[data-h-ed]').forEach(function (b) { b.onclick = function () { var p = b.dataset.hEd.split('|'), x = d.dias[+p[0]]; abrirEditarBloque(x.bloques.filter(function (y) { return (y.extra ? y.id : y.idPlan) === p[1]; })[0], x); }; });
+    $app.querySelectorAll('[data-h-ed]').forEach(function (b) { b.onclick = function () {
+      var p = b.dataset.hEd.split('|'), x = d.dias[+p[0]];
+      if (S.fusionSel) { var k = S.fusionSel.indexOf(p[1]); if (k >= 0) S.fusionSel.splice(k, 1); else if (S.fusionSel.length < 4) S.fusionSel.push(p[1]); else toast('Máximo 4 bloques'); renderHoja(); return; }
+      abrirEditarBloque(x.bloques.filter(function (y) { return (y.extra ? y.id : y.idPlan) === p[1]; })[0], x); }; });
+    document.getElementById('h-fus').onclick = function () { S.fusionSel = S.fusionSel ? null : []; renderHoja(); if (S.fusionSel) toast('Toca 2–4 bloques (Fabrik o extras) y pulsa «Fusionar»'); };
+    var fb = document.getElementById('h-fbar');
+    if (fb) { document.getElementById('fb-x').onclick = function () { S.fusionSel = null; renderHoja(); }; document.getElementById('fb-ok').onclick = function () { abrirFusion(S.fusionSel.slice()); }; }
     $app.querySelectorAll('[data-ref-add]').forEach(function (f) {
       f.onsubmit = function (ev) {
         ev.preventDefault(); var inp = f.querySelector('input'), b = f.querySelector('button'); if (!inp.value.trim()) return; b.disabled = true;
@@ -1099,6 +1108,26 @@
     $app.querySelectorAll('[data-ref-del]').forEach(function (b) {
       b.onclick = function () { if (!confirmar(b, '¿Quitar?')) return; b.disabled = true; api({ action: 'refuerzo_borrar', id: b.dataset.refDel, ver: d.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); }).catch(falloApi(b)); };
     });
+  }
+  /** v0.22 · Fusionar: previa (una llamada) → «Modificar selección» o «Confirmar fusión». */
+  function abrirFusion(ids) {
+    var tit = '<div class="row"><h2>🔗 Fusionar ' + ids.length + ' bloques</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>';
+    abrirHoja(tit + '<div class="hint">Calculando el bloque ampliado…</div>');
+    api({ action: 'fusion_previa', ids: ids }).then(ok).then(function (r) {
+      var F = r.fusion, B = F.bloque;
+      abrirHoja(tit + '<div class="pv-res"><b>' + esc(B['TÍTULO']) + '</b><br>' + esc(F.minAntes) + '′ por separado → <b>' + esc(B.MIN) + '′</b> fusionado · fase ' + esc(F.fase) + '</div>' +
+        '<div class="part-lbl">Partes y estímulo de cada una</div>' + F.partes.map(function (p) { return '<div class="fus-p"><span>' + esc(p.titulo) + '</span><span class="hint">' + esc(p.tipo + (p.pesado ? ' · pesado' : '') + ' · ' + p.series + ' series') + '</span></div>'; }).join('') +
+        '<div class="part-lbl">Bloque resultante</div><div class="board small">' + esc(B.CONTENIDO) + '</div>' +
+        '<div class="hint">Estímulos que cuentan: <b>' + esc(B['CÓDIGOS'] || '—') + '</b> · va en ' + esc(B['DÍA'] + ' ' + B.TURNO) + ' · ' + (B.ESTADO === 'BORRADOR' ? 'queda en borrador' : 'queda programado') + '</div>' +
+        (F.avisos.length ? '<div class="pos-act warn"><b>Ojo</b><span>' + esc(F.avisos.join(' ')) + '</span></div>' : '') +
+        '<p class="why-t">' + esc(B['POR QUÉ (cursiva)']) + '</p>' +
+        '<div class="two-btn"><button class="btn" type="button" id="fu-mod">✎ Modificar selección</button><button class="btn btn-primary" type="button" id="fu-ok">Confirmar fusión</button></div>');
+      document.getElementById('fu-mod').onclick = function () { cerrarHoja(); };
+      document.getElementById('fu-ok').onclick = function () {
+        var b = this; b.disabled = true; b.textContent = 'Fusionando…';
+        api({ action: 'fusionar', ids: ids, ver: S.data.semana }).then(ok).then(function (r2) { S.fusionSel = null; aplicarSemana(r2.semana); cerrarHoja(); render(); toast('Fusionado. Se deshace desde el bloque.'); }).catch(falloApi(b));
+      };
+    }).catch(function (e) { abrirHoja(tit + '<div class="pos-act warn"><b>No se puede fusionar</b><span>' + esc(mensajeError(e.message)) + '</span></div>'); });
   }
   function htmlRefuerzos(d, lunes, lista, titulo) {
     return '<section class="h-ref"><div class="part-lbl">A reforzar · ' + esc(titulo) + '</div><div class="hint">Ejercicios, bloques o consignas («pistols», «refuerzo OH»…). Se priorizan al cargar los extras y suman a sus estímulos mensuales.</div>' +
