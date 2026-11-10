@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.22.3',
+  VERSION: '0.23.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1117,7 +1117,8 @@ function alAbrirHoja() {
 /** Disparador instalable al editar el Sheet: cambios en la pestaña de la semana. */
 function alEditarHoja(e) {
   try {
-    var sh = e.range.getSheet(); if (sh.getName() !== HOJAS.SEMBLOQUES) return;
+    var sh = e.range.getSheet(); if (sh.getName() === COMP_VISTA_) { editarCompetisSheet_(e); return; }
+    if (sh.getName() !== HOJAS.SEMBLOQUES) return;
     var f = e.range.getRow(), c = e.range.getColumn(), v = e.range.getValue();
     var lunes = celdaIso_(sh.getRange(2, 2).getValue()) || hoyIso_();
     if (f === 2 && (c === 2 || c === 4)) { pintarHojaSemana_(lunes); return; }
@@ -1649,6 +1650,7 @@ function configurarSin_() {
   prepararHojas();
   try { logc_('OK · Base de datos de WODs: ' + prepararBd_()); } catch (e) { logc_('AVISO · Base de datos de WODs: ' + e); }
   try { logc_('OK · Competis copiadas de ProgramAPP: ' + copiarCompetis_() + ' nuevas'); } catch (e) { logc_('AVISO · Competis: ' + e); }
+  try { MEMO = null; logc_('OK · APP · COMPETIS (filtros en el Sheet): ' + pintarCompetisSheet_() + ' competis'); } catch (e) { logc_('AVISO · APP · COMPETIS: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
   logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
@@ -3226,7 +3228,7 @@ function onOpen() {
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
     .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
     .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
-    .addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Motor · KNOWLEDGE + aprender del ciclo ahora', 'menuAprenderCiclo').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
+    .addItem('Competis · actualizar desde la app de Gabi', 'menuCompetis').addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Motor · KNOWLEDGE + aprender del ciclo ahora', 'menuAprenderCiclo').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
     .addItem('Base de datos WODs · token de lectura para otras apps', 'menuTokenBd').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
@@ -3757,7 +3759,7 @@ function refrescarResumen_() { MEMO = null; try { pintarResumen_(); } catch (e) 
 
 // ===================== v0.11 · UNIFICAR PESTAÑAS =====================
 var LEGADO_ = ['Dashboard', 'Semana', 'Mes', 'Guía e histórico', 'APP · ANÁLISIS CARRERA'];
-var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · PLAN', 'APP · METAS', 'APP · ESTÍMULOS', 'APP · BIBLIOTECA', 'APP · REGISTRO', 'APP · CHEQUEO', 'APP · CARRERA', 'carrera', 'APP · EVENTOS', 'APP · MARCAS'];
+var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · COMPETIS', 'APP · PLAN', 'APP · METAS', 'APP · ESTÍMULOS', 'APP · BIBLIOTECA', 'APP · REGISTRO', 'APP · CHEQUEO', 'APP · CARRERA', 'carrera', 'APP · EVENTOS', 'APP · MARCAS'];
 /** Una sola vez: copia completa del Sheet en Backups y fuera las pestañas antiguas (Dashboard, Semana, Mes, Guía e histórico, Análisis carrera). */
 function unificar_() {
   var cf = leerConfig_();
@@ -5853,8 +5855,8 @@ function menuAprenderCiclo() {
  */
 HOJAS.COMPETIS = 'COMPETIS';
 ESQ_BD_[HOJAS.COMPETIS] = { cab: ['ID', 'ESTADO (Gabi)', 'NOMBRE', 'INICIO', 'FIN', 'CIUDAD', 'PROVINCIA', 'WEB', 'WODBUSTER', 'INSTAGRAM', 'APERTURA INSCRIPCIÓN', 'CLASIFICATORIO', 'CATEGORÍAS CLASIFICATORIO',
-  'CATEGORÍAS', 'PRECIO', 'FUENTE', 'ENCONTRADA', 'NOTAS', 'SEGUIMIENTO', 'FECHA INSCRIPCIÓN', 'FECHA CLASIFICATORIO', 'INSCRIPCIÓN', 'CLASIFICATORIO (hecho)', 'GCAL', 'COPIADA'],
-  anchos: [80, 90, 240, 90, 90, 120, 100, 200, 200, 200, 110, 120, 160, 200, 140, 200, 90, 300, 90, 110, 110, 100, 110, 160, 130], negrita: 'NOMBRE', color: '#f59e0b',
+  'CATEGORÍAS', 'PRECIO', 'FUENTE', 'ENCONTRADA', 'NOTAS', 'SEGUIMIENTO', 'FECHA INSCRIPCIÓN', 'FECHA CLASIFICATORIO', 'INSCRIPCIÓN', 'CLASIFICATORIO (hecho)', 'GCAL', 'COPIADA', 'ÁMBITO', 'CON CLASIFICATORIO', 'NIVELES', 'FORMATO'],
+  anchos: [80, 90, 240, 90, 90, 120, 100, 200, 200, 200, 110, 120, 160, 200, 140, 200, 90, 300, 90, 110, 110, 100, 110, 160, 130, 110, 110, 180, 140], negrita: 'NOMBRE', color: '#f59e0b',
   fechas: ['INICIO', 'FIN', 'FECHA INSCRIPCIÓN', 'FECHA CLASIFICATORIO'],
   listas: { SEGUIMIENTO: ['Sí', 'No'], 'INSCRIPCIÓN': ['Pendiente', 'Hecha', 'No'], 'CLASIFICATORIO (hecho)': ['Pendiente', 'Hecho', 'No'] },
   colores: [['SEGUIMIENTO', '^Sí$', '#fef3c7', '#78350f']] };
@@ -5881,6 +5883,7 @@ function copiarCompetis_() {
     var id = String(row[ix('ID')] || '').trim(); if (!id || !String(row[ix('NOMBRE')] || '').trim()) return;
     var o = {};
     CAMPOS_GABI_COMPETI_.forEach(function (h) { var k = ix(h); if (k < 0) return; var val = row[k]; o[h === 'ESTADO' ? 'ESTADO (Gabi)' : h] = /INICIO|FIN|APERTURA|ENCONTRADA/.test(h) ? fechaCelda_(val) : String(val == null ? '' : val).trim(); });
+    Object.assign(o, clasificarCompeti_(o));   // v0.23 · ÁMBITO, CON CLASIFICATORIO, NIVELES, FORMATO
     o.COPIADA = ahora_();
     var r = ya[id];
     if (r) {
@@ -5894,14 +5897,114 @@ function copiarCompetis_() {
     }
   });
   filasEnHoja_(HOJAS.COMPETIS, nuevas);
+  try { var shC = hojaMia_(HOJAS.COMPETIS); if (!shC.getFilter() && shC.getLastRow() > 1) shC.getRange(1, 1, shC.getLastRow(), shC.getLastColumn()).createFilter(); } catch (e) {}   // filtro nativo en el libro del motor
+  try { MEMO = null; if (miLibro_().getSheetByName(COMP_VISTA_)) pintarCompetisSheet_(); } catch (e) {}
   ponerConfig_('competis_copia', ahora_() + ' · ' + nuevas.length + ' nuevas · ' + act + ' actualizadas', 'Última copia de COMPETIS PROPUESTAS (ProgramAPP, solo lectura) a Road to Elite · Motor');
   return nuevas.length;
 }
+// ===================== v0.23 · COMPETIS: clasificación y filtros (app + Sheet) =====================
+/*
+ * Cada competi copiada de ProgramAPP › «COMPETIS PROPUESTAS» (solo lectura) recibe 4 columnas calculadas en «Road to Elite · Motor» › COMPETIS:
+ *   ÁMBITO             Andalucía | España | Internacional        (por PROVINCIA: provincias andaluzas / resto de provincias españolas / país)
+ *   CON CLASIFICATORIO Sí | No | Sin dato                       (por CLASIFICATORIO: «Sí…», fecha o «online» → Sí; «No» → No; vacío → Sin dato)
+ *   NIVELES            Elite, RX, Advance, Intermedio, Escalado, Rookie, Open, Máster, Teens  (por CATEGORÍAS + CATEGORÍAS CLASIFICATORIO)
+ *   FORMATO            Individual, Parejas, Tríos, Equipos      (ídem)
+ * Filtros (se combinan con Y; dentro de un mismo filtro de varias opciones, con O):
+ *   fecha de la competi (desde/hasta, solapa con INICIO–FIN), fecha de inscripción (desde/hasta, FECHA INSCRIPCIÓN o APERTURA INSCRIPCIÓN),
+ *   ámbito, clasificatorio, niveles, formato, texto libre, solo futuras, solo en seguimiento.
+ */
+var AND_PROV_ = ['ALMERIA', 'CADIZ', 'CORDOBA', 'GRANADA', 'HUELVA', 'JAEN', 'MALAGA', 'SEVILLA'];
+var ESP_PROV_ = ['A CORUNA', 'CORUNA', 'LA CORUNA', 'ALAVA', 'ARABA', 'ALBACETE', 'ALICANTE', 'ALACANT', 'ASTURIAS', 'AVILA', 'BADAJOZ', 'BALEARES', 'ILLES BALEARS', 'ISLAS BALEARES', 'MALLORCA', 'IBIZA', 'MENORCA', 'BARCELONA', 'BIZKAIA', 'VIZCAYA', 'BURGOS', 'CACERES',
+  'CANTABRIA', 'CASTELLON', 'CASTELLO', 'CEUTA', 'CIUDAD REAL', 'CUENCA', 'GIPUZKOA', 'GUIPUZCOA', 'GIRONA', 'GERONA', 'GUADALAJARA', 'HUESCA', 'LA RIOJA', 'RIOJA', 'LAS PALMAS', 'GRAN CANARIA', 'LANZAROTE', 'FUERTEVENTURA', 'LEON', 'LLEIDA', 'LERIDA', 'LUGO', 'MADRID', 'MELILLA', 'MURCIA',
+  'NAVARRA', 'OURENSE', 'ORENSE', 'PALENCIA', 'PONTEVEDRA', 'SALAMANCA', 'SANTA CRUZ DE TENERIFE', 'TENERIFE', 'LA PALMA', 'SEGOVIA', 'SORIA', 'TARRAGONA', 'TERUEL', 'TOLEDO', 'VALENCIA', 'VALLADOLID', 'ZAMORA', 'ZARAGOZA', 'ESPANA'];
+var NIVELES_RE_ = [['Elite', /\bELITE\b|\bELIT\b/], ['RX', /\bRX\b|\bREGULAR\b/], ['Advance', /\bADVANCED?\b|\bAVANZAD/], ['Intermedio', /\bINTER(MEDIO|MEDIATE)?\b/], ['Escalado', /\bESCALAD|\bSCALED?\b/],
+  ['Rookie', /\bROOKIE\b|\bBEGINNER\b|\bPRINCIPIANTE|\bNOVATO|\bEXPERIENCE\b/], ['Open', /\bOPEN\b/], ['Máster', /\bMASTERS?\b|\bMASTER\b/], ['Teens', /\bTEENS?\b|\bUNDER\b|\bJUNIOR/]];
+var FORMATOS_RE_ = [['Individual', /\bINDIVIDUAL|\bINDIVIDUALES/], ['Parejas', /\bPAREJA|\bBUDDY|\bDOUBLE\b|\bDUO\b|\bHF\b|\bHH\b|\bFF\b/], ['Tríos', /\bTRIO|\bEQUIPOS? DE 3|\bTEAM OF 3|\bHHF|\bHHH|\bFFF/], ['Equipos', /\bEQUIPO|\bTEAM/]];
+function clasificarCompeti_(r) {
+  var prov = norm(r.PROVINCIA || '').trim(), cat = norm((r['CATEGORÍAS'] || '') + ' ; ' + (r['CATEGORÍAS CLASIFICATORIO'] || '')), q = norm(r.CLASIFICATORIO || '').trim();
+  var ambito = !prov ? 'Sin dato' : AND_PROV_.some(function (p) { return prov.indexOf(p) >= 0; }) ? 'Andalucía' : ESP_PROV_.some(function (p) { return prov === p || prov.indexOf(p) >= 0; }) ? 'España' : 'Internacional';
+  var clasif = !q ? 'Sin dato' : /^NO\b/.test(q) ? 'No' : 'Sí';
+  var niveles = NIVELES_RE_.filter(function (x) { return x[1].test(cat); }).map(function (x) { return x[0]; });
+  var formatos = FORMATOS_RE_.filter(function (x) { return x[1].test(cat); }).map(function (x) { return x[0]; });
+  return { 'ÁMBITO': ambito, 'CON CLASIFICATORIO': clasif, NIVELES: niveles.join(', '), FORMATO: formatos.join(', ') };
+}
+function fechaInscCompeti_(r) { return celdaIso_(r['FECHA INSCRIPCIÓN']) || celdaIso_(r['APERTURA INSCRIPCIÓN']) || ''; }
+/** Mismo filtro en el servidor (Sheet) y en la app (menu.js · filtrarCompetis). f: { desde, hasta, insDesde, insHasta, ambito[], clasif[], niveles[], formatos[], texto, futuras, seguimiento } */
+function filtrarCompetis_(lista, f) {
+  f = f || {}; var hoy = hoyIso_();
+  var en = function (v, l) { return !l || !l.length || String(v || '').split(/\s*,\s*/).some(function (x) { return l.indexOf(x) >= 0; }); };
+  var tx = norm(f.texto || '').trim();
+  return lista.filter(function (x) {
+    var ini = celdaIso_(x.INICIO) || '', fin = celdaIso_(x.FIN) || ini, ins = fechaInscCompeti_(x);
+    if (f.futuras && fin && fin < hoy) return false;
+    if (f.seguimiento && x.SEGUIMIENTO !== 'Sí') return false;
+    if (f.desde && (!fin || fin < f.desde)) return false;
+    if (f.hasta && (!ini || ini > f.hasta)) return false;
+    if (f.insDesde && (!ins || ins < f.insDesde)) return false;
+    if (f.insHasta && (!ins || ins > f.insHasta)) return false;
+    if (!en(x['ÁMBITO'], f.ambito) || !en(x['CON CLASIFICATORIO'], f.clasif) || !en(x.NIVELES, f.niveles) || !en(x.FORMATO, f.formatos)) return false;
+    if (tx && norm([x.NOMBRE, x.CIUDAD, x.PROVINCIA, x['CATEGORÍAS'], x.NOTAS].join(' ')).indexOf(tx) < 0) return false;
+    return true;
+  });
+}
+// ---------- Sheet: pestaña «APP · COMPETIS» (Training Coverage) con panel de filtros ----------
+var COMP_VISTA_ = 'APP · COMPETIS';
+var COMP_FILTROS_ = ['COMPETI DESDE', 'COMPETI HASTA', 'INSCRIPCIÓN DESDE', 'INSCRIPCIÓN HASTA', 'ÁMBITO', 'CLASIFICATORIO', 'NIVEL', 'FORMATO', 'TEXTO', 'SOLO FUTURAS', 'SEGUIMIENTO', '↻ ACTUALIZAR'];
+var COMP_COLS_ = ['NOMBRE', 'INICIO', 'FIN', 'CIUDAD', 'PROVINCIA', 'ÁMBITO', 'INSCRIPCIÓN', 'CON CLASIFICATORIO', 'CLASIFICATORIO', 'NIVELES', 'FORMATO', 'CATEGORÍAS', 'PRECIO', 'WEB', 'SEGUIMIENTO', 'ID'];
+function filtroDesdeSheet_(sh) {
+  var v = sh.getRange(4, 1, 1, COMP_FILTROS_.length).getValues()[0], lista = function (x) { return String(x || '').split(/\s*,\s*/).filter(function (y) { return y && !/^(TODAS?|TODOS)$/i.test(y); }); };
+  return { desde: celdaIso_(v[0]) || '', hasta: celdaIso_(v[1]) || '', insDesde: celdaIso_(v[2]) || '', insHasta: celdaIso_(v[3]) || '', ambito: lista(v[4]), clasif: lista(v[5]), niveles: lista(v[6]), formatos: lista(v[7]), texto: String(v[8] || ''), futuras: v[9] === true, seguimiento: v[10] === true };
+}
+function pintarCompetisSheet_(f) {
+  var ss = miLibro_(), sh = ss.getSheetByName(COMP_VISTA_), nueva = !sh;
+  if (!sh) sh = ss.insertSheet(COMP_VISTA_);
+  if (nueva || sh.getRange(3, 1).getValue() !== COMP_FILTROS_[0]) {
+    sh.clear(); sh.getRange(1, 1).setValue('COMPETIS · copiadas de la app de Gabi (solo lectura) · filtra en la fila 4').setFontWeight('bold').setFontSize(13);
+    sh.getRange(2, 1).setValue('Se combinan todos los filtros. En ÁMBITO, CLASIFICATORIO, NIVEL y FORMATO puedes poner varios separados por comas (ej. «Elite, RX»): vale cualquiera de ellos. Fechas en dd/mm/aaaa; vacío = sin límite. Marca ↻ ACTUALIZAR para copiar ahora de la app de Gabi.').setFontColor('#666666').setWrap(false);
+    sh.getRange(3, 1, 1, COMP_FILTROS_.length).setValues([COMP_FILTROS_]).setFontWeight('bold').setBackground('#f59e0b').setFontColor('#ffffff');
+    sh.getRange(4, 1, 1, COMP_FILTROS_.length).setValues([['', '', '', '', '', '', '', '', '', true, false, false]]).setBackground('#fff7e6');
+    var dv = function (l) { return SpreadsheetApp.newDataValidation().requireValueInList(l, true).setAllowInvalid(true).build(); };
+    sh.getRange(4, 1, 1, 4).setNumberFormat('dd/mm/yyyy').setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(true).build());
+    sh.getRange(4, 5).setDataValidation(dv(['Todas', 'Andalucía', 'España', 'Internacional', 'Andalucía, España']));
+    sh.getRange(4, 6).setDataValidation(dv(['Todas', 'Sí', 'No', 'Sin dato']));
+    sh.getRange(4, 7).setDataValidation(dv(['Todos'].concat(NIVELES_RE_.map(function (x) { return x[0]; })).concat(['Elite, RX'])));
+    sh.getRange(4, 8).setDataValidation(dv(['Todos'].concat(FORMATOS_RE_.map(function (x) { return x[0]; }))));
+    sh.getRange(4, 10, 1, 3).insertCheckboxes();
+    sh.setFrozenRows(6);
+  }
+  f = f || filtroDesdeSheet_(sh);
+  var L = filtrarCompetis_(listaCompetis_(), f), cf = leerConfig_();
+  var datos = L.map(function (x) { return COMP_COLS_.map(function (h) { return h === 'INSCRIPCIÓN' ? (fechaInscCompeti_(x) ? isoAFecha(fechaInscCompeti_(x)) : '') : String(x[h] == null ? '' : x[h]); }); });
+  var ult = Math.max(sh.getLastRow(), 7); if (ult >= 6) sh.getRange(6, 1, ult - 5, Math.max(sh.getLastColumn(), COMP_COLS_.length)).clearContent().clearFormat();
+  sh.getRange(5, 1).setValue(L.length + ' competis · última copia: ' + (cf.competis_copia || '—')).setFontColor('#666666');
+  sh.getRange(6, 1, 1, COMP_COLS_.length).setValues([COMP_COLS_]).setFontWeight('bold').setBackground('#333333').setFontColor('#ffffff');
+  if (datos.length) {
+    sh.getRange(7, 1, datos.length, COMP_COLS_.length).setValues(datos).setWrap(true).setVerticalAlignment('top');
+    var colA = COMP_COLS_.indexOf('ÁMBITO') + 1, bg = datos.map(function (d) { return [d[colA - 1] === 'Andalucía' ? '#e6f4ea' : d[colA - 1] === 'España' ? '#fff4e5' : '#eef2ff']; });
+    sh.getRange(7, colA, datos.length, 1).setBackgrounds(bg);
+    sh.getRange(7, 1, datos.length, 1).setFontWeight('bold');
+  }
+  [240, 90, 90, 130, 110, 100, 100, 90, 140, 170, 140, 240, 160, 200, 90, 80].forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  return L.length;
+}
+function editarCompetisSheet_(e) {
+  var sh = e.range.getSheet(), f = e.range.getRow(), c = e.range.getColumn();
+  if (f !== 4) return;
+  if (c === 12 && e.range.getValue() === true) {
+    SpreadsheetApp.getActive().toast('Copiando de la app de Gabi…', 'Road To Elite', 5);
+    var n = copiarCompetis_(); sh.getRange(4, 12).setValue(false);
+    SpreadsheetApp.getActive().toast(n + ' nuevas · ' + (leerConfig_().competis_copia || ''), 'Road To Elite', 5);
+  }
+  MEMO = null; pintarCompetisSheet_();
+}
+function menuCompetis() { var n = copiarCompetis_(); MEMO = null; var k = pintarCompetisSheet_(); var sh = miLibro_().getSheetByName(COMP_VISTA_); if (sh) miLibro_().setActiveSheet(sh); SpreadsheetApp.getUi().alert('Competis copiadas de la app de Gabi: ' + n + ' nuevas.\n' + (leerConfig_().competis_copia || '') + '\n\nEn «' + COMP_VISTA_ + '» se ven ' + k + ' con los filtros actuales.'); }
 function competisLunes() { try { copiarCompetis_(); } catch (e) { Logger.log('Competis: ' + e); } }
 function listaCompetis_() {
   var hoy = hoyIso_();
   return listar_(HOJAS.COMPETIS).filter(function (r) { return r.NOMBRE; }).map(function (r) {
-    var o = {}; ESQ_BD_[HOJAS.COMPETIS].cab.forEach(function (h) { o[h] = r[h] == null ? '' : String(r[h]); }); o._iso = celdaIso_(r.INICIO) || ''; o._pasada = !!o._iso && (celdaIso_(r.FIN) || o._iso) < hoy; return o;
+    var o = {}; ESQ_BD_[HOJAS.COMPETIS].cab.forEach(function (h) { o[h] = r[h] == null ? '' : String(r[h]); }); o._iso = celdaIso_(r.INICIO) || '';
+    if (!o['ÁMBITO']) Object.assign(o, clasificarCompeti_(o));
+    o._fin = celdaIso_(r.FIN) || o._iso; o._ins = fechaInscCompeti_(r); o._pasada = !!o._iso && (celdaIso_(r.FIN) || o._iso) < hoy; return o;
   }).sort(function (a, b) { return (a._iso || '9999') < (b._iso || '9999') ? -1 : 1; });
 }
 /** Seguimiento de una competi en Google Calendar: competi + inscripción + clasificatorio (eventos de día completo, marcados [Road To Elite]). */

@@ -1482,13 +1482,41 @@
       api({ action: 'competis' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; if (S.vista === 'competis') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
       return;
     }
-    var filtro = S._compFiltro || 'proximas', L = S.competis.filter(function (x) { return filtro === 'seguimiento' ? x.SEGUIMIENTO === 'Sí' : filtro === 'todas' ? true : !x._pasada; });
+    // v0.23 · filtros combinables (mismo criterio que la pestaña APP · COMPETIS del Sheet): fechas, ámbito, clasificatorio, niveles, formato, texto
+    var F = S._cf || (S._cf = leer('rte-comp-filtros') || {});
+    ['ambito', 'clasif', 'niveles', 'formatos'].forEach(function (k) { if (!Array.isArray(F[k])) F[k] = []; });
+    var filtro = S._compFiltro || 'proximas', hoyC = (S.data && S.data.hoy) || hoyLocal();
+    var en = function (v, l) { return !l.length || String(v || '').split(/\s*,\s*/).some(function (x) { return l.indexOf(x) >= 0; }); };
+    var tx = norm(F.texto || '').trim();
+    var L = S.competis.filter(function (x) {
+      if (filtro === 'seguimiento' ? x.SEGUIMIENTO !== 'Sí' : filtro === 'proximas' && x._pasada) return false;
+      if (F.desde && (!x._fin || x._fin < F.desde)) return false;
+      if (F.hasta && (!x._iso || x._iso > F.hasta)) return false;
+      if (F.insDesde && (!x._ins || x._ins < F.insDesde)) return false;
+      if (F.insHasta && (!x._ins || x._ins > F.insHasta)) return false;
+      if (!en(x['ÁMBITO'], F.ambito) || !en(x['CON CLASIFICATORIO'], F.clasif) || !en(x.NIVELES, F.niveles) || !en(x.FORMATO, F.formatos)) return false;
+      if (tx && norm([x.NOMBRE, x.CIUDAD, x.PROVINCIA, x['CATEGORÍAS'], x.NOTAS].join(' ')).indexOf(tx) < 0) return false;
+      return true;
+    });
+    var nAct = ['desde', 'hasta', 'insDesde', 'insHasta', 'texto'].filter(function (k) { return F[k]; }).length + ['ambito', 'clasif', 'niveles', 'formatos'].filter(function (k) { return F[k].length; }).length;
+    var chips = function (k, ops) { return '<div class="dchips">' + ops.map(function (o) { return '<button type="button" data-cfk="' + k + '" data-cfv="' + esc(o) + '" aria-pressed="' + (F[k].indexOf(o) >= 0) + '">' + esc(o) + '</button>'; }).join('') + '</div>'; };
+    var panel = '<details class="cf"' + (S._cfOpen ? ' open' : '') + '><summary>🔎 Filtros' + (nAct ? ' · <b>' + nAct + ' activos</b>' : '') + ' · ' + L.length + ' de ' + S.competis.length + '</summary><div class="exp-body">' +
+      '<div class="two"><div><label for="cf-d">Competi desde</label><input type="date" id="cf-d" value="' + esc(F.desde || '') + '"></div><div><label for="cf-h">hasta</label><input type="date" id="cf-h" value="' + esc(F.hasta || '') + '"></div></div>' +
+      '<div class="two"><div><label for="cf-id">Inscripción desde</label><input type="date" id="cf-id" value="' + esc(F.insDesde || '') + '"></div><div><label for="cf-ih">hasta</label><input type="date" id="cf-ih" value="' + esc(F.insHasta || '') + '"></div></div>' +
+      '<label>Dónde</label>' + chips('ambito', ['Andalucía', 'España', 'Internacional']) +
+      '<label>Clasificatorio</label>' + chips('clasif', ['Sí', 'No', 'Sin dato']) +
+      '<label>Niveles (cualquiera de los marcados)</label>' + chips('niveles', ['Elite', 'RX', 'Advance', 'Intermedio', 'Escalado', 'Rookie', 'Open', 'Máster', 'Teens']) +
+      '<label>Formato</label>' + chips('formatos', ['Individual', 'Parejas', 'Tríos', 'Equipos']) +
+      '<label for="cf-t">Texto</label><input id="cf-t" placeholder="nombre, ciudad, categoría…" value="' + esc(F.texto || '') + '">' +
+      '<div class="hint">Se combinan todos (Y). Dentro de cada grupo de botones vale cualquiera (O). Con fecha de inscripción, solo salen las que tienen fecha.</div>' +
+      '<button class="btn-ghost sm" type="button" id="cf-x">Limpiar filtros</button></div></details>';
     var lnk = function (u, t) { u = urlSegura(u); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + t + '</a>' : ''; };
     html += '<section class="me" style="display:block"><div class="seg" id="cp-f">' + [['proximas', 'Próximas'], ['seguimiento', 'En seguimiento'], ['todas', 'Todas']].map(function (o) { return '<button type="button" data-cpf="' + o[0] + '" aria-pressed="' + (filtro === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
-      '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa); aquí se copian para Road To Elite. ' + esc(S._compCopia || '') + '</div><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Copiar ahora</button></section>';
+      '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa); aquí se copian para Road To Elite (lunes 15:00). ' + esc(S._compCopia || '') + '</div><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Actualizar desde la app de Gabi</button>' + panel + '</section>';
     html += L.length ? L.map(function (x) {
       var seg = x.SEGUIMIENTO === 'Sí';
       return '<div class="comp' + (seg ? ' on' : '') + (x._pasada ? ' pasada' : '') + '"><div class="comp-h"><b>' + esc(x.NOMBRE) + '</b>' + (seg ? '<span class="tag">En seguimiento</span>' : '') + '</div>' +
+        '<div class="comp-tags">' + [x['ÁMBITO'], x['CON CLASIFICATORIO'] === 'Sí' ? '🎯 Clasificatorio' : '', x.NIVELES, x.FORMATO].filter(Boolean).map(function (t) { return '<span class="ctag' + (t === 'Andalucía' ? ' and' : '') + '">' + esc(t) + '</span>'; }).join('') + '</div>' +
         '<div class="hint">📅 ' + esc(x.INICIO) + (x.FIN && x.FIN !== x.INICIO ? ' – ' + esc(x.FIN) : '') + ' · 📍 ' + esc([x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', ')) + '</div>' +
         (x['CATEGORÍAS'] ? '<div class="hint">Categorías: ' + esc(x['CATEGORÍAS']) + '</div>' : '') + (x.PRECIO ? '<div class="hint">Precio: ' + esc(x.PRECIO) + '</div>' : '') +
         (x['APERTURA INSCRIPCIÓN'] || x['FECHA INSCRIPCIÓN'] ? '<div class="hint">📝 Inscripción: ' + esc(x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN']) + (x['INSCRIPCIÓN'] ? ' · ' + esc(x['INSCRIPCIÓN']) : '') + '</div>' : '') +
@@ -1500,7 +1528,13 @@
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
     $app.querySelectorAll('[data-cpf]').forEach(function (b) { b.onclick = function () { S._compFiltro = b.dataset.cpf; render(); }; });
-    document.getElementById('cp-copiar').onclick = function () { var b = this; b.disabled = true; api({ action: 'competis_copiar' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; render(); toast('Competis copiadas'); }).catch(falloApi(b)); };
+    var guardaF = function () { guardar('rte-comp-filtros', F); S._cfOpen = true; render(); };
+    $app.querySelector('details.cf').addEventListener('toggle', function () { S._cfOpen = this.open; });
+    $app.querySelectorAll('[data-cfk]').forEach(function (b) { b.onclick = function () { var l = F[b.dataset.cfk], k = l.indexOf(b.dataset.cfv); if (k >= 0) l.splice(k, 1); else l.push(b.dataset.cfv); guardaF(); }; });
+    [['cf-d', 'desde'], ['cf-h', 'hasta'], ['cf-id', 'insDesde'], ['cf-ih', 'insHasta']].forEach(function (p) { document.getElementById(p[0]).onchange = function () { F[p[1]] = this.value || ''; guardaF(); }; });
+    document.getElementById('cf-t').onchange = function () { F.texto = this.value.trim(); guardaF(); };
+    document.getElementById('cf-x').onclick = function () { S._cf = { ambito: [], clasif: [], niveles: [], formatos: [] }; F = S._cf; guardaF(); };
+    document.getElementById('cp-copiar').onclick = function () { var b = this; b.disabled = true; api({ action: 'competis_copiar' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; render(); toast('Competis actualizadas desde la app de Gabi'); }).catch(falloApi(b)); };
     $app.querySelectorAll('[data-cseg]').forEach(function (b) { b.onclick = function () {
       var x = S.competis.filter(function (c) { return c.ID === b.dataset.cseg; })[0];
       if (x.SEGUIMIENTO === 'Sí') { b.disabled = true; api({ action: 'competi_seguir', id: x.ID, seguir: false }).then(ok).then(function (r) { S.competis = r.competis; S.data.competisPreguntas = r.preguntas; render(); toast('Quitada del seguimiento y del calendario'); }).catch(falloApi(b)); return; }

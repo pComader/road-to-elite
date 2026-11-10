@@ -1073,3 +1073,10 @@ details.alt .exp-body{padding:0 10px 10px}
 .fus-bar{position:sticky;bottom:10px;z-index:5;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--accent);border-radius:14px;padding:8px 12px;margin:10px 0;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .fus-bar span{flex:1;font-weight:600}
 .fus-p{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
+
+/* v0.23 · competis: filtros y etiquetas */
+details.cf{margin-top:10px;border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+details.cf summary{cursor:pointer}
+.comp-tags{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.ctag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.ctag.and{border-color:var(--accent);color:var(--accent)}
