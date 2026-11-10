@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.22.2',
+  VERSION: '0.22.3',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -1577,7 +1577,7 @@ function pendientesAbiertos_() {
   var ab = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ESTADO === 'Pendiente' || r.ESTADO === 'Propuesto'; });
   if (!ab.length) return ab;
   var plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
-  return ab.map(function (r) { var o = plan[r.ID_PLAN] || {}; return Object.assign({}, r, { _CONTENIDO: r.CONTENIDO || o.CONTENIDO || '', _MIN: r.MIN || o.MIN || '', _INTENSIDAD: o.INTENSIDAD || '', _Z2: esZ2Fila_(o) }); });
+  return ab.map(function (r) { var o = plan[r.ID_PLAN] || {}, mot = String(r.MOTIVO || ''); return Object.assign({}, r, { _CONTENIDO: r.CONTENIDO || o.CONTENIDO || '', _MIN: r.MIN || o.MIN || '', _INTENSIDAD: o.INTENSIDAD || '', _Z2: esZ2Fila_(o) && !/\[tal cual\]/.test(mot), _MAS25: /\[\+25 %\]/.test(mot) }); });
 }
 /** v0.16.3 · editar un pendiente: título, contenido, minutos y notas (lo que se recolocará la semana siguiente). */
 function editarPendiente_(b) {
@@ -2682,6 +2682,7 @@ function generarExtras_(lunes, opts) {
   pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes && !z2Usados[p.ID]; }).forEach(function (p) {
     var orig = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {};
     var z2m = p._Z2 ? Math.max(10, Math.round((parseFloat(p._MIN) || 40) * 0.25)) : 0;
+    if (!z2m && p._MAS25) { p._MIN = Math.round((parseFloat(p._MIN || orig.MIN) || 30) * 1.25); p._CONTENIDO = '+25 % DE VOLUMEN (lo pediste al dejarlo pendiente): ' + p._MIN + '′ en total, misma intensidad.\n\n' + (p._CONTENIDO || orig.CONTENIDO || ''); }
     var o = { ORIGEN: orig.ORIGEN && norm(orig.ORIGEN) !== 'FABRIK' ? orig.ORIGEN : 'EXTRA', 'TÍTULO': (z2m ? 'Z2 extra +25 % · ' : 'Pendiente · ') + (p.BLOQUE || orig['TÍTULO'] || ''),
       CONTENIDO: z2m ? z2m + '′ de Z2 suave (conversación, misma zona): el 25 % de la Z2 no hecha del ' + p['FECHA ORIGINAL'] + '.' : (p._CONTENIDO || orig.CONTENIDO || ''), MIN: z2m || p._MIN || orig.MIN || 15,
       'CÓDIGOS': orig['CÓDIGOS'] || '', INTENSIDAD: orig.INTENSIDAD || '', 'POR QUÉ (cursiva)': 'Recolocado desde el ' + p['FECHA ORIGINAL'] + (p.MOTIVO ? ' (' + p.MOTIVO + ')' : '') + '. Solo cuenta cuando lo hagas.', PENDIENTE_ID: p.ID, _prio: 'pendiente' };
@@ -4484,6 +4485,122 @@ function proponerMetconTrabajo_(lunes, p) {
   if (dia.some(function (r) { return esDura_(r); })) avisos.push('Ya hay una sesión dura ese turno: los metcons se suman encima.');
   return { cambios: cambios, avisos: avisos, resumen: 'Trabajo metcon · ' + diaDe_(iso) + ' ' + turno + ' · ' + cambios.length + ' metcon' + (cambios.length > 1 ? 's' : '') + ' (' + total + '′)' + (p.nada ? ' · sin material' : '') };
 }
+/**
+ * v0.22 · Competi como evento especial (online de 1 día / clasificatorio, o física de 1+ días). Una competi es RPE 10: hay que llegar fresco.
+ *  - Valora los grupos musculares que implica el WOD (si lo pegas).
+ *  - Las 24 h previas: solo movilidad, estiramientos y, como mucho, Z2 en ergómetro ≤20′ o carrera suave ≤35′.
+ *  - Desde ahora (con o sin esta mañana, si es hoy) hasta 24 h antes se reorganiza para cubrir lo que queda de la semana: primero Fabrik,
+ *    después los extras por carencias. Nada que cargue los grupos del WOD en las 48 h previas, nunca dos sesiones duras a <48 h.
+ *  - Lo del día de la competi: si quieres, justo después del evento entran 3 opciones (pendientes de Fabrik, extras o 3 combinaciones de 2).
+ *  - Si la competi es por la mañana: tarde libre para entrenar o no; domingo sí o no. Lo que no cabe se decide bloque a bloque.
+ * p: { tipo: 'online'|'fisica', iso | dias[], turno, wod, post: 'no'|'pendientes'|'extras'|'ambos', tarde, domingo, hoyManana }
+ */
+function proponerCompeti2_(lunes, p) {
+  var w = pesoCarencias_(lunes), avisos = [], cambios = [], G = null; try { G = guiaMotor_(); } catch (e) {}
+  var fisica = p.tipo === 'fisica', dias = (fisica ? (p.dias || []) : [p.iso]).filter(Boolean).map(String).sort();
+  if (!dias.length) throw new Error('falta_dia_competi');
+  var tu = fisica ? 'AM' : (p.turno === 'PM' ? 'PM' : 'AM'), d0 = dias[0], dN = dias[dias.length - 1];
+  var t0 = horaDe_(d0, tu), t1 = fisica ? horaDe_(dN, 'PM') : t0, lim24 = t0 - 24 * 36e5, lim48 = t0 - 48 * 36e5;
+  var hoy = hoyIso_(), inicio = lunes > hoy ? horaDe_(lunes, 'AM') : horaDe_(hoy, p.hoyManana ? 'AM' : 'PM');
+  var domingo = sumarDias(lunes, 6), wod = String(p.wod || '');
+  // valoración del WOD: grupos musculares y movimientos
+  var implic = wod ? cargasDe_(norm(wod), '10') : [], movsW = [];
+  if (wod && G) movsW = detectarMovs_(norm(wod), G).map(function (x) { return x.m; });
+  movsW.forEach(function (m) { m.carga.forEach(function (c) { if (c !== 'GLUC' && c !== 'AERO' && implic.indexOf(c) < 0) implic.push(c); }); });
+  var GRUPO = { PIERNA: 'pierna (cuádriceps, glúteo, isquios)', HOMBRO: 'hombro y tríceps', AGARRE: 'agarre y dorsal', CORE: 'core', SNC: 'sistema nervioso (cargas altas / olímpicos)', IMPACTO: 'impacto (tobillo, tendón de Aquiles)', GLUC: 'glucolítico', AERO: 'aeróbico' };
+  var valoracion = implic.length ? implic.map(function (c) { var mv = movsW.filter(function (m) { return m.carga.indexOf(c) >= 0; }).map(function (m) { return m.n.toLowerCase(); }); return (GRUPO[c] || c.toLowerCase()) + (mv.length ? ' (' + mv.join(', ') + ')' : ''); }) : [];
+  var solapa = function (r) { var cg = cargasFila_(r); return implic.some(function (c) { return cg.indexOf(c) >= 0 && c !== 'GLUC' && c !== 'AERO'; }); };
+  var filas = filasSemanaActivas_(lunes).filter(function (r) { return !r._hecho && horaDe_(r._iso, r._turno) >= inicio && norm(r.ORIGEN) !== 'COMPETI'; });
+  if (listar_(HOJAS.REEST).some(function (x) { return x.MODO === 'Competi' && x.ESTADO === 'Aplicada' && celdaIso_(x.LUNES) === lunes; })) avisos.push('Ya hay una competi aplicada esta semana: si es la misma, deshazla antes en Reestructurar.');
+  var esEvento = function (iso, t) { var h = horaDe_(iso, t); return fisica ? dias.indexOf(iso) >= 0 : iso === d0 && t === tu; };
+  var bloqueado = function (iso, t) {   // turnos sin entrenar
+    var h = horaDe_(iso, t);
+    if (h < inicio || esEvento(iso, t)) return true;
+    if (h >= lim24 && h < t0) return true;                                  // 24 h previas: solo lo suave (se trata aparte)
+    if (!fisica && iso === d0 && t !== tu && h > t0 && !p.tarde) return true;   // tarde del día de la competi
+    if (iso === domingo && !p.domingo && iso > dN) return true;
+    return false;
+  };
+  var apto24 = function (r) { var t = norm((r['TÍTULO'] || '') + ' ' + String(r.CONTENIDO || '').slice(0, 200)), cod = r['CÓDIGOS'] || '';
+    if (/MOVILIDAD|MOBILITY|ESTIRAM|STRETCH|RANGO/.test(t) && !esDura_(r)) return 'movilidad';
+    if (/W03/.test(cod) || (/ERG|BIKE|ROW|SKI/.test(t) && esZ2Fila_(r))) return 'erg';
+    if (esZ2Fila_(r)) return 'carrera';
+    return ''; };
+  var aRecolocar = [], ya24 = false;
+  filas.forEach(function (r) {
+    var h = horaDe_(r._iso, r._turno);
+    if (esEvento(r._iso, r._turno)) { aRecolocar.push(Object.assign(r, { _motivo: 'Coincide con la competición' })); return; }
+    if (h >= lim24 && h < t0) {
+      var a = apto24(r);
+      if (a === 'movilidad') { ya24 = true; return; }
+      if (a === 'erg' || a === 'carrera') { ya24 = true; cambios.push({ id: r.ID, accion: 'adaptar', iso: r._iso, turno: r._turno, contenido: a === 'erg' ? 'Z2 EN ERGÓMETRO 20′ como máximo · RPE 2–3, conversacional.\n+ 10–15′ de movilidad y estiramientos.\nNada de intensidad: mañana compites (RPE 10).' : 'CARRERA SUAVE DE RECUPERACIÓN 30–35′ como máximo · RPE 2–3.\n+ 10′ de movilidad.\nSin cambios de ritmo: mañana compites (RPE 10).', motivo: '24 h antes de competir: solo suave' }); return; }
+      aRecolocar.push(Object.assign(r, { _motivo: '24 h antes de competir: fuera todo lo que cargue músculo o SNC' })); return;
+    }
+    if (bloqueado(r._iso, r._turno)) { aRecolocar.push(Object.assign(r, { _motivo: r._iso === domingo ? 'Domingo sin entrenar' : !fisica && r._iso === d0 ? 'Tarde de la competición sin entrenar' : 'Fuera de los turnos disponibles' })); return; }
+    if (h >= lim48 && h < lim24 && solapa(r)) aRecolocar.push(Object.assign(r, { _motivo: '48–24 h antes: carga ' + implic.filter(function (c) { return cargasFila_(r).indexOf(c) >= 0; }).join(', ').toLowerCase() + ', lo mismo que el WOD' }));
+  });
+  var mueven = {}; aRecolocar.forEach(function (r) { mueven[r.ID] = 1; });
+  var quedan = filas.filter(function (r) { return !mueven[r.ID]; }), ocupado = cargaBase_(quedan), duras = {};
+  quedan.forEach(function (r) { if (esDura_(r)) duras[r._iso] = 1; });
+  dias.forEach(function (d) { duras[d] = 1; });   // la competi es la sesión más dura: nada duro a <48 h
+  var slots = [];
+  for (var k = 0; k < 7; k++) { var iso = sumarDias(lunes, k); ['AM', 'PM'].forEach(function (t) { if (!bloqueado(iso, t)) slots.push({ iso: iso, turno: t, ok: true, cap: CAP_TURNO_[t], mat: mapaMaterial_(['box'], true), correr: { libre: 1, tempo: 1, series: 1 }, tipo: 'casa' }); }); }
+  var colocarC = function (r) {   // como colocar_, pero sin cargar los grupos del WOD en las 48 h previas
+    var off = slots.filter(function (s) { var h = horaDe_(s.iso, s.turno); return s.ok && h >= lim48 && h < t0 && solapa(r); });
+    off.forEach(function (s) { s.ok = false; }); var s = colocar_(r, slots, ocupado, duras, {}); off.forEach(function (x) { x.ok = true; }); return s;
+  };
+  // post-competición: 3 opciones de bloques ligeros que no repitan lo que ha machacado el WOD
+  var opcionesPost = [];
+  if (p.post && p.post !== 'no') {
+    var ligero = function (r) { return !esDura_(r) && !solapa(r) && !esCarreraFila_(r); };
+    var fab = aRecolocar.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK' && ligero(r); }).map(function (r) { return { id: r.ID, titulo: r['TÍTULO'] || r.BLOQUE, min: r._min, cargas: cargasFila_(r), prio: prioridadFila_(r, w) }; });
+    pendientesAbiertos_().filter(function (q) { return q.ESTADO === 'Pendiente'; }).forEach(function (q) { var pseudo = { 'TÍTULO': q.BLOQUE, CONTENIDO: q._CONTENIDO, ORIGEN: q.TIPO, MIN: q._MIN, 'CÓDIGOS': '', INTENSIDAD: q._INTENSIDAD };
+      if (ligero(pseudo)) fab.push({ pend: q.ID, titulo: 'Pendiente · ' + q.BLOQUE, contenido: q._CONTENIDO, min: +q._MIN || 15, cargas: cargasFila_(pseudo), prio: 1 }); });
+    var cat = catalogo_(), ext = aRecolocar.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && ligero(r); }).map(function (r) { return { id: r.ID, titulo: r['TÍTULO'] || r.BLOQUE, min: r._min, cargas: cargasFila_(r), prio: prioridadFila_(r, w) }; });
+    Object.keys(cat).filter(function (c) { var r = cat[c]; return r.CONTENIDO && !/CARRERA/.test(norm(r.ORIGEN)) && (w[c] || 0) > 0; }).sort(function (a, b) { return (w[b] || 0) - (w[a] || 0); }).forEach(function (c) {
+      var r = cat[c], pseudo = { 'TÍTULO': r.NOMBRE, CONTENIDO: r.CONTENIDO, 'CÓDIGOS': c, ORIGEN: 'EXTRA', MIN: r.MIN, INTENSIDAD: r.INTENSIDAD };
+      if (ligero(pseudo) && !ext.some(function (e) { return e.codigo === c; })) ext.push({ codigo: c, titulo: r.NOMBRE, contenido: r.CONTENIDO, min: +r.MIN || 12, cargas: cargasFila_(pseudo), prio: w[c] });
+    });
+    fab.sort(function (a, b) { return b.prio - a.prio; }); ext.sort(function (a, b) { return b.prio - a.prio; });
+    var sueltas = function (l) { return l.slice(0, 3).map(function (x) { return { titulo: x.titulo, items: [x] }; }); };
+    if (p.post === 'pendientes') opcionesPost = sueltas(fab);
+    else if (p.post === 'extras') opcionesPost = sueltas(ext);
+    else {
+      var pares = []; fab.slice(0, 5).forEach(function (f) { ext.slice(0, 5).forEach(function (e) { if (f.cargas.some(function (c) { return e.cargas.indexOf(c) >= 0 && c !== 'GLUC'; })) return; pares.push({ titulo: f.titulo + ' + ' + e.titulo, items: [f, e], prio: f.prio + e.prio }); }); });
+      opcionesPost = pares.sort(function (a, b) { return b.prio - a.prio; }).slice(0, 3);
+    }
+    opcionesPost.forEach(function (o, i) { o.k = i; o.min = o.items.reduce(function (a, x) { return a + (x.min || 0); }, 0); });
+    if (!opcionesPost.length) avisos.push('No encontré bloques ligeros que no repitan lo que carga el WOD para después de la competi.');
+  }
+  // recolocar: Fabrik primero, después extras por carencias; si Fabrik no cabe, desplaza un extra de menor prioridad
+  var cola = aRecolocar.slice().sort(function (a, b) { return (norm(b.ORIGEN) === 'FABRIK') - (norm(a.ORIGEN) === 'FABRIK') || prioridadFila_(b, w) - prioridadFila_(a, w); });
+  var colocado = {};
+  for (var i = 0; i < cola.length; i++) {
+    var r = cola[i], s = colocarC(r);
+    if (!s && norm(r.ORIGEN) === 'FABRIK') {
+      var victima = quedan.concat(cola.filter(function (x) { return colocado[x.ID]; })).filter(function (x) { return norm(x.ORIGEN) !== 'FABRIK' && !mueven[x.ID + '_v'] && horaDe_(x._iso, x._turno) < lim24 && x._min >= r._min * 0.6 && prioridadFila_(x, w) < prioridadFila_(r, w); })
+        .sort(function (a, b) { return prioridadFila_(a, w) - prioridadFila_(b, w); })[0];
+      if (victima) {
+        var vs = colocado[victima.ID] || { iso: victima._iso, turno: victima._turno };
+        ocupado[vs.iso + vs.turno] = Math.max(0, (ocupado[vs.iso + vs.turno] || 0) - victima._min); mueven[victima.ID + '_v'] = 1;
+        cambios = cambios.filter(function (c) { return c.id !== victima.ID; });
+        delete colocado[victima.ID]; cola.push(Object.assign(victima, { _motivo: 'Deja su hueco a Fabrik (prioridad)' }));
+        s = colocarC(r);
+      }
+    }
+    if (s) { colocado[r.ID] = s; cambios.push({ id: r.ID, accion: 'mover', iso: s.iso, turno: s.turno, motivo: r._motivo + ' → ' + diaDe_(s.iso).toLowerCase() + ' ' + s.turno + (norm(r.ORIGEN) === 'FABRIK' ? ' (Fabrik primero)' : '') }); }
+    else cambios.push({ id: r.ID, accion: 'pendiente', noCabe: true, carreraErg: esCarreraFila_(r) || /W03/.test(r['CÓDIGOS'] || ''), motivo: r._motivo + '. No cabe sin cargar la competición: decide (no hacer, pendientes, +25 % si es carrera/erg, o el hueco que quieras).' });
+  }
+  // 24 h antes: si no hay nada suave, se propone
+  if (!ya24) { var dPrev = sumarDias(d0, -1); if (dPrev >= lunes && horaDe_(dPrev, tu) >= inicio) cambios.push({ accion: 'nuevo', iso: dPrev, turno: tu, nuevo: { ORIGEN: 'COMPETI', 'TÍTULO': 'Víspera de competi · movilidad + Z2 suave (opcional)', CONTENIDO: '15–20′ de movilidad y estiramientos (cadera, hombro, tobillo).\nOpcional: Z2 en ergómetro 20′ como máximo (RPE 2–3) o carrera suave ≤35′.\nNada que cargue músculo ni sistema nervioso.', MIN: 20, INTENSIDAD: '🟢 Suave', 'CÓDIGOS': '' }, motivo: '24 h antes: llegar fresco' }); }
+  // el evento
+  dias.forEach(function (d) { cambios.push({ accion: 'nuevo', iso: d, turno: tu, nuevo: { ORIGEN: 'COMPETI', ORDEN: tu === 'AM' ? 1 : 41, 'TÍTULO': (fisica ? 'COMPETICIÓN' : 'COMPETI ONLINE / CLASIFICATORIO') + ' · RPE 10',
+    CONTENIDO: (valoracion.length ? 'GRUPOS IMPLICADOS: ' + valoracion.join(' · ') + '\n\n' : '') + planDiaCompeti_(wod, implic), MIN: 60, INTENSIDAD: '🔴 RPE 10', 'CÓDIGOS': '' }, motivo: 'Día de competición: RPE 10' }); });
+  var resumen = (fisica ? 'Competición física ' : 'Competi online ') + dias.map(function (d) { return diaDe_(d) + ' ' + isoAFecha(d).slice(0, 5); }).join(', ') + (fisica ? '' : ' ' + tu) +
+    ' · ' + cambios.filter(function (c) { return c.accion === 'mover'; }).length + ' recolocados · ' + cambios.filter(function (c) { return c.noCabe; }).length + ' sin hueco';
+  if (!wod) avisos.push('Sin el WOD no sé qué grupos protege: se aplica solo la regla de 24 h y la de 48 h entre sesiones duras. Si lo pegas, protejo lo que implica.');
+  return { cambios: cambios, avisos: avisos, implicados: implic, valoracion: valoracion, opcionesPost: opcionesPost, postIso: d0, postTurno: tu, resumen: resumen };
+}
 function repasoCompeti_(wod) {
   var movs = MOV_MEGA_.filter(function (m) { return wod && m.re.test(norm(wod)); }).slice(0, 4);
   if (!movs.length) return 'Calentamiento completo + 2 rondas suaves de los movimientos de la competición (3–5 reps cada uno).\nIntensidad igual o algo superior a la de la competición, volumen mínimo. Nada hasta el fallo.';
@@ -4506,7 +4623,7 @@ function mejorHuecoGrabar_(lunes, filas) {
 // ---------- proponer · aplicar · deshacer ----------
 function reestProponer_(modo, lunes, params) {
   lunes = lunesDe_(lunes || hoyIso_());
-  var P = modo === 'Viaje' ? proponerViaje_(lunes, params) : modo === 'Competi' ? proponerCompeti_(lunes, params) : modo === 'Trabajo metcon' ? proponerMetconTrabajo_(lunes, params) : proponerReorg_(lunes, params);
+  var P = modo === 'Viaje' ? proponerViaje_(lunes, params) : modo === 'Competi' ? (params.v === 2 ? proponerCompeti2_(lunes, params) : proponerCompeti_(lunes, params)) : modo === 'Trabajo metcon' ? proponerMetconTrabajo_(lunes, params) : proponerReorg_(lunes, params);
   var id = 'R' + nuevoId_().slice(0, 6), plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
   P.cambios.forEach(function (c, i) { c.k = i; var r = plan[c.id]; if (r) { c.titulo = r['TÍTULO'] || r.BLOQUE; c.desdeIso = celdaIso_(r.FECHA); c.desdeTurno = r.TURNO === 'AM' ? 'AM' : 'PM'; c.origen = r.ORIGEN; } else if (c.nuevo) c.titulo = c.nuevo['TÍTULO']; });
   var json = JSON.stringify(P);
@@ -4520,7 +4637,21 @@ function reestAplicar_(id, ajustes) {
     var x = listar_(HOJAS.REEST).filter(function (r) { return r.ID === id; })[0]; if (!x) throw new Error('no_encontrado');
     if (x.ESTADO !== 'Propuesta') throw new Error('ya_' + String(x.ESTADO).toLowerCase());
     var P = JSON.parse(x.PROPUESTA || CacheService.getScriptCache().get('reest_' + id) || '{}');
-    (ajustes || []).forEach(function (a) { var c = P.cambios[a.k]; if (!c) return; if (a.destino === 'pendiente') c.accion = c.nuevo ? 'quitar' : 'pendiente'; else if (a.destino === 'quitar') c.accion = c.nuevo ? 'quitar' : 'suprimir'; else if (a.iso) { c.iso = a.iso; c.turno = a.turno || 'PM'; if (c.accion === 'pendiente' || c.accion === 'suprimir') c.accion = 'mover'; } });
+    // v0.22 · competi: opción elegida para después del evento
+    (ajustes || []).filter(function (a) { return a.post != null; }).forEach(function (a) {
+      var op = (P.opcionesPost || [])[+a.post]; if (!op) return;
+      op.items.forEach(function (it, j) {
+        var ord = (P.postTurno === 'AM' ? 2 : 42) + j;
+        if (it.id) { var c0 = P.cambios.filter(function (c) { return c.id === it.id; })[0];
+          if (c0) { c0.accion = 'mover'; c0.iso = P.postIso; c0.turno = P.postTurno; c0.motivo = 'Después de la competi (lo elegiste)'; c0.orden = ord; }
+          else P.cambios.push({ id: it.id, accion: 'mover', iso: P.postIso, turno: P.postTurno, motivo: 'Después de la competi (lo elegiste)', orden: ord }); }
+        else P.cambios.push({ accion: 'nuevo', iso: P.postIso, turno: P.postTurno, pendId: it.pend || '', nuevo: { ORIGEN: it.pend ? 'PENDIENTE' : 'EXTRA', 'TÍTULO': it.titulo + ' · post-competi', CONTENIDO: it.contenido || '', MIN: it.min || 12, 'CÓDIGOS': it.codigo || '', ORDEN: ord }, motivo: 'Después de la competi (lo elegiste)' });
+      });
+    });
+    (ajustes || []).forEach(function (a) { var c = P.cambios[a.k]; if (!c || a.post != null) return;
+      if (a.destino === 'cancelar') { c.accion = c.nuevo ? 'quitar' : 'cancelar'; return; }
+      if (a.destino === 'pendiente25' || a.destino === 'pendiente_tal') { c.accion = 'pendiente'; c.motivo = (c.motivo || '') + (a.destino === 'pendiente25' ? ' [+25 %]' : ' [tal cual]'); return; }
+      if (a.destino === 'pendiente') c.accion = c.nuevo ? 'quitar' : 'pendiente'; else if (a.destino === 'quitar') c.accion = c.nuevo ? 'quitar' : 'suprimir'; else if (a.iso) { c.iso = a.iso; c.turno = a.turno || 'PM'; if (c.accion === 'pendiente' || c.accion === 'suprimir') c.accion = 'mover'; } });
     asegurarColumna_(HOJAS.PLAN, 'REESTRUCTURA'); asegurarColumna_(HOJAS.PLAN, 'ESTADO PREVIO');
     var plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
     var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh), nuevas = [], sello = 'reestructura ' + id + ' · ' + ahora_();
@@ -4529,18 +4660,21 @@ function reestAplicar_(id, ajustes) {
     P.cambios.forEach(function (c) {
       var r = c.id ? plan[c.id] : null;
       if (c.accion === 'quitar') return;
+      if (c.accion === 'nuevo' && c.pendId) { var pq = listar_(HOJAS.PENDIENTES).filter(function (q) { return q.ID === c.pendId; })[0]; if (pq) actualizarFila_(HOJAS.PENDIENTES, pq._fila, { ESTADO: 'Reprogramado', 'SEMANA DESTINO': isoAFecha(lunesDe_(c.iso)) }); }
       if (c.accion === 'nuevo') { var o = Object.assign({}, c.nuevo); delete o._iso; delete o._turno; delete o._min; delete o._comp; delete o._fila; if (!o.ORIGEN) o.ORIGEN = 'REORGANIZADO';
         o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], c.motivo].filter(Boolean).join(' · '); nuevas.push(fila(o, c.iso, c.turno)); return; }
       if (c.accion === 'nuevo-pendiente') { anadirPendiente_({ 'TÍTULO': c.titulo, ORIGEN: 'COMPENSACIÓN' }, c.motivo + ' (' + id + ')'); return; }
       if (!r) return;
       tocar(r);
       if (c.accion === 'pendiente') { anadirPendiente_(r, c.motivo + ' (' + id + ')'); return; }
+      if (c.accion === 'cancelar') { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'CANCELADO' }); return; }   // v0.22 · no se hace (deshacer lo devuelve)
       if (c.accion === 'suprimir' || c.accion === 'sustituir') return;
       var o2 = {}; cab.forEach(function (h) { o2[h] = r[h]; });
       if (norm(r.ORIGEN) === 'FABRIK') { o2.ORIGEN = 'FABRIK ADAPTADO'; o2.FABRIK_REF = ''; }
       if (c.contenido) o2.CONTENIDO = c.contenido;
       o2['POR QUÉ (cursiva)'] = c.motivo + (r['POR QUÉ (cursiva)'] ? ' · ' + r['POR QUÉ (cursiva)'] : '');
       o2['ESTADO PREVIO'] = '';
+      if (c.orden != null) o2.ORDEN = c.orden;
       nuevas.push(fila(o2, c.iso || celdaIso_(r.FECHA), c.turno || r.TURNO));
     });
     if (nuevas.length) sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, nuevas.length, cab.length).setValues(nuevas.map(function (o) { return filaDe_(cab, o); }));
@@ -4558,7 +4692,7 @@ function reestDeshacer_(id) {
     var sh = hojaMia_(HOJAS.PLAN), borrar = [];
     listar_(HOJAS.PLAN).forEach(function (r) {
       if (r.REESTRUCTURA !== id) return;
-      if (r.ESTADO === 'SUSTITUIDO' && r['ESTADO PREVIO']) actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: r['ESTADO PREVIO'], 'ESTADO PREVIO': '', REESTRUCTURA: '', ACTUALIZADO: ahora_() });
+      if (/^(SUSTITUIDO|CANCELADO)$/.test(r.ESTADO) && r['ESTADO PREVIO']) actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: r['ESTADO PREVIO'], 'ESTADO PREVIO': '', REESTRUCTURA: '', ACTUALIZADO: ahora_() });
       else borrar.push(r._fila);
     });
     borrar.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });

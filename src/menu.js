@@ -712,7 +712,7 @@
       html += '<div class="hint">Adapta la semana a lo que te ha surgido. Primero ves la propuesta junto al plan original; nada se aplica sin tu OK y se puede deshacer.</div>' +
         [['Viaje', '✈️', 'Días fuera, qué material tienes y si puedes correr. Lo que no se pueda hacer se compensa en casa (máx. +40 %) o en el domingo.'],
          ['Reorganización', '🧩', 'Te quedan cosas sin hacer: marcas huecos y bloques pendientes y te monto una sesión clásica o un mega WOD.'],
-         ['Competi', '🏆', 'Online (grabación) o física: descanso, −50 % de volumen protegiendo lo que implica el WOD y compensación después.'],
+         ['Competi', '🏆', 'Online / clasificatorio o física (RPE 10): valora el WOD, 24 h suaves, reorganiza antes (Fabrik primero), opciones después del evento y decides lo que no cabe.'],
          ['Trabajo metcon', '⚡', 'La semana no se toca: añade 1–3 metcons una mañana (fuerza, crossfit, core) con tu material, atacando lo que te falta del mes.']].map(function (m) {
           return '<button class="reest-card" type="button" data-rm="' + m[0] + '"><span class="rc-ico">' + m[1] + '</span><span><b>' + m[0] + '</b><span class="hint">' + m[2] + '</span></span></button>'; }).join('');
       html += '<div class="avf">' + bloqueDobles('re-dob', d.conf && d.conf['DOBLES (mañanas libres)']) + '</div>';
@@ -789,11 +789,18 @@
         '<label class="sh-b"><input type="checkbox" id="tm-run"' + (tmM.correr ? ' checked' : '') + '><span>Se puede correr</span></label>' +
         '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
     } else {
-      html += '<form id="rf" class="avf"><h3 class="sec-t">🏆 Competi</h3>' + segHtml('rc-t', [['online', 'Online (1 día)'], ['fisica', 'Física']], R.ctipo || 'online') +
-        '<div id="rc-on"' + (R.ctipo === 'fisica' ? ' hidden' : '') + '><div class="two"><div><label for="rc-d">Día de grabación</label><select id="rc-d">' + d.dias.map(function (x) { return '<option value="' + x.iso + '">' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
-        '<div><label>Turno</label>' + segHtml('rc-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div></div>' +
+      var hoyC = d.hoy || hoyLocal(), enSemana = hoyC >= d.semana && hoyC <= sumarDias(d.semana, 6);
+      html += '<form id="rf" class="avf"><h3 class="sec-t">🏆 Competi</h3><div class="hint">Una competi es RPE 10: hay que llegar fresco. 24 h antes solo movilidad, estiramientos y como mucho Z2 suave; antes se reorganiza la semana para no perder estímulos (Fabrik primero).</div>' +
+        segHtml('rc-t', [['online', 'Online / clasificatorio (1 día)'], ['fisica', 'Física']], R.ctipo || 'online') +
+        '<div id="rc-on"' + (R.ctipo === 'fisica' ? ' hidden' : '') + '><div class="two"><div><label for="rc-d">Día</label><select id="rc-d">' + d.dias.map(function (x) { return '<option value="' + x.iso + '">' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
+        '<div><label>Turno</label>' + segHtml('rc-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div>' +
+        '<label class="sh-b" id="rc-tw"><input type="checkbox" id="rc-tarde"><span>Si es por la mañana: <b>entrenar por la tarde</b> (se reprograma esa tarde y los días siguientes)</span></label></div>' +
         '<div id="rc-fi"' + (R.ctipo === 'fisica' ? '' : ' hidden') + '><label>Días de competición</label>' + chipsMat('rc-dias', d.dias.map(function (x) { return [x.iso, etqDia(x.iso)]; })) + '</div>' +
-        '<label for="rc-w">WOD(s) si los sabes</label><textarea id="rc-w" rows="5" placeholder="Pega el WOD: detecto qué implica (hombro, pierna, agarre…) para protegerlo"></textarea>' +
+        '<label for="rc-w">WOD(s) si los sabes</label><textarea id="rc-w" rows="5" placeholder="Pega el WOD o los WODs: valoro qué grupos musculares implica y los protejo en las 48 h previas"></textarea>' +
+        '<label>Después del evento (en la misma sesión)</label>' + segHtml('rc-post', [['no', 'Nada'], ['pendientes', 'Pendientes de Fabrik'], ['extras', 'Extras'], ['ambos', 'Ambos (2 bloques)']], 'no') +
+        '<div class="hint">Te doy 3 opciones ligeras que no repiten lo que carga el WOD (con «Ambos», 3 combinaciones de extra + bloque de Fabrik). Eliges una en la propuesta.</div>' +
+        '<label class="sh-b"><input type="checkbox" id="rc-dom" checked><span>Entrenar el <b>domingo</b> (para recolocar lo que falte)</span></label>' +
+        (enSemana ? '<label class="sh-b"><input type="checkbox" id="rc-hoy"><span>Reprogramar también <b>esta mañana</b> (' + esc(etqDia(hoyC)) + ')</span></label>' : '') +
         '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
     }
     $app.innerHTML = html;
@@ -864,40 +871,48 @@
       };
     } else {
       enlazarSeg('rc-t', function (v) { R.ctipo = v; document.getElementById('rc-on').hidden = v === 'fisica'; document.getElementById('rc-fi').hidden = v !== 'fisica'; });
-      enlazarSeg('rc-tu');
+      enlazarSeg('rc-tu', function (v) { document.getElementById('rc-tw').hidden = v !== 'AM'; }); enlazarSeg('rc-post');
       document.getElementById('rf').onsubmit = function (ev) {
         ev.preventDefault();
-        var t = valSeg('rc-t') || 'online', p = { tipo: t, wod: val('rc-w') };
+        var t = valSeg('rc-t') || 'online', hoyB = document.getElementById('rc-hoy'), p = { v: 2, tipo: t, wod: val('rc-w'), post: valSeg('rc-post') || 'no', tarde: document.getElementById('rc-tarde').checked, domingo: document.getElementById('rc-dom').checked, hoyManana: !!(hoyB && hoyB.checked) };
         if (t === 'online') { p.iso = val('rc-d'); p.turno = valSeg('rc-tu') || 'AM'; } else { p.dias = leerChips('rc-dias'); if (!p.dias.length) { toast('Marca los días de competición'); return; } }
         enviar(p);
       };
     }
   }
-  var ACC_REEST = { adaptar: 'Adaptado', mover: 'Movido', nuevo: 'Nuevo', pendiente: 'A pendientes', suprimir: 'Se quita', sustituir: 'Se reorganiza', 'nuevo-pendiente': 'A pendientes' };
+  var ACC_REEST = { cancelar: 'No hacer', adaptar: 'Adaptado', mover: 'Movido', nuevo: 'Nuevo', pendiente: 'A pendientes', suprimir: 'Se quita', sustituir: 'Se reorganiza', 'nuevo-pendiente': 'A pendientes' };
   function renderPropuestaReest(html) {
     var R = S.reest, P = R.propuesta, d = S.data;
     var opts = '<option value="">Como propone</option>' + d.dias.filter(function (x) { return x.iso >= d.hoy; }).map(function (x) { return ['AM', 'PM'].map(function (t) { return '<option value="' + x.iso + '|' + t + '">' + etqDia(x.iso) + ' ' + t + '</option>'; }).join(''); }).join('') + '<option value="pendiente">A pendientes</option><option value="quitar">Quitar</option>';
     html += '<section class="me" style="display:block"><b>' + esc(P.resumen) + '</b>' + (P.avisos || []).map(function (a) { return '<div class="hint">⚠ ' + esc(a) + '</div>'; }).join('') +
       (P.mejorHueco ? '<div class="hint">🎯 Mejor hueco para grabar (menos fatiga en las 48 h previas): ' + P.mejorHueco.map(function (h) { return etqDia(h.iso) + ' ' + h.turno; }).join(' · ') + ' (el 2.º, para un segundo intento).</div>' : '') +
-      (P.implicados && P.implicados.length ? '<div class="hint">El WOD implica: ' + esc(P.implicados.join(', ').toLowerCase()) + '. Es lo que protejo.</div>' : '') + '</section>';
+      (P.valoracion && P.valoracion.length ? '<div class="part-lbl">Grupos implicados · RPE 10, llegar fresco</div>' + P.valoracion.map(function (v) { return '<div class="hint">• ' + esc(v) + '</div>'; }).join('') :
+        P.implicados && P.implicados.length ? '<div class="hint">El WOD implica: ' + esc(P.implicados.join(', ').toLowerCase()) + '. Es lo que protejo.</div>' : '') + '</section>';
+    if (P.opcionesPost && P.opcionesPost.length) html += '<section class="me" style="display:block"><b>Después de la competi · elige una</b>' +
+      '<label class="sh-b"><input type="radio" name="rp-post" value=""' + (R.post == null ? ' checked' : '') + '><span>Nada</span></label>' +
+      P.opcionesPost.map(function (o) { return '<label class="sh-b"><input type="radio" name="rp-post" value="' + o.k + '"' + (R.post === o.k ? ' checked' : '') + '><span><b>' + esc(o.titulo) + '</b> · ' + esc(o.min) + '′</span></label>'; }).join('') +
+      '<div class="hint">Van justo después del evento, en la misma sesión. Elegidas para no repetir lo que ha cargado el WOD.</div></section>';
     html += P.cambios.filter(function (c) { return c.accion !== 'sustituir'; }).map(function (c) {
       var desde = c.desdeIso ? etqDia(c.desdeIso) + ' ' + (c.desdeTurno || '') : '', a = c.iso ? etqDia(c.iso) + ' ' + (c.turno || '') : '';
       var cont = c.contenido || (c.nuevo && c.nuevo.CONTENIDO) || '';
       return '<div class="xb rp-' + c.accion + '"><div class="xb-h"><span class="tag">' + (ACC_REEST[c.accion] || c.accion) + '</span><b class="xb-t"' + (c.id ? ' data-ver-blq="' + esc(c.id) + '"' : '') + '>' + esc(c.titulo || '') + '</b></div>' +
         '<div class="xb-p">' + (desde ? '<span>' + esc(desde) + '</span>' : '') + (a ? '<span>→ <b>' + esc(a) + '</b></span>' : '') + '</div><div class="hint">' + esc(c.motivo || '') + '</div>' +
         (cont ? '<details class="alt"><summary>Ver contenido</summary><div class="exp-body"><div class="prose-n pre">' + esc(cont) + '</div></div></details>' : (c.id ? verBloqueDet(c.id) : '')) +
-        (c.accion !== 'nuevo-pendiente' ? '<select class="rp-sel" data-k="' + c.k + '">' + opts + '</select>' : '') + '</div>';
+        (c.noCabe ? '<div class="pos-act warn"><b>No cabe</b><span>Decide: no hacer, a pendientes' + (c.carreraErg ? ' (tal cual o +25 %)' : '') + ' o el hueco que quieras.</span></div>' : '') +
+        (c.accion !== 'nuevo-pendiente' ? '<select class="rp-sel" data-k="' + c.k + '">' + opts + (c.nuevo ? '' : '<option value="cancelar">✕ No hacer (cancelar)</option>') +
+          (c.carreraErg ? '<option value="pendiente_tal">Pendiente tal cual (semana que viene)</option><option value="pendiente25">Pendiente con +25 % de volumen</option>' : '') + '</select>' : '') + '</div>';
     }).join('');
     html += '<button class="btn btn-primary" type="button" id="rp-ok">Aplicar la semana adaptada</button><button class="btn" type="button" id="rp-back">Cambiar respuestas</button><button class="btn-ghost" type="button" id="rp-no">Descartar</button>' +
       '<div class="hint">Después, en cada día cambiado puedes ver «Adaptada» u «Original (Fabrik + extras)». Se puede deshacer desde Reestructurar.</div>';
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { S.reest = null; abrirAjustes(); };
-    $app.querySelectorAll('.rp-sel').forEach(function (s) { s.onchange = function () { var v = s.value, k = +s.dataset.k; if (!v) delete R.ajustes[k]; else if (v === 'pendiente' || v === 'quitar') R.ajustes[k] = { k: k, destino: v }; else { var x = v.split('|'); R.ajustes[k] = { k: k, iso: x[0], turno: x[1] }; } }; });
+    $app.querySelectorAll('[name="rp-post"]').forEach(function (r) { r.onchange = function () { R.post = r.value === '' ? null : +r.value; }; });
+    $app.querySelectorAll('.rp-sel').forEach(function (s) { s.onchange = function () { var v = s.value, k = +s.dataset.k; if (!v) delete R.ajustes[k]; else if (/^(pendiente|quitar|cancelar|pendiente25|pendiente_tal)$/.test(v)) R.ajustes[k] = { k: k, destino: v }; else { var x = v.split('|'); R.ajustes[k] = { k: k, iso: x[0], turno: x[1] }; } }; });
     document.getElementById('rp-back').onclick = function () { R.propuesta = null; render(); };
     document.getElementById('rp-no').onclick = function () { S.reest = {}; render(); };
     document.getElementById('rp-ok').onclick = function () {
       var b = this; b.disabled = true; b.textContent = 'Aplicando…';
-      api({ action: 'reest_aplicar', id: P.id, lunes: d.semana, ajustes: Object.keys(R.ajustes).map(function (k) { return R.ajustes[k]; }) }).then(ok).then(function (r) {
+      api({ action: 'reest_aplicar', id: P.id, lunes: d.semana, ajustes: Object.keys(R.ajustes).map(function (k) { return R.ajustes[k]; }).concat(R.post != null ? [{ post: R.post }] : []) }).then(ok).then(function (r) {
         aplicarSemana(r.semana); S.reest = null; S.vista = 'semana'; render(); toast('Semana adaptada · ' + r.aplicado.nuevas + ' bloques');
       }).catch(falloApi(b));
     };
