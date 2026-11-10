@@ -712,7 +712,8 @@
       html += '<div class="hint">Adapta la semana a lo que te ha surgido. Primero ves la propuesta junto al plan original; nada se aplica sin tu OK y se puede deshacer.</div>' +
         [['Viaje', '✈️', 'Días fuera, qué material tienes y si puedes correr. Lo que no se pueda hacer se compensa en casa (máx. +40 %) o en el domingo.'],
          ['Reorganización', '🧩', 'Te quedan cosas sin hacer: marcas huecos y bloques pendientes y te monto una sesión clásica o un mega WOD.'],
-         ['Competi', '🏆', 'Online (grabación) o física: descanso, −50 % de volumen protegiendo lo que implica el WOD y compensación después.']].map(function (m) {
+         ['Competi', '🏆', 'Online (grabación) o física: descanso, −50 % de volumen protegiendo lo que implica el WOD y compensación después.'],
+         ['Trabajo metcon', '⚡', 'La semana no se toca: añade 1–3 metcons una mañana (fuerza, crossfit, core) con tu material, atacando lo que te falta del mes.']].map(function (m) {
           return '<button class="reest-card" type="button" data-rm="' + m[0] + '"><span class="rc-ico">' + m[1] + '</span><span><b>' + m[0] + '</b><span class="hint">' + m[2] + '</span></span></button>'; }).join('');
       html += '<div class="avf">' + bloqueDobles('re-dob', d.conf && d.conf['DOBLES (mañanas libres)']) + '</div>';
       if ((d.reest || []).length) html += '<h3 class="sec-t">Aplicadas esta semana</h3>' + d.reest.map(function (r) { return '<div class="xb reest"><div class="xb-h"><span class="tag">' + esc(r.modo) + '</span><b class="xb-t">' + esc(r.resumen) + '</b></div><button class="btn-ghost sm" type="button" data-rdes="' + esc(r.id) + '">Deshacer</button></div>'; }).join('');
@@ -770,6 +771,22 @@
         '<div class="two"><div><label for="ro-bx">Barra máx. (kg)</label><input id="ro-bx" inputmode="decimal" value="60"></div><div><label for="ro-dx">Mancuerna máx. (kg)</label><input id="ro-dx" inputmode="decimal" value="22.5"></div></div>' +
         '<label class="sh-b"><input type="checkbox" id="ro-chica"><span>Hay chica en la pareja / equipo</span></label><div class="three" id="ro-chw" hidden><input id="ro-cb" inputmode="decimal" placeholder="Barra ♀ kg"><input id="ro-cd" inputmode="decimal" placeholder="DB ♀ kg"><input id="ro-cs" inputmode="decimal" placeholder="Sandbag ♀ kg"></div>' +
         '<label class="sh-b"><input type="checkbox" id="ro-cash" checked><span>Cerrar con 15′ de erg Z2 si queda endurance pendiente</span></label></div>' +
+        '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
+    } else if (R.modo === 'Trabajo metcon') {
+      var tmM = leer('rte-mat-metcon') || { mat: ['box'], nada: false, chaleco: false, correr: true }, hoyI = d.hoy || hoyLocal();
+      var FMT = [['auto', 'Auto (según el foco)'], ['AMRAP', 'AMRAP'], ['EMOM', 'EMOM'], ['FOR_TIME', 'For time'], ['INTERVALOS', 'Intervalos ON/OFF'], ['EVERY', 'Every (potencia)'], ['VENTANAS', 'Heavy en ventanas'], ['CHIPPER', 'Chipper'], ['ESCALERA', 'Escalera 21-15-9']];
+      var ROLES = { 1: ['Completo'], 2: ['Fuerza', 'CrossFit'], 3: ['Fuerza', 'CrossFit', 'Core'] }, nTm = R.tmN || 1;
+      html += '<form id="rf" class="avf"><h3 class="sec-t">⚡ Trabajo metcon</h3><div class="hint">Mantiene exactamente la semana y lo ya programado. Solo añade metcons; los estímulos que cuentan son los que trabajan con volumen e intensidad de verdad.</div>' +
+        '<div class="two"><div><label for="tm-d">Día</label><select id="tm-d">' + d.dias.map(function (x) { return '<option value="' + x.iso + '"' + (x.iso === hoyI ? ' selected' : '') + '>' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
+        '<div><label>Turno</label>' + segHtml('tm-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div>' +
+        '<label>¿Cuántos metcons?</label>' + segHtml('tm-n', [['1', '1 · completo'], ['2', '2 · fuerza + crossfit'], ['3', '3 · + core']], String(nTm)) +
+        '<div id="tm-filas">' + [0, 1, 2].map(function (i) { return '<div class="two tm-f" data-tmf="' + i + '"' + (i >= nTm ? ' hidden' : '') + '><div><label>Metcon ' + (i + 1) + ' · <span data-tmr="' + i + '">' + (ROLES[nTm][i] || '') + '</span> · min</label><select data-tmmin="' + i + '">' +
+          [8, 10, 12, 15, 20, 25, 30].map(function (m) { return '<option' + (m === (i === 2 ? 10 : 15) ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select></div>' +
+          '<div><label>Tipo</label><select data-tmfmt="' + i + '">' + FMT.map(function (f) { return '<option value="' + f[0] + '">' + f[1] + '</option>'; }).join('') + '</select></div></div>'; }).join('') + '</div>' +
+        '<label class="sh-b"><input type="checkbox" id="tm-nada"' + (tmM.nada ? ' checked' : '') + '><span><b>No tengo material</b> · todo con peso corporal</span></label>' +
+        '<div id="tm-matw"' + (tmM.nada ? ' hidden' : '') + '><label>Material que tienes</label>' + chipsMat('tm-mat', MAT_VIAJE.concat([['ergos', 'Assault / ski / remo'], ['trineo', 'Trineo'], ['yugo', 'Yugo'], ['gusano2', 'Gusano']]).filter(function (m) { return m[0] !== 'chaleco'; }), tmM.mat) + '</div>' +
+        '<label class="sh-b"><input type="checkbox" id="tm-ch"' + (tmM.chaleco ? ' checked' : '') + '><span>Chaleco de peso</span></label>' +
+        '<label class="sh-b"><input type="checkbox" id="tm-run"' + (tmM.correr ? ' checked' : '') + '><span>Se puede correr</span></label>' +
         '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
     } else {
       html += '<form id="rf" class="avf"><h3 class="sec-t">🏆 Competi</h3>' + segHtml('rc-t', [['online', 'Online (1 día)'], ['fisica', 'Física']], R.ctipo || 'online') +
@@ -830,6 +847,19 @@
         p.destino = destino;
         if (p.tipo === 'B' || Object.keys(destino).some(function (k) { return destino[k] === 'mega'; })) p.mega = { formato: valSeg('ro-f') || 'solo', minutos: +val('ro-min') || 45, chaleco: +val('ro-ch') || 0, material: leerChips('ro-mat'), barraMax: +String(val('ro-bx')).replace(',', '.') || 60, dbMax: +String(val('ro-dx')).replace(',', '.') || 22.5,
           chica: document.getElementById('ro-chica').checked ? { barra: val('ro-cb'), db: val('ro-cd'), sandbag: val('ro-cs') } : null, cashout: document.getElementById('ro-cash').checked, deseo: val('ro-de') };
+        enviar(p);
+      };
+    } else if (R.modo === 'Trabajo metcon') {
+      var ROLES2 = { 1: ['Completo'], 2: ['Fuerza', 'CrossFit'], 3: ['Fuerza', 'CrossFit', 'Core'] };
+      enlazarSeg('tm-tu');
+      enlazarSeg('tm-n', function (v) { R.tmN = +v; $app.querySelectorAll('[data-tmf]').forEach(function (f) { f.hidden = +f.dataset.tmf >= +v; }); $app.querySelectorAll('[data-tmr]').forEach(function (r) { r.textContent = ROLES2[+v][+r.dataset.tmr] || ''; }); });
+      document.getElementById('tm-nada').onchange = function () { document.getElementById('tm-matw').hidden = this.checked; };
+      document.getElementById('rf').onsubmit = function (ev) {
+        ev.preventDefault();
+        var n = +(valSeg('tm-n') || 1), p = { iso: val('tm-d'), turno: valSeg('tm-tu') || 'AM', n: n, min: [], formato: [], nada: document.getElementById('tm-nada').checked, material: leerChips('tm-mat'), chaleco: document.getElementById('tm-ch').checked, correr: document.getElementById('tm-run').checked };
+        for (var i = 0; i < n; i++) { p.min.push(+$app.querySelector('[data-tmmin="' + i + '"]').value); p.formato.push($app.querySelector('[data-tmfmt="' + i + '"]').value); }
+        if (!p.nada && !p.material.length) { toast('Marca tu material o «No tengo material»'); return; }
+        guardar('rte-mat-metcon', { mat: p.material, nada: p.nada, chaleco: p.chaleco, correr: p.correr });
         enviar(p);
       };
     } else {
