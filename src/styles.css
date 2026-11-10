@@ -1061,3 +1061,9 @@ details.alt .exp-body{padding:0 10px 10px}
 .pv-dia{border-left:3px solid var(--line);padding:4px 0 4px 10px;margin:6px 0}
 .pv-dia .pr-row{display:flex;justify-content:space-between;gap:8px;font-size:13px}
 .row-sm{display:flex;align-items:center;gap:8px;margin-top:6px}
+
+/* v0.22 · lo que no es Fabrik en naranja · bloques cancelados plegados */
+.block.extra .b-title,.h-b.ex .h-ti{color:var(--accent)}
+.block.cancel{opacity:.7;border:1px dashed var(--line);border-radius:16px;padding:6px 14px;margin:10px 0}
+.block.cancel summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+.block.cancel .b-title{text-decoration:line-through}

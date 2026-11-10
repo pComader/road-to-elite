@@ -560,7 +560,7 @@
   /** Líneas que no son ejercicios (notas, referencias, «registra», por qué…): fuera de la imagen. */
   var NO_EJERCICIO = /^\s*(Registra|Dónde va|Referencia|Zona\b|⚙|REGLA|TÚ\b|Por qué|Cuándo|Ciencia|Atac|Plan de carrera|Va el|\(ajústala|★|↔|👥)/i;
   function bloquesCompartibles(x) {
-    return x.bloques.filter(function (b) { return !/NO HACER|OCULTO|PROPUESTA|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || '')); });
+    return x.bloques.filter(function (b) { return !/NO HACER|CANCELADO|OCULTO|PROPUESTA|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || '')); });
   }
   function ejerciciosDe(b, conPrep) {
     return (b.partes || []).filter(function (p) { return p.tipo !== 'adapt' && (conPrep || p.tipo !== 'prep'); }).map(function (p) {
@@ -741,7 +741,7 @@
         '<label class="sh-b"><input type="checkbox" id="rv-dom" checked><span>Si el domingo estoy en casa, meter ahí un día completo</span></label>' +
         '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
     } else if (R.modo === 'Reorganización') {
-      var bls = []; d.dias.forEach(function (x) { x.bloques.forEach(function (b) { if (!/NO HACER|OCULTO|PROPUESTA/.test(norm(b.estado || '')) && (b.idPlan || b.id)) bls.push({ x: x, b: b }); }); });
+      var bls = []; d.dias.forEach(function (x) { x.bloques.forEach(function (b) { if (!/NO HACER|CANCELADO|OCULTO|PROPUESTA/.test(norm(b.estado || '')) && (b.idPlan || b.id)) bls.push({ x: x, b: b }); }); });
       var hecho = function (b) { return (d.registro || []).some(function (r) { return r.ID_PLAN === (b.idPlan || b.id) && r.HECHO === 'Sí'; }); };
       var corre = function (b) { return norm(b.origen || '') === 'CARRERA' || /\b(W01|W02|W04|V01)\b/.test(b.codigos || ''); };
       var dobR = String(d.conf && d.conf['DOBLES (mañanas libres)'] || '');
@@ -1049,7 +1049,7 @@
   // =====================================================================
   //  v0.7 · HOJA DE LA SEMANA (bloques editables + posición óptima), REFUERZOS, WODS, AVISOS, RENDIMIENTO
   // =====================================================================
-  var EST_CORTO = { BORRADOR: 'borrador', PROGRAMADO: '', 'NO HACER': 'no hacer', PROPUESTA: 'propuesta', 'PROPUESTA · NO HACER': 'propuesta' };
+  var EST_CORTO = { BORRADOR: 'borrador', PROGRAMADO: '', 'NO HACER': 'no hacer', CANCELADO: 'cancelado', PROPUESTA: 'propuesta', 'PROPUESTA · NO HACER': 'propuesta' };
   function filaPlanDe(b) { return (S.data.plan || []).filter(function (r) { return r.ID === (b.extra ? b.id : b.idPlan); })[0] || null; }
   function renderHoja() {
     var d = S.data, sig = sumarDias(d.semana, 7), conf = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
@@ -1070,13 +1070,13 @@
         return '<div class="h-turno"><span class="h-t">' + (tu === 'AM' ? '☀️ AM' : '🌙 PM') + '</span>' + bl.map(function (b) {
           var est = norm(b.estado), gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
           var edit = b.extra || b.idPlan ? ' data-h-ed="' + i + '|' + esc(b.extra ? b.id : b.idPlan) + '"' : '';
-          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
+          return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' || est === 'CANCELADO' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
             '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + (b.clave ? '🎯 ' : '') + esc(b.titulo) + '</span>' + (/^manual/.test((filaPlanDe(b) || {}).GENERADO || '') ? '<span title="Con candado: «Rehacer extras» no lo mueve">🔒</span>' : '') + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
             (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(String(b.codigos).split('|')[0]) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
         }).join('') + '</div>';
       };
       return '<section class="h-dia' + (x.iso === d.hoy ? ' hoy' : '') + '"><div class="h-cab"><b>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</b>' + (x.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(x.rpe) + '">RPE ' + esc(x.rpe) + '</span>' : '') +
-        '<button type="button" class="btn-ghost sm" data-nuevo-bloque="' + x.iso + '">＋</button></div>' + (x.bloques.length ? t('AM') + t('PM') : '<div class="hint">Descanso</div>') + '</section>';
+        (x.bloques.length ? '<button type="button" class="btn-ghost sm" data-intercambio="' + x.iso + '" title="Cambiar la mañana, la tarde o el día entero">⇄</button>' : '') + '<button type="button" class="btn-ghost sm" data-nuevo-bloque="' + x.iso + '">＋</button></div>' + (x.bloques.length ? t('AM') + t('PM') : '<div class="hint">Descanso</div>') + '</section>';
     }).join('');
     html += htmlRefuerzos(d, d.semana, d.refuerzos, 'Esta semana') + htmlRefuerzos(d, sig, d.refuerzosSig, 'Semana que viene (' + fechaCorta(sig) + ')');
     $app.innerHTML = html;
@@ -1196,7 +1196,7 @@
     if (!b.extra || !esCarreraOErgo(b)) return '';
     var otros = [];
     S.data.dias.forEach(function (y) { y.bloques.forEach(function (z) {
-      if (z === b || !z.extra || z.id === idb || !esCarreraOErgo(z) || /NO HACER|OCULTO|SUSTITUIDO|SIN HUECO|PROPUESTA/.test(norm(z.estado || ''))) return;
+      if (z === b || !z.extra || z.id === idb || !esCarreraOErgo(z) || /NO HACER|CANCELADO|OCULTO|SUSTITUIDO|SIN HUECO|PROPUESTA/.test(norm(z.estado || ''))) return;
       otros.push('<button type="button" class="pos-op" data-swap="' + esc(z.id) + '"><b>⇄ ' + esc(NOMBRE_DIA[y.nombre] + ' ' + diaMes(y.iso) + ' · ' + z.turno) + '</b><span>' + esc(z.titulo) + (z.min ? ' · ' + esc(z.min) + '′' : '') + '</span><span class="go">Cambiar</span></button>');
     }); });
     if (!otros.length) return '';

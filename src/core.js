@@ -642,7 +642,7 @@
 
   /** Bloque de CARRERA (no ergómetro) que cuenta: sirve para marcar en azul los días en que corres. */
   function esBloqueCarrera(b) {
-    if (/NO HACER|OCULTO|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || ''))) return false;
+    if (/NO HACER|CANCELADO|OCULTO|SUSTITUIDO|SIN HUECO/.test(norm(b.estado || ''))) return false;
     var t = norm((b.titulo || '') + ' ' + (b.codigos || ''));
     if (/\b(ERG|ERGO|REMO|ROW|BIKE|BICI|SKI|ASSAULT|ECHO)\b/.test(norm(b.titulo || ''))) return false;
     return b.extra && (norm(b.origen) === 'CARRERA' || /\b(W01|W02|W04|R02|R03)\b/.test(t));
@@ -757,6 +757,13 @@
   }
 
   function bloque(b, x, d) {
+    if (norm(b.estado) === 'CANCELADO') {   // v0.22 · cancelado: plegado y reactivable
+      var idc = idPlanDe(x, b);
+      return '<details class="block cancel' + (b.extra ? ' extra' : '') + '"><summary><span class="b-num' + (b.extra ? ' ex' : '') + '">✕</span><span class="b-title">' + esc(b.titulo) + '</span><span class="tag">Cancelado</span></summary>' +
+        '<div class="exp-body"><div class="hint">No se hace y no cuenta para las metas. No está en pendientes.</div>' +
+        b.partes.filter(function (p) { return p.tipo === 'main'; }).map(function (p) { return '<div class="board small">' + esc((p.etiqueta ? p.etiqueta + '\n' : '') + p.texto) + '</div>'; }).join('') +
+        '<div class="b-acc"><button type="button" class="btn sm" data-reactivar="' + esc(idc) + '">↺ Reactivar</button></div></div></details>';
+    }
     var todo = b.partes.map(function (p) { return p.etiqueta + '\n' + p.texto; }).join('\n');
     var mk = marcasKilos();
     var ctxB = { bloque: movimientoEn(b.titulo, mk), desdePower: /DEL POWER SNATCH/.test(norm(todo)), baseBloque: baseDeParte(todo, mk) };
@@ -802,7 +809,7 @@
       gr.reels.map(function (r) { return '<div class="grab-i"><b>📷 Reel · ' + esc(r.idea) + '</b>' + (r.formato ? '<span class="hint">' + esc(r.formato) + '</span>' : '') + (r.hook ? '<span class="hint">Hook: ' + esc(r.hook) + '</span>' : '') + '<span>Ángulo: ' + esc(r.angulo) + '</span></div>'; }).join('') +
       (gr.story ? '<div class="grab-i"><b>' + esc(gr.story.tipo) + '</b><span>Ángulo: ' + esc(gr.story.angulo) + '</span><span>' + esc(gr.story.materiales) + '</span></div>' : '') + '</div></details>' : '';
     var accMet = esMetcon(b) && !b.extra ? '<div class="b-acc"><button type="button" class="btn-ghost sm" data-guardar-wod="' + esc(JSON.stringify({ iso: x.iso, n: b.n })) + '">☆ Guardar WOD</button></div>' : '';
-    var idMov = b.extra ? b.id : b.idPlan, puedeMover = idMov && !/^PROPUESTA/.test(est) && !/NO HACER|OCULTO/.test(est);
+    var idMov = b.extra ? b.id : b.idPlan, puedeMover = idMov && !/^PROPUESTA/.test(est) && !/NO HACER|CANCELADO|OCULTO/.test(est);
     var botonMover = puedeMover ? '<button type="button" class="btn-ghost sm" data-mover="' + esc(S.dia + '|' + idMov) + '">↔ Mover' + (b.extra && esBloqueCarrera(b) || /W03/.test(b.codigos || '') ? ' / intercambiar' : '') + '</button>' : '';
     var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
       '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : (botonMover ? '<div class="b-acc">' + botonMover + '</div>' : '');
@@ -823,7 +830,7 @@
   // ---------- rendimiento y mejora: mis notas + recomendación (editable, con «Restaurar») ----------
   function notaBloqueDe(d, iso, id) { return (d.notasBloque || []).filter(function (n) { return aIso(n.FECHA) === iso && n.ID_PLAN === id; })[0] || null; }
   function htmlRendimiento(d, x, b) {
-    if (/NO HACER/.test(norm(b.estado))) return '';
+    if (/NO HACER|CANCELADO/.test(norm(b.estado))) return '';
     var id = idPlanDe(x, b), n = notaBloqueDe(d, x.iso, id), auto = recomendar(b, x), rec = n && n['RECOMENDACIÓN'] ? n['RECOMENDACIÓN'] : auto;
     var ref = esc(JSON.stringify({ iso: x.iso, id: id, bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo }));
     return '<details class="rend"><summary>Rendimiento y mejora' + (n && n['MIS NOTAS'] ? ' · <span class="hint">con notas</span>' : '') + '</summary><div class="exp-body">' +
@@ -883,7 +890,7 @@
       (r.RPE ? '<span class="vb-v" style="--c:' + rpeColor(String(r.RPE)) + '">RPE ' + esc(r.RPE) + '</span>' : '') : '<span class="hint">Sin registrar</span>';
     var dato = esc(JSON.stringify({ iso: x.iso, id: idPlanDe(x, b), bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo, run: esCarrera(b), tipo: tipoCarrera(b.titulo + ' ' + (b.intensidad || '') + ' ' + (b.origen || '')) }));
     var cr = carreraDe(x.iso, idPlanDe(x, b));
-    var off = /NO HACER|PROPUESTA/.test(norm(b.estado));
+    var off = /NO HACER|CANCELADO|PROPUESTA/.test(norm(b.estado));
     var nh = esc(JSON.stringify({ id: idPlanDe(x, b), fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }));
     if (cr) est += '<span class="vb-v run">🏃 ' + esc(cr['DISTANCIA (km)'] || '') + (cr['DISTANCIA (km)'] ? ' km' : '') + (cr['RITMO MEDIO (/km)'] ? ' · ' + esc(cr['RITMO MEDIO (/km)']) + '/km' : '') + (cr['FC MEDIA'] ? ' · ' + esc(cr['FC MEDIA']) + ' ppm' : '') + '</span>';
     var rapido = !r && !off && x.iso <= d.hoy ? '<button type="button" class="btn-ghost sm ok1" data-hecho="' + dato + '" aria-label="Marcar como hecho tal cual">✔ Hecho</button>' : '';
@@ -1175,15 +1182,40 @@
 
   function abrirNoHacer(o) {
     abrirHoja('<div class="row"><h2>No hacer</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
-      '<div class="hint">' + esc(o.titulo) + ' · ' + fechaCorta(o.fecha) + '. Pasa a <b>pendientes</b> y se te propondrá reincorporarlo al programar la semana siguiente.</div>' +
-      '<form id="nhf" class="avf"><label for="nh-m">Motivo</label><input id="nh-m" maxlength="300" placeholder="Ej. fatiga lumbar, viaje, falta de tiempo">' +
-      '<button class="btn btn-primary" type="submit" id="nh-ok">Marcar como no hacer</button></form>');
-    document.getElementById('nhf').onsubmit = function (ev) {
-      ev.preventDefault();
-      var b = document.getElementById('nh-ok'); b.disabled = true;
-      api(Object.assign({ action: 'no_hacer', ver: S.data.semana, motivo: val('nh-m') }, o)).then(ok)
-        .then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast('Marcado. Lo tienes en pendientes.'); }).catch(falloApi(b));
+      '<div class="hint">' + esc(o.titulo) + ' · ' + fechaCorta(o.fecha) + '</div>' +
+      '<form id="nhf" class="avf"><label for="nh-m">Motivo (opcional)</label><input id="nh-m" maxlength="300" placeholder="Ej. fatiga lumbar, viaje, falta de tiempo">' +
+      '<div class="two-btn"><button class="btn" type="button" id="nh-can">✕ No hacer · cancelar</button><button class="btn btn-primary" type="button" id="nh-ok">→ A pendientes</button></div>' +
+      '<div class="hint"><b>Cancelar</b>: no se hace, no va a pendientes y queda plegado; lo puedes reactivar. <b>A pendientes</b>: se te propondrá reincorporarlo al programar la semana siguiente.</div></form>');
+    var enviar = function (b, cancelar) {
+      b.disabled = true;
+      api(Object.assign({ action: cancelar ? 'cancelar' : 'no_hacer', ver: S.data.semana, motivo: val('nh-m') }, o)).then(ok)
+        .then(function (res) { aplicarSemana(res.semana); cerrarHoja(); render(); toast(cancelar ? 'Cancelado. Lo puedes reactivar desde el bloque.' : 'Marcado. Lo tienes en pendientes.'); }).catch(falloApi(b));
     };
+    document.getElementById('nh-can').onclick = function () { enviar(this, true); };
+    document.getElementById('nh-ok').onclick = function () { enviar(this, false); };
+    document.getElementById('nhf').onsubmit = function (ev) { ev.preventDefault(); };
+  }
+  /** v0.22 · Intercambiar una sesión entera (mañana, tarde) o el día entero con otro día. */
+  function abrirIntercambio(iso) {
+    var lunes = S.data.semana, q = { que: 'AM', dia: null, tu: 'AM' };
+    var isos = [0, 1, 2, 3, 4, 5, 6].map(function (k) { return sumarDias(lunes, k); });
+    var pinta = function () {
+      abrirHoja('<div class="row"><h2>⇄ Cambiar sesión · ' + fechaCorta(iso) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+        '<label>¿Qué cambias?</label><div class="seg">' + [['AM', '☀️ Mañana'], ['PM', '🌙 Tarde'], ['DIA', 'Día entero']].map(function (o) { return '<button type="button" data-iq="' + o[0] + '" aria-pressed="' + (q.que === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
+        '<label>¿Por cuál?</label><div class="dchips">' + isos.map(function (x) { return '<button type="button" data-id="' + x + '" aria-pressed="' + (q.dia === x) + '"' + (x === iso && q.que === 'DIA' ? ' disabled' : '') + '>' + diaCortoIso(x) + ' ' + diaMes(x) + '</button>'; }).join('') + '</div>' +
+        (q.que !== 'DIA' ? '<div class="seg">' + [['AM', 'Su mañana'], ['PM', 'Su tarde']].map(function (o) { return '<button type="button" data-it="' + o[0] + '" aria-pressed="' + (q.tu === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' : '') +
+        '<div class="hint">Todos los bloques pasan de un sitio al otro (Fabrik y extras). Lo tuyo queda con 🔒 candado. Bloque a bloque sigue en «↔ Mover».</div>' +
+        '<button class="btn btn-primary" type="button" id="iq-ok"' + (q.dia ? '' : ' disabled') + '>Intercambiar</button>');
+      $scrim.querySelectorAll('[data-iq]').forEach(function (b) { b.onclick = function () { q.que = b.dataset.iq; if (q.que !== 'DIA') q.tu = q.que === 'AM' ? 'AM' : 'PM'; pinta(); }; });
+      $scrim.querySelectorAll('[data-id]').forEach(function (b) { b.onclick = function () { q.dia = b.dataset.id; pinta(); }; });
+      $scrim.querySelectorAll('[data-it]').forEach(function (b) { b.onclick = function () { q.tu = b.dataset.it; pinta(); }; });
+      document.getElementById('iq-ok').onclick = function () {
+        var b = this; b.disabled = true; b.textContent = 'Intercambiando…';
+        api({ action: 'intercambiar_sesion', a: iso + '|' + q.que, b: q.dia + '|' + (q.que === 'DIA' ? 'DIA' : q.tu), ver: S.data.semana }).then(ok)
+          .then(function (r) { aplicarSemana(r.semana); cerrarHoja(); render(); toast(r.movidos + ' bloques intercambiados'); }).catch(falloApi(b));
+      };
+    };
+    pinta();
   }
 
   // ---------- versiones especiales (p. ej. pestaña "26/10/2026 BADAJOZ") ----------
@@ -1882,6 +1914,8 @@
       return;
     }
     if ((b = t.closest('[data-nohacer]'))) { abrirNoHacer(JSON.parse(b.dataset.nohacer)); return; }
+    if ((b = t.closest('[data-reactivar]'))) { b.disabled = true; api({ action: 'reactivar', id: b.dataset.reactivar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Reactivado'); }).catch(falloApi(b)); return; }
+    if ((b = t.closest('[data-intercambio]'))) { abrirIntercambio(b.dataset.intercambio); return; }
     if ((b = t.closest('[data-dch]'))) { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); return; }
     if ((b = t.closest('[data-surge]'))) { abrirSurge(b.dataset.surge); return; }
     if ((b = t.closest('[data-confirmar]'))) { abrirConfirmar(b.dataset.confirmar); return; }
@@ -1953,7 +1987,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.20';
+  var WEB_VERSION = 'web 0.21';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
