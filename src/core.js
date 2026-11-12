@@ -811,7 +811,8 @@
     var accMet = esMetcon(b) && !b.extra ? '<div class="b-acc"><button type="button" class="btn-ghost sm" data-guardar-wod="' + esc(JSON.stringify({ iso: x.iso, n: b.n })) + '">☆ Guardar WOD</button></div>' : '';
     var idMov = b.extra ? b.id : b.idPlan, puedeMover = idMov && !/^PROPUESTA/.test(est) && !/NO HACER|CANCELADO|OCULTO/.test(est);
     var botonMover = puedeMover ? '<button type="button" class="btn-ghost sm" data-mover="' + esc(S.dia + '|' + idMov) + '">↔ Mover' + (b.extra && esBloqueCarrera(b) || /W03/.test(b.codigos || '') ? ' / intercambiar' : '') + '</button>' : '';
-    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (norm(b.origen) === 'FUSION' ? '<button type="button" class="btn-ghost sm" data-desfusionar="' + esc(b.id) + '">↶ Deshacer fusión</button>' : '') + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
+    var puedeCambiar = b.extra && /^(BORRADOR|PROGRAMADO)$/.test(est) && !/FUSION|CARRERA|COMPETI/.test(norm(b.origen || '')) && !esBloqueCarrera(b);
+    var accExtra = b.extra && !/^PROPUESTA/.test(est) ? '<div class="b-acc">' + botonMover + (puedeCambiar ? '<button type="button" class="btn-ghost sm" data-cambiar-est="' + esc(b.id) + '">⇄ Estímulo</button>' : '') + (norm(b.origen) === 'FUSION' ? '<button type="button" class="btn-ghost sm" data-desfusionar="' + esc(b.id) + '">↶ Deshacer fusión</button>' : '') + (est === 'BORRADOR' ? '<button type="button" class="btn-ghost sm" data-borrar-bloque="' + esc(b.id) + '">Quitar borrador</button>' : '') +
       '<button type="button" class="btn-ghost sm" data-plantilla="' + esc(b.id) + '">☆ Guardar como plantilla</button></div>' : (botonMover ? '<div class="b-acc">' + botonMover + '</div>' : '');
     var sci = (b.porque || b.ciencia || b.interf) ? '<details class="sci"><summary>Por qué aquí · ciencia · interferencias</summary><div class="exp-body">' +
       (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
@@ -1195,6 +1196,26 @@
     document.getElementById('nh-ok').onclick = function () { enviar(this, false); };
     document.getElementById('nhf').onsubmit = function (ev) { ev.preventDefault(); };
   }
+  /** v0.24 · Cambiar el estímulo de un extra por otro del catálogo: buscador con la misma familia primero (★) y lo que falta en semana/mes. */
+  function abrirCambiarEstimulo(id) {
+    var tit = '<div class="row"><h2>⇄ Cambiar estímulo</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>';
+    abrirHoja(tit + '<div class="hint">Cargando el catálogo…</div>');
+    api({ action: 'estimulos_lista', id: id, lunes: S.data.semana }).then(ok).then(function (r) {
+      var L = r.lista, q = '';
+      var pinta = function () {
+        var nq = norm(q), V = L.filter(function (x) { return !nq || norm(x.c + ' ' + x.nombre + ' ' + x.familia).indexOf(nq) >= 0; });
+        document.getElementById('ce-l').innerHTML = V.slice(0, 80).map(function (x) {
+          return '<button type="button" class="ce-i' + (x.mismaFamilia ? ' fam' : '') + '" data-ce="' + esc(x.c) + '"><b>' + (x.mismaFamilia ? '★ ' : '') + esc(x.c + ' · ' + x.nombre) + '</b><span>' + esc([x.familia, x.ambito, x.min ? x.min + '′' : '', x.falta > 0 ? 'faltan ' + x.falta : 'cubierto'].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') || '<div class="empty">Nada con ese texto.</div>';
+        $scrim.querySelectorAll('[data-ce]').forEach(function (b) { b.onclick = function () {
+          b.disabled = true;
+          api({ action: 'cambiar_estimulo', id: id, codigo: b.dataset.ce, ver: S.data.semana }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast('Cambiado a ' + b.dataset.ce + ': cuenta en semana y mes'); }).catch(falloApi(b));
+        }; });
+      };
+      abrirHoja(tit + '<input id="ce-q" placeholder="Buscar estímulo (nombre, código, familia)…" autocomplete="off"><div class="hint">★ = misma familia. Mensuales = dosis ligera; semanales = dosis completa. El elegido cuenta para la semana y el mes.</div><div id="ce-l" class="ce-l"></div>');
+      document.getElementById('ce-q').oninput = function () { q = this.value; pinta(); };
+      pinta();
+    }).catch(function (e) { abrirHoja(tit + '<div class="pos-act warn"><b>No se pudo cargar</b><span>' + esc(mensajeError(e.message)) + '</span></div>'); });
+  }
   /** v0.22 · Intercambiar una sesión entera (mañana, tarde) o el día entero con otro día. */
   function abrirIntercambio(iso) {
     var lunes = S.data.semana, q = { que: 'AM', dia: null, tu: 'AM' };
@@ -1286,7 +1307,7 @@
   }
   function urlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
   function mensajeError(m) {
-    return { falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
+    return { fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
       marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
@@ -1917,6 +1938,7 @@
     if ((b = t.closest('[data-nohacer]'))) { abrirNoHacer(JSON.parse(b.dataset.nohacer)); return; }
     if ((b = t.closest('[data-reactivar]'))) { b.disabled = true; api({ action: 'reactivar', id: b.dataset.reactivar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Reactivado'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-intercambio]'))) { abrirIntercambio(b.dataset.intercambio); return; }
+    if ((b = t.closest('[data-cambiar-est]'))) { abrirCambiarEstimulo(b.dataset.cambiarEst); return; }
     if ((b = t.closest('[data-desfusionar]'))) { if (!confirmar(b, '¿Deshacer?')) return; b.disabled = true; api({ action: 'desfusionar', id: b.dataset.desfusionar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Fusión deshecha: vuelven los bloques originales'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-dch]'))) { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); return; }
     if ((b = t.closest('[data-surge]'))) { abrirSurge(b.dataset.surge); return; }
@@ -1989,7 +2011,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.22';
+  var WEB_VERSION = 'web 0.23';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

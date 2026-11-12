@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.23.0',
+  VERSION: '0.24.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -106,6 +106,8 @@ function accion_(a, body, user) {
       case 'fusion_previa': return json_({ ok: true, fusion: fusionarBloques_(body.ids, { simular: true }) });
       case 'fusionar':   var fr = fusionarBloques_(body.ids); refrescarHojaSemana_(lunesDe_(celdaIso_(fr.bloque.FECHA))); return json_({ ok: true, fusion: fr, semana: semanaCompleta_(body.ver) });
       case 'desfusionar': desfusionar_(body.id); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
+      case 'estimulos_lista': var lis = estimulosLista_(lunesDe_(body.lunes || hoyIso_())), rb = body.id ? listar_(HOJAS.PLAN).filter(function (x) { return x.ID === String(body.id); })[0] : null; return json_({ ok: true, lista: rb ? candidatosCambio_(rb, lis) : lis });
+      case 'cambiar_estimulo': var ce = cambiarEstimulo_(body.id, body.codigo); refrescarHojaSemana_(lunesDe_(body.ver || hoyIso_())); return json_({ ok: true, cambio: ce, semana: semanaCompleta_(body.ver) });
       case 'intercambiar_sesion': var nis = intercambiarSesion_(body.a, body.b); refrescarHojaSemana_(lunesDe_(String(body.a).split('|')[0])); return json_({ ok: true, movidos: nis, semana: semanaCompleta_(body.ver) });
       // --- v0.5: metas editables, registro de carrera y análisis ---
       case 'metas':      return json_({ ok: true, metas: metasDe_(body.fecha), lista: listar_(HOJAS.METAS) });
@@ -1036,8 +1038,8 @@ function pintarHojaSemana_(lunes) {
   try { clave = claveSemana_(lunes, plan); } catch (e) {}
   var filas = [], estilos = [], claves = [], sesiones = [], tuyos = [], cancel = [];   // estilos: [fila, tipo]
   filas.push(['SEMANA EN BLOQUES · Fabrik + extras + carrera', '', '', '', '', '', '', '', '', '', '', '']);
-  filas.push(['Lunes de la semana →', isoAFecha(lunes), '↻ Actualizar', false, 'Cambia la fecha o marca la casilla para recargar. Edita BLOQUE, EJERCICIOS o MIN y se guarda en el plan (lo que ves en la app). Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON». En la fila de cada sesión (☀️ AM / 🌙 PM), «INTERCAMBIAR CON» cambia la sesión entera o el día entero por los de otro día. En ESTADO: CANCELADO = no se hace (no va a pendientes; vuelve con PROGRAMADO), A PENDIENTES = para la semana siguiente. En naranja, lo que no es Fabrik. 🎯 = clave para tus carencias.', '', '', '', '', '', '', '']);
-  filas.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+  filas.push(['Lunes de la semana →', isoAFecha(lunes), '↻ Actualizar', false, '✓ PROGRAMAR TODA LA SEMANA →', false, '', '', '', '', '', '']);
+  filas.push(['Cambia la fecha o marca la casilla para recargar. Edita BLOQUE, EJERCICIOS o MIN y se guarda en el plan (lo que ves en la app). Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON». En la fila de cada sesión (☀️ AM / 🌙 PM), «INTERCAMBIAR CON» cambia la sesión entera o el día entero por los de otro día. En ESTADO: CANCELADO = no se hace (no va a pendientes; vuelve con PROGRAMADO), A PENDIENTES = para la semana siguiente. En naranja, lo que no es Fabrik. 🎯 = clave para tus carencias. ✓ PROGRAMAR: en la fila de cada sesión, columna ESTADO → sesión o día entero; arriba, toda la semana. ⇄ CÓDIGOS (extras): cambia el estímulo por otro del catálogo (primero la misma familia). 🔗 INTERCAMBIAR CON → «🔗 Fusionar con…» une dos bloques; en el fusionado, ESTADO → ↶ DESHACER FUSIÓN.', '', '', '', '', '', '', '', '', '', '', '']);
   filas.push(['DÍA · TURNO', 'Nº', 'BLOQUE', 'EJERCICIOS (editable)', 'TIPO', 'MIN', 'CÓDIGOS', 'ESTADO', 'MOVER A', 'INTERCAMBIAR CON', 'POR QUÉ', 'ID']);
   estilos.push([4, 'cab']);
   for (var k = 0; k < 7; k++) {
@@ -1065,7 +1067,7 @@ function pintarHojaSemana_(lunes) {
   sh.getRange(1, 1, filas.length, 12).setValues(filas.map(function (r) { return r.map(celdaSegura_); }));
   sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
   sh.getRange(2, 2).setNumberFormat('dd/mm/yyyy').setBackground('#fff7e0');
-  sh.getRange(2, 4).insertCheckboxes();
+  sh.getRange(2, 4).insertCheckboxes(); sh.getRange(2, 6).insertCheckboxes(); sh.getRange(2, 5).setFontWeight('bold').setHorizontalAlignment('right'); sh.getRange(3, 1).setFontColor('#666666').setWrap(false);
   sh.getRange(2, 5).setFontStyle('italic').setFontColor('#666666');
   sh.setFrozenRows(4);
   [130, 44, 240, 380, 150, 50, 120, 100, 110, 260, 300, 80].forEach(function (w, j) { sh.setColumnWidth(j + 1, w); });
@@ -1087,8 +1089,23 @@ function pintarHojaSemana_(lunes) {
     var vMover = SpreadsheetApp.newDataValidation().requireValueInList(HUECOS_, true).setAllowInvalid(false).build();
     var vSwap = opcionesSwap.length ? SpreadsheetApp.newDataValidation().requireValueInList(opcionesSwap.slice(0, 450), true).setAllowInvalid(false).build() : null;
     var vEst = SpreadsheetApp.newDataValidation().requireValueInList(['PROGRAMADO', 'BORRADOR', 'CANCELADO', 'A PENDIENTES'], true).setAllowInvalid(true).build();
-    filasBloque.forEach(function (f) { sh.getRange(f, 9).setDataValidation(vMover); if (vSwap) sh.getRange(f, 10).setDataValidation(vSwap); sh.getRange(f, 8).setDataValidation(vEst); });
+    var opFus = opcionesSwap.map(function (x) { return '🔗 Fusionar con: ' + x; });
+    var vSwap2 = opcionesSwap.length ? SpreadsheetApp.newDataValidation().requireValueInList(opcionesSwap.concat(opFus).slice(0, 480), true).setAllowInvalid(false).build() : null;
+    var vEstF = SpreadsheetApp.newDataValidation().requireValueInList(['PROGRAMADO', 'BORRADOR', 'CANCELADO', 'A PENDIENTES', '↶ DESHACER FUSIÓN'], true).setAllowInvalid(true).build();
+    var listaE = null; try { listaE = estimulosLista_(lunes); } catch (e) {}
+    var porId = {}; plan.forEach(function (r) { porId[r.ID] = r; });
+    filasBloque.forEach(function (f) {
+      var r = porId[filas[f - 1][11]] || {};
+      sh.getRange(f, 9).setDataValidation(vMover); if (vSwap2) sh.getRange(f, 10).setDataValidation(vSwap2);
+      sh.getRange(f, 8).setDataValidation(norm(r.ORIGEN) === 'FUSION' ? vEstF : vEst);
+      if (listaE && r.ID && norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'FUSION' && !/CARRERA/.test(norm(r.ORIGEN)) && /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO)) {   // v0.24 · cambiar el estímulo (misma familia primero)
+        var ops = candidatosCambio_(r, listaE).filter(function (x) { return codigosDe_(r['CÓDIGOS']).indexOf(x.c) < 0; }).slice(0, 60).map(function (x) { return '⇄ ' + x.c + ' · ' + String(x.nombre).slice(0, 40) + (x.mismaFamilia ? ' ★' : '') + (x.falta > 0 ? ' · faltan ' + x.falta : ''); });
+        if (ops.length) sh.getRange(f, 7).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ops, true).setAllowInvalid(true).build());
+      }
+    });
   }
+  var vProg = SpreadsheetApp.newDataValidation().requireValueInList(['✓ PROGRAMAR SESIÓN', '✓ PROGRAMAR DÍA'], true).setAllowInvalid(true).build();
+  sesiones.forEach(function (f) { sh.getRange(f, 8).setDataValidation(vProg).setBackground('#ffffff'); });
   // v0.22 · cambiar sesiones enteras: en la fila de cada sesión, «INTERCAMBIAR CON» → otra sesión o el día entero
   var opSes = []; DIAS_CORTO_.forEach(function (dc) { opSes.push('⇄ ' + dc + ' AM'); opSes.push('⇄ ' + dc + ' PM'); opSes.push('⇄ ' + dc + ' · día entero'); });
   var vSes = SpreadsheetApp.newDataValidation().requireValueInList(opSes, true).setAllowInvalid(false).build();
@@ -1122,9 +1139,11 @@ function alEditarHoja(e) {
     var f = e.range.getRow(), c = e.range.getColumn(), v = e.range.getValue();
     var lunes = celdaIso_(sh.getRange(2, 2).getValue()) || hoyIso_();
     if (f === 2 && (c === 2 || c === 4)) { pintarHojaSemana_(lunes); return; }
+    if (f === 2 && c === 6 && v === true) { var np = programarRango_(lunesDe_(lunes)); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(np + ' bloques pasan a PROGRAMADO (toda la semana)', 'Road To Elite', 4); return; }
     if (f < 5) return;
     var id = String(sh.getRange(f, 12).getValue() || '').trim(); if (!id) return;
     if (/^SES\|/.test(id)) {   // v0.22 · sesión o día entero
+      if (c === 8 && /PROGRAMAR/.test(String(v))) { var pz = id.split('|'), nz = programarRango_(lunesDe_(lunes), pz[1], /DÍA/.test(String(v)) ? '' : pz[2]); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(nz + ' bloques pasan a PROGRAMADO', 'Road To Elite', 4); return; }
       if (c !== 10 || !v) return;
       var ps = id.split('|'), m2 = String(v).match(/⇄\s*(\S+)\s*(AM|PM|· día entero)/); if (!m2) return;
       var kd = DIAS_CORTO_.indexOf(m2[1]); if (kd < 0) return;
@@ -1134,6 +1153,17 @@ function alEditarHoja(e) {
       MEMO = null; pintarHojaSemana_(lunes);
       SpreadsheetApp.getActive().toast(nm + ' bloques movidos (' + (dia ? 'día entero' : 'sesión') + ')', 'Road To Elite', 4); return;
     }
+    if (c === 7 && /^⇄\s*([A-Z][0-9]{2,3})/.test(String(v))) {   // v0.24 · cambiar estímulo
+      var cn = String(v).match(/^⇄\s*([A-Z][0-9]{2,3})/)[1]; cambiarEstimulo_(id, cn); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estímulo cambiado a ' + cn + ' (cuenta en semana y mes)', 'Road To Elite', 4); return;
+    }
+    if (c === 10 && /^🔗/.test(String(v))) {   // v0.24 · fusionar desde el Sheet
+      var otro = (String(v).match(/#(\S+)\s*$/) || [])[1]; if (!otro) return;
+      SpreadsheetApp.getActive().toast('Fusionando…', 'Road To Elite', 3);
+      try { var fz = fusionarBloques_([id, otro]); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Fusionado en «' + fz.bloque['TÍTULO'] + '» (' + fz.bloque.MIN + '′). ' + (fz.avisos[0] || '') + ' Para deshacer: ESTADO → ↶ DESHACER FUSIÓN.', 'Road To Elite', 8); }
+      catch (e2) { MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('No se puede fusionar: ' + e2.message, 'Road To Elite', 6); }
+      return;
+    }
+    if (c === 8 && /DESHACER FUSI/.test(String(v))) { desfusionar_(id); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Fusión deshecha', 'Road To Elite', 4); return; }
     if (c === 8) {   // v0.22 · estado desde el Sheet
       var ev = String(v || '').trim(), xr = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0]; if (!xr) return;
       if (ev === 'CANCELADO') noHacer_({ id: id, fecha: celdaIso_(xr.FECHA), cancelar: true, motivo: 'Cancelado desde el Sheet' });
@@ -1561,6 +1591,64 @@ function desfusionar_(id) {
   borrarFila_(HOJAS.PLAN, f._fila, { ID: f.ID });
 }
 
+// ===================== v0.24 · CAMBIAR EL ESTÍMULO DE UN BORRADOR =====================
+/** Lista de estímulos del catálogo con su familia (prioridad de la meta), carga, ámbito y lo que falta esta semana / este mes. */
+function estimulosLista_(lunes) {
+  var cat = catalogo_(), cache = cacheMetas_(), sem = avanceMetas_('Semana', periodoSemana_(lunes), cache), mes = avanceMetas_('Mes', periodoMes_(lunes), cache);
+  var por = {}; sem.concat(mes).forEach(function (x) { codigosDe_(x.codigos).forEach(function (c) { (por[c] = por[c] || []).push(x); }); });
+  return Object.keys(cat).filter(function (c) { return cat[c].CONTENIDO; }).map(function (c) {
+    var r = cat[c], ms = por[c] || [], m = ms[0] || {};
+    var falta = ms.reduce(function (a, x) { return Math.max(a, (x.meta || 0) - (x.programado || 0)); }, 0);
+    return { c: c, nombre: r.NOMBRE, familia: m.prioridad || r.ORIGEN || '', carga: String(r.CARGA || ''), min: +r.MIN || 0, ambito: ms.map(function (x) { return x.programado != null && cache.metas.filter(function (q) { return q.ID === x.id; })[0] ? cache.metas.filter(function (q) { return q.ID === x.id; })[0]['ÁMBITO'] : ''; }).filter(Boolean).join('/'), falta: Math.round(falta * 10) / 10, intensidad: r.INTENSIDAD || '' };
+  }).sort(function (a, b) { return a.c < b.c ? -1 : 1; });
+}
+/** Familia de un bloque: la de sus códigos (prioridad de la meta) o, si no, su carga. */
+function familiaDe_(codigos, lista) { var cs = codigosDe_(codigos); var e = lista.filter(function (x) { return cs.indexOf(x.c) >= 0; })[0]; return e ? e.familia : ''; }
+/** Ordena el catálogo para cambiar un bloque: misma familia, luego misma carga, luego lo que más falta. */
+function candidatosCambio_(r, lista) {
+  var fam = familiaDe_(r['CÓDIGOS'], lista), car = String(r.CARGA || '') || (lista.filter(function (x) { return codigosDe_(r['CÓDIGOS']).indexOf(x.c) >= 0; })[0] || {}).carga || '';
+  var VAC = /^(P[0-9]+|CALIDAD|FATIGA|EN|DE|Y|ESPECIFICA|INTEGRACION|ACCESORIOS|COMPETICION)$/;
+  var gr = function (f) { return norm(String(f)).split(/[^A-Z0-9]+/).filter(function (w) { return w.length > 2 && !VAC.test(w); }); };
+  return lista.map(function (x) { var gf = gr(fam), p = (x.familia && x.familia === fam ? 100 : gr(x.familia).some(function (w) { return gf.indexOf(w) >= 0; }) ? 60 : 0) + (car && x.carga && norm(x.carga).split(/[ ,]+/).some(function (k) { return k && norm(car).indexOf(k) >= 0; }) ? 20 : 0) + Math.min(10, x.falta * 5);
+    return Object.assign({ puntos: p, mismaFamilia: p >= 60 }, x); }).sort(function (a, b) { return b.puntos - a.puntos || (a.c < b.c ? -1 : 1); });
+}
+/** Dosis según el ámbito: semanal = completa; mensual = pequeña dosis ligera (≤12′, RPE ≤7, sin fatiga del SNC). */
+function dosisPorAmbito_(o, ambito) {
+  if (/CARRERA/.test(norm(o.ORIGEN)) || /^R0|^W0[1-4]|^V01/.test(o['CÓDIGOS'] || '')) return o;
+  if (ambito === 'Mes') {
+    o.MIN = String(Math.min(parseFloat(o.MIN) || 10, 12));
+    if (!/DOSIS MENSUAL/.test(o.CONTENIDO || '')) o.CONTENIDO = 'DOSIS MENSUAL LIGERA · 2–3 series de calidad, RPE ≤7, sin fallo ni fatiga del sistema nervioso. Si lo de abajo pide más, quédate en la mitad.\n\n' + (o.CONTENIDO || '');
+    if (!/Técnico|Calidad|Ligero|Suave/.test(o.INTENSIDAD || '')) o.INTENSIDAD = '🟢 Ligero';
+  } else if (ambito === 'Semana') {
+    if (!/ESTÍMULO SEMANAL/.test(o.CONTENIDO || '')) o.CONTENIDO = 'ESTÍMULO SEMANAL · dosis completa: todas las series, calidad máxima y descansos completos.\n\n' + (o.CONTENIDO || '');
+  }
+  return o;
+}
+function ambitoDeCodigo_(c) { var ms = cacheMetas_().metas.filter(function (m) { return m.ACTIVA !== 'No' && codigosDe_(m['CÓDIGOS']).indexOf(c) >= 0; }); return ms.some(function (m) { return m['ÁMBITO'] === 'Semana'; }) ? 'Semana' : ms.length ? 'Mes' : ''; }
+/** Cambia un bloque extra (borrador o programado, no Fabrik) por otro estímulo del catálogo. Cuenta el nuevo código en semana y mes. */
+function cambiarEstimulo_(id, codigo) {
+  codigo = String(codigo || '').trim().toUpperCase();
+  var cat = catalogo_(), e = cat[codigo]; if (!e || !e.CONTENIDO) throw new Error('estimulo_no_encontrado');
+  var r = listar_(HOJAS.PLAN).filter(function (x) { return x.ID === String(id || ''); })[0];
+  if (!r) throw new Error('no_encontrado');
+  if (norm(r.ORIGEN) === 'FABRIK') throw new Error('fabrik_no_se_cambia');
+  var o = { 'TÍTULO': e.NOMBRE, BLOQUE: e.NOMBRE, CONTENIDO: String(e.CONTENIDO) + (e['DATOS A REGISTRAR'] ? '\n\nRegistra: ' + e['DATOS A REGISTRAR'] : ''), MIN: String(e.MIN || r.MIN || 10), INTENSIDAD: e.INTENSIDAD || '', 'CÓDIGOS': codigo, ORIGEN: e.ORIGEN || r.ORIGEN,
+    'POR QUÉ (cursiva)': (e['POR QUÉ (cursiva)'] || '') + ' · Elegido por ti en lugar de «' + (r['TÍTULO'] || r.BLOQUE) + '» (' + (r['CÓDIGOS'] || 'sin código') + ').', GENERADO: 'manual ' + ahora_() + ' (candado · estímulo elegido)', ACTUALIZADO: ahora_() };
+  dosisPorAmbito_(o, ambitoDeCodigo_(codigo));
+  actualizarFila_(HOJAS.PLAN, r._fila, o);
+  return { id: r.ID, antes: r['CÓDIGOS'], ahora: codigo };
+}
+// ===================== v0.24 · PROGRAMAR DESDE EL SHEET (sesión, día o semana) =====================
+function programarRango_(lunes, iso, turno) {
+  var fin = sumarDias(lunes, 6), n = 0;
+  bloqueo_(function () {
+    listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA);
+      if (d < lunes || d > fin || r.ESTADO !== 'BORRADOR') return;
+      if (iso && d !== iso) return; if (turno && (r.TURNO === 'AM' ? 'AM' : 'PM') !== turno) return;
+      actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() }); n++; });
+  });
+  return n;
+}
 // ===================== CAMBIOS (ha surgido algo) =====================
 function solicitarCambio_(b) {
   var desde = celdaIso_(b.desde) || hoyIso_();
@@ -2167,6 +2255,8 @@ ESQUEMA['APP · WODS'] = {
 // ---------- 1 · Catálogo de estímulos (editable en APP · ESTÍMULOS; se siembra con estos valores) ----------
 // Etiquetas de CARGA / EVITAR: PIERNA · HOMBRO (empuje/OH) · AGARRE (tirón/agarre) · CORE · IMPACTO (carrera/saltos) · SNC (neural alto) · GLUC (glucolítico) · AERO
 var EST_BASE = [
+  ['M61', 'Zancada con barra · front rack / back rack', 'FRONT RACK (WALKING |REVERSE )?LUNGE|BACK RACK (WALKING |REVERSE )?LUNGE|BARBELL (WALKING |REVERSE )?LUNGE|ZANCADA CON BARRA', 'EXTRA', 'PM', 8, '🟢 Calidad', '3×6+6 zancada atrás con barra (front rack o back rack) · RPE 7 · 90″. Si coincide con la búlgara, va en el mismo bloque.', 'Pierna unilateral con carga axial: transfiere a las OH lunges, al trineo y a la carrera.', 'Técnica: tronco vertical, rodilla trasera casi al suelo. Fisiología: glúteo y cuádriceps con estabilidad de tronco bajo carga axial; baja demanda nerviosa con RPE 7.', 'No el día antes de la calidad de carrera ni de pierna pesada.', 'PIERNA', 'PIERNA', 'Kg, rack (front/back) y reps por pierna'],
+  ['M62', 'T2B estricto / Dragon flag', 'STRICT (T2B|TOES)|T2B ESTRICTO|TOES TO BAR ESTRICTO|DRAGON FLAG', 'EXTRA', 'PM', 8, '🟢 Calidad', '4×3–5 T2B estrictos (sin kip, bajada 2″) o dragon flag excéntrico 4–5″ · 90″', 'Fuerza estricta de core anterior y flexores de cadera: base para T2B y GHD en fatiga.', 'Técnica: hollow activo y escápulas deprimidas. Fisiología: fuerza excéntrica del recto abdominal con poco coste metabólico.', 'No antes de gimnásticos con kip en el metcon.', 'CORE', '', 'Variante, reps y segundos de bajada'],
   ['W17', 'HSPU estricto / facing', 'STRICT HSPU|FACING|DEFICIT STRICT|DÉFICIT STRICT', 'TÉCNICA', 'PM', 12, '🟢 Técnico', '4×3–5 strict HSPU (déficit si sale fácil) · RIR 2 · 2′ entre series', 'Fuerza estricta de empuje vertical: la base que luego aguanta el kipping en fatiga.', 'Técnica: línea cabeza-manos en trípode, codos a 45°. Fisiología: reclutamiento de unidades motoras de alto umbral en deltoides/tríceps con poco volumen. Biología: adaptación neural antes que hipertrófica.', 'Evitar el día de jerk/press pesado o con muchos HSPU en el metcon. No antes de anillas.', 'HOMBRO', 'HOMBRO', 'Reps por serie, déficit (cm) y RIR'],
   ['W15', 'HSPU kipping técnico', 'KIPPING HSPU', 'TÉCNICA', 'PM', 10, '🟢 Técnico', 'EMOM 8′: 3–5 kipping HSPU con reinicio controlado', 'Técnica de kipping fresca para que salga eficiente en el WOD.', 'Técnica: patada sincronizada con la extensión de codos. Fisiología: ciclo estiramiento-acortamiento del tren superior; poco coste metabólico si se corta antes de la fatiga.', 'No el mismo día que HSPU estricto pesado ni antes de jerk.', 'HOMBRO', 'HOMBRO', 'Reps por minuto y fallos'],
   ['W31', 'HSPU en fatiga', 'HSPU', 'TÉCNICA', 'PM', 0, '', '', '', '', '', 'HOMBRO GLUC', '', ''],
@@ -2701,7 +2791,7 @@ function generarExtras_(lunes, opts) {
       if (c === 'R04') { var pr01 = nuevos.concat(listar_(HOJAS.PLAN)).filter(function (r) { var d = celdaIso_(r.FECHA); return /R01/.test(r['CÓDIGOS']) && d >= lunes && d <= sumarDias(lunes, 6); })[0];
         o = bloqueIntegrado_(o, lunes, pr01 ? ((norm(pr01['TÍTULO']).match(/\bP([1-4])\b/) || [])[0] || '') : ''); }
       if (c === 'R04') o._condicional = true;
-      o._prio = 'semana'; cola.push({ o: o });
+      dosisPorAmbito_(o, 'Semana'); o._prio = 'semana'; cola.push({ o: o });
     }
   });
   var per = periodoMes_(lunes), mensuales = metas.filter(function (m) { return m['ÁMBITO'] === 'Mes' && String(m.TIPO || 'COUNT') === 'COUNT' && !/^R0/.test(m['CÓDIGOS']); });
@@ -2719,7 +2809,7 @@ function generarExtras_(lunes, opts) {
   for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
     var c = codigosDe_(colaMes[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
     if (!c) continue;
-    var o = deCatalogo(c); o._prio = 'mes'; cola.push({ o: o }); mesEnCola++;
+    var o = dosisPorAmbito_(deCatalogo(c), 'Mes'); o._prio = 'mes'; cola.push({ o: o }); mesEnCola++;
     colaMes[i].resta--; if (colaMes[i].resta > 0 && colaMes[i].urg > 1) i--;
   }
   // 6.3b · SALTOS de la semana (meta tipo SALTOS, W07): nunca se quedan sin cubrir.
@@ -2752,6 +2842,9 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
+  // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
+  (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
+    if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();
   // 6.4 · endurance corta (≤35′) por la mañana: se le suma 10–15′ de calidad, lo que más falte (orden de la cola)
   huecoCalidad.forEach(function (hq) {
     for (var k = 0; k < cola.length; k++) {
@@ -3846,6 +3939,8 @@ ESQUEMA['APP · METAS'].cab.push('INTEGRAR CON', 'CÓMO MEJORARLO');
 if (ESQUEMA['APP · METAS'].anchos) ESQUEMA['APP · METAS'].anchos.push(300, 360);
 CAMPOS_META.push('INTEGRAR CON', 'CÓMO MEJORARLO');
 var METAS_V12_ = [
+  ['Mes', 'Pierna unilateral · calidad', 'ZANCADA CON BARRA · FRONT RACK O BACK RACK', 1, 'M61', 'Una exposición al mes con barra en front rack o back rack, ambas piernas. Se programa junto a la búlgara cuando coinciden (suma un estímulo más sin otra sesión). No cuentan OH lunges ni zancadas sin carga.', 31.5],
+  ['Mes', 'Core · calidad', 'T2B ESTRICTO / DRAGON FLAG', 1, 'M62', 'Una exposición al mes de fuerza estricta de core anterior: T2B sin kip o dragon flag (completo o excéntrico). Dosis breve, sin fallo.', 36.5],
   ['Semana', 'P2 · Endurance', 'Z6–Z8 · 2.ª SESIÓN INTEGRADA (COMPETICIÓN)', 1, 'R04', 'Una 2.ª sesión P1/P4 por semana con 2 movimientos de competición + calorías de ergómetro o carrera. La genera «Cargar extras» con lo que más falta (thrusters, DU, STOH, front squat, burpees, hang snatch/clean, C2B, BMU). Sesión dura: ≥48 h de la calidad y del Z6–Z8 del plan; al día siguiente, suave.', 8.5],
   ['Mes', 'P2 · Endurance', 'Z6–Z8 · INTEGRADO (COMPETICIÓN)', 4, 'R04', 'Las 4 sesiones integradas del mes (una por semana). Cuenta aparte de los 4 protocolos del plan de carrera (R01).', 16.5],
   ['Mes', 'P3 · Competición', 'DOUBLE UNDERS · EN FATIGA', 2, 'C01', 'Dos exposiciones de DU con pulsaciones altas (metcon o Z6–Z8 integrado). FABRIK cuenta primero.', 51.1],
@@ -3865,6 +3960,8 @@ function sembrarMetasV12_() {
 }
 /** Texto inicial (editable) de «INTEGRAR CON» y «CÓMO MEJORARLO» por código. Solo rellena celdas vacías. */
 var GUIA_METAS_ = {
+  M61: ['Con la sentadilla búlgara, en el mismo bloque de pierna unilateral.', 'Alterna front y back rack cada mes; sube carga cuando las 6 por pierna salgan a RPE 6.'],
+  M62: ['Final de sesión de gimnásticos o core, en fresco.', 'Progresa de excéntrico a completo; bajada de 4–5″ sin despegar la zona lumbar.'],
   W17: ['Bloque de fuerza de tren superior o skills; antes de accesorios de press (M53).', 'Déficit progresivo (+2 cm/sem si sale a RIR 2), tempo 3″ en la bajada y pausa abajo; trípode estable y codos a 45°.'],
   W15: ['Calentamiento del metcon con HSPU o P3 de tren superior (HSPU reactivo + ski).', 'Series cortas con reinicio: patada sincronizada con la extensión de codos; graba un set por semana y compara.'],
   W31: ['Z6–Z8 integrado (P1 bike + HSPU + DU) o metcon de Fabrik con HSPU.', 'Tandas pequeñas desde la 1.ª ronda (5-4-3) antes de llegar al fallo; respira arriba, no abajo.'],

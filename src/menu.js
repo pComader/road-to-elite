@@ -1474,6 +1474,12 @@
 
 
   // ---------- v0.20 · Competis (copia de COMPETIS PROPUESTAS) con seguimiento en Google Calendar ----------
+  /** v0.24 · texto para compartir una competi por WhatsApp (wa.me abre la app con el mensaje listo; eliges a quién). */
+  function textoCompetiWa(x) {
+    var url = x.WEB || x.WODBUSTER || x.INSTAGRAM || '', ins = x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN'];
+    return ['🏆 *' + x.NOMBRE + '*', '📅 ' + x.INICIO + (x.FIN && x.FIN !== x.INICIO ? ' – ' + x.FIN : ''), '📍 ' + [x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', '),
+      x['CATEGORÍAS'] ? '👥 ' + x['CATEGORÍAS'] : '', ins ? '📝 Inscripción: ' + ins : '', x.CLASIFICATORIO ? '🎯 Clasificatorio: ' + x.CLASIFICATORIO : '', x.PRECIO ? '💶 ' + x.PRECIO : '', url ? '🔗 ' + url : ''].filter(Boolean).join('\n');
+  }
   function renderCompetis() {
     var html = cabeceraVista('Competis', 'Menú');
     if (!S.competis) {
@@ -1523,7 +1529,8 @@
         (x.CLASIFICATORIO ? '<div class="hint">🎯 Clasificatorio: ' + esc(x.CLASIFICATORIO) + (x['FECHA CLASIFICATORIO'] ? ' · ' + esc(x['FECHA CLASIFICATORIO']) : '') + (x['CLASIFICATORIO (hecho)'] ? ' · ' + esc(x['CLASIFICATORIO (hecho)']) : '') + '</div>' : '') +
         (x.NOTAS ? '<div class="hint"><i>' + esc(x.NOTAS) + '</i></div>' : '') +
         '<div class="comp-l">' + [lnk(x.WEB, 'Web'), lnk(x.WODBUSTER, 'WODBuster'), lnk(x.INSTAGRAM, 'Instagram')].filter(Boolean).join(' · ') + '</div>' +
-        '<button class="btn ' + (seg ? '' : 'btn-primary ') + 'sm" type="button" data-cseg="' + esc(x.ID) + '">' + (seg ? 'Quitar seguimiento' : '★ Seguir (al calendario)') + '</button></div>';
+        '<div class="comp-b"><button class="btn ' + (seg ? '' : 'btn-primary ') + 'sm" type="button" data-cseg="' + esc(x.ID) + '">' + (seg ? 'Quitar seguimiento' : '★ Seguir (al calendario)') + '</button>' +
+        '<a class="btn sm wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(textoCompetiWa(x)) + '">🟢 WhatsApp</a></div></div>';
     }).join('') : '<div class="empty">No hay competis en esta vista.</div>';
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
