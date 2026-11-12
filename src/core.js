@@ -1307,7 +1307,7 @@
   }
   function urlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
   function mensajeError(m) {
-    return { fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
+    return { elige_estimulo: 'Marca al menos un estímulo para incentivar.', zona_no_valida: 'Elige la zona de la molestia.', fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
       marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
@@ -2011,7 +2011,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.23';
+  var WEB_VERSION = 'web 0.25';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
