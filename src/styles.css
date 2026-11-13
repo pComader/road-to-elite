@@ -1086,3 +1086,12 @@ details.cf summary{cursor:pointer}
 .ce-i{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--surface);color:var(--text)}
 .ce-i span{font-size:12px;color:var(--muted)}
 .ce-i.fam{border-color:var(--accent)}
+/* v0.26 · feedback de carrera y aprendizaje */
+.run-fb{border:1px solid var(--line,#2a2f3a);border-radius:14px;padding:10px 12px;margin:8px 0}
+.run-fb .seg{margin-bottom:6px}
+.dn-q{border:1px solid var(--line,#2a2f3a);border-radius:14px;padding:12px;margin:10px 0}
+.dn-q .zonas{margin:8px 0}
+.dn-r{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px dashed var(--line,#2a2f3a);font-size:14px}
+.dn-r b{min-width:34px;text-align:right}
+.dn-q .zona[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.dn-q input[type=text]{width:100%;box-sizing:border-box;margin:4px 0 8px}

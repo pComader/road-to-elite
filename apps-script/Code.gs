@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.25.0',
+  VERSION: '0.26.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -145,6 +145,9 @@ function accion_(a, body, user) {
       case 'enviar_resumen': return json_({ ok: true, enviado: enviarResumenSemana_(body.lunes) });
       case 'incentivo_datos': return json_({ ok: true, lunes: lunesDe_(body.lunes || hoyIso_()), semana: numSemana_(lunesDe_(body.lunes || hoyIso_())), metas: datosIncentivo_(lunesDe_(body.lunes || hoyIso_())) });
       case 'meta_reducible': marcarReducible_(body.id, !!body.si); return json_({ ok: true });
+      case 'aprendizaje': return json_(Object.assign({ ok: true }, datosAprendizaje_()));
+      case 'deathnote_responder': var nr = responderDeathnote_(body.respuestas); return json_(Object.assign({ ok: true, guardadas: nr }, datosAprendizaje_()));
+      case 'aprendizaje_analizar': return json_(Object.assign({ ok: true, resultado: aprendizajeSemanal(body.lunes || '') }, datosAprendizaje_()));
       case 'lesion_zonas': return json_({ ok: true, zonas: ZONAS_LESION_ });
       case 'competis': return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
       case 'competi_seguir': seguirCompeti_(body); return json_({ ok: true, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
@@ -426,7 +429,7 @@ function migrarTestsAEventos_() {
 // ===================== v0.7 · DOMINGO EN CADENA: cierre → vídeos → backup =====================
 /** Un solo disparador hace las tres fases en orden y deja el resultado en APP · CONFIG (clave «ultimo_domingo»). */
 function domingoNoche() {
-  var fases = [['cierre', cierreSemanal], ['carrera', ajusteCarrera_], ['backup', backupSemanal]], estado = [];
+  var fases = [['cierre', cierreSemanal], ['carrera', function () { ajusteCarrera_(); }], ['aprendizaje', function () { aprendizajeSemanal(); }], ['backup', backupSemanal]], estado = [];
   fases.forEach(function (f) {
     try { f[1](); estado.push(f[0] + ' OK ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'HH:mm')); }
     catch (e) { estado.push(f[0] + ' FALLO (' + String(e && e.message || e).slice(0, 120) + ')'); }
@@ -584,8 +587,8 @@ ESQUEMA['APP · HISTÓRICO METAS'] = {
 };
 ESQUEMA['APP · CARRERA'] = {
   cab: ['ID', 'FECHA', 'ID_PLAN', 'SESIÓN', 'TIPO', 'DISTANCIA (km)', 'TIEMPO', 'RITMO MEDIO (/km)', 'FC MEDIA', 'FC MÁX', 'FC ESTABLE (min)', 'PARCIALES POR KM',
-    'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS', 'REGISTRADO'],
-  anchos: [70, 95, 90, 160, 110, 80, 80, 90, 70, 70, 80, 220, 220, 100, 70, 70, 80, 100, 50, 220, 220, 120], fechas: ['FECHA'],
+    'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS', 'REGISTRADO', 'PIERNAS', 'RESPIRACIÓN', 'MARGEN'],
+  anchos: [70, 95, 90, 160, 110, 80, 80, 90, 70, 70, 80, 220, 220, 100, 70, 70, 80, 100, 50, 220, 220, 120, 90, 100, 130], fechas: ['FECHA'],
   listas: { TIPO: ['Z2', 'Z2 larga', 'Z4 umbral', 'Z5 VO2max', 'Z6–Z8', 'Test 2 km', 'Test 10 km', 'Recuperación', 'HYROX', 'Otra'], 'PARCIALES CUMPLIDOS': ['Sí', 'Parcial', 'No'],
     SUPERFICIE: ['Asfalto', 'Pista', 'Tierra', 'Cinta', 'Mixta'] }
 };
@@ -754,7 +757,7 @@ function cierreSemanal() {
 
 // ===================== CARRERA: registro detallado y análisis =====================
 var CAMPOS_CARRERA = ['FECHA', 'ID_PLAN', 'SESIÓN', 'TIPO', 'DISTANCIA (km)', 'TIEMPO', 'RITMO MEDIO (/km)', 'FC MEDIA', 'FC MÁX', 'FC ESTABLE (min)', 'PARCIALES POR KM',
-  'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS'];
+  'SERIES (tiempos)', 'PARCIALES CUMPLIDOS', 'CADENCIA', 'DESNIVEL (m)', 'TEMPERATURA (°C)', 'SUPERFICIE', 'RPE', 'SENSACIONES', 'NOTAS', 'PIERNAS', 'RESPIRACIÓN', 'MARGEN'];
 function segundos_(t) {
   var p = String(t || '').trim().replace(/^'/, '').split(':').map(function (x) { return parseFloat(x.replace(',', '.')); });
   if (!p.length || p.some(isNaN)) return 0;
@@ -769,6 +772,7 @@ function guardarCarrera_(c) {
   var km = parseFloat(String(o['DISTANCIA (km)'] || '').replace(',', '.')), seg = segundos_(o.TIEMPO);
   if (!o['RITMO MEDIO (/km)'] && km > 0 && seg > 0) o['RITMO MEDIO (/km)'] = mmss_(seg / km);
   o.REGISTRADO = ahora_();
+  if (o.PIERNAS || o['RESPIRACIÓN'] || o.MARGEN) ['PIERNAS', 'RESPIRACIÓN', 'MARGEN'].forEach(function (h) { asegurarColumna_(HOJAS.CARRERA, h); });   // v0.26 · feedback de la sesión
   var idCliente = /^[\w-]{6,40}$/.test(String(c.ID || '')) ? String(c.ID) : '';   // creado en el móvil: reenvíos sin duplicar
   var id = bloqueo_(function () {
     var todas = listar_(HOJAS.CARRERA);
@@ -963,8 +967,10 @@ function revisarAvisos() {
         'Cambios en ' + cf.map(function (c) { return c.dia.toLowerCase(); }).join(', ') + ' desde que aprobaste la semana. Revisa interferencias con tus extras.');
     });
     if (bkAlerta) avisar('backup_' + hoy, 'Backup sin hacer', bkAlerta);
-    var chequeoHoy = listar_(HOJAS.CHEQUEO).some(function (r) { return celdaIso_(r.FECHA) === hoy; });
-    if (hora >= 16 && hora < 20 && !chequeoHoy && filasActivasDia_(hoy).length) avisar('chequeo_' + hoy, '¿Cómo llegas hoy?', '15 segundos: cansancio, agujetas y zonas cargadas antes de entrenar.');
+    // v0.26 · sin chequeo diario; lo que sí importa: el feedback de cada carrera (ajusta las de la semana siguiente)
+    if (hora >= 20) { var corrHoy = filasActivasDia_(hoy).filter(function (r) { return esCarreraFila_(r) && /^(PROGRAMADO)$/.test(r.ESTADO); });
+      var conFb = {}; listar_(HOJAS.CARRERA).forEach(function (r) { if (celdaIso_(r.FECHA) === hoy) conFb[r.ID_PLAN || '_'] = 1; });
+      if (corrHoy.some(function (r) { return !conFb[r.ID]; })) avisar('fbcarrera_' + hoy, 'Tu feedback de la carrera', '20 segundos: RPE, piernas, respiración y si podías más. Con eso ajusto las de la semana que viene.'); }
   });
   Object.keys(hecho).forEach(function (k) { if (hecho[k] < sumarDias(hoy, -21)) delete hecho[k]; });
   PROPS.setProperty('AVISOS_HECHOS', JSON.stringify(hecho));
@@ -1039,11 +1045,13 @@ function pintarHojaSemana_(lunes) {
   var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO); });
   var etq = function (r) { var d = celdaIso_(r.FECHA), k = (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7; return DIAS_CORTO_[k] + ' ' + (r.TURNO === 'AM' ? 'AM' : 'PM') + ' · ' + String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 40) + ' · #' + r.ID; };
   var opcionesSwap = plan.map(etq), clave = {};
+  var todosSem = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin; });
+  var propFus = [], oriFus = [];   // v0.26 · filas de fusiones en propuesta y de sus originales
   try { clave = claveSemana_(lunes, plan); } catch (e) {}
   var filas = [], estilos = [], claves = [], sesiones = [], tuyos = [], cancel = [];   // estilos: [fila, tipo]
   filas.push(['SEMANA EN BLOQUES · Fabrik + extras + carrera', '', '', '', '', '', '', '', '', '', '', '']);
   filas.push(['Lunes de la semana →', isoAFecha(lunes), '↻ Actualizar', false, '✓ PROGRAMAR TODA LA SEMANA →', false, '', '', '', '', '', '']);
-  filas.push(['Cambia la fecha o marca la casilla para recargar. Edita BLOQUE, EJERCICIOS o MIN y se guarda en el plan (lo que ves en la app). Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON». En la fila de cada sesión (☀️ AM / 🌙 PM), «INTERCAMBIAR CON» cambia la sesión entera o el día entero por los de otro día. En ESTADO: CANCELADO = no se hace (no va a pendientes; vuelve con PROGRAMADO), A PENDIENTES = para la semana siguiente. En naranja, lo que no es Fabrik. 🎯 = clave para tus carencias. ✓ PROGRAMAR: en la fila de cada sesión, columna ESTADO → sesión o día entero; arriba, toda la semana. ⇄ CÓDIGOS (extras): cambia el estímulo por otro del catálogo (primero la misma familia). 🔗 INTERCAMBIAR CON → «🔗 Fusionar con…» une dos bloques; en el fusionado, ESTADO → ↶ DESHACER FUSIÓN.', '', '', '', '', '', '', '', '', '', '', '']);
+  filas.push(['Cambia la fecha o marca la casilla para recargar. Edita BLOQUE, EJERCICIOS o MIN y se guarda en el plan (lo que ves en la app). Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON». En la fila de cada sesión (☀️ AM / 🌙 PM), «INTERCAMBIAR CON» cambia la sesión entera o el día entero por los de otro día. En ESTADO: CANCELADO = no se hace (no va a pendientes; vuelve con PROGRAMADO), A PENDIENTES = para la semana siguiente. En naranja, lo que no es Fabrik. 🎯 = clave para tus carencias. ✓ PROGRAMAR: en la fila de cada sesión, columna ESTADO → sesión o día entero; arriba, toda la semana. ⇄ CÓDIGOS (extras): cambia el estímulo por otro del catálogo (primero la misma familia). 🔗 FUSIONAR: en la última columna del bloque elige el otro (solo en uno de los dos); aparece la PROPUESTA en amarillo y en su ESTADO eliges ✓ APROBAR o ✗ RECHAZAR (al rechazar, los dos vuelven a su sitio y estado). Ya aprobada: ESTADO → ↶ DESHACER FUSIÓN.', '', '', '', '', '', '', '', '', '', '', '']);
   filas.push(['DÍA · TURNO', 'Nº', 'BLOQUE', 'EJERCICIOS (editable)', 'TIPO', 'MIN', 'CÓDIGOS', 'ESTADO', 'MOVER A', 'INTERCAMBIAR CON', 'POR QUÉ', 'ID']);
   estilos.push([4, 'cab']);
   for (var k = 0; k < 7; k++) {
@@ -1060,13 +1068,21 @@ function pintarHojaSemana_(lunes) {
         if (clave[r.ID]) claves.push(filas.length);
         if (!fab) tuyos.push(filas.length);
         if (r.ESTADO === 'CANCELADO') cancel.push(filas.length);
+        if (esFusionPropuesta_(r)) {
+          filas[filas.length - 1][7] = '❓ PROPUESTA · aprobar o rechazar'; propFus.push(filas.length);
+          estilos.push([filas.length, 'extra']);
+          todosSem.filter(function (o) { return String(o.CAMBIO_ID || '').indexOf('FUSION:' + r.ID + ':') === 0; }).forEach(function (o) {
+            filas.push(['', '↳', 'original: ' + etq(o).replace(/ · #\S+$/, ''), String(o.CONTENIDO || '').slice(0, 600), 'vuelve a su sitio (' + String(o.CAMBIO_ID).split(':')[2] + ') si rechazas', o.MIN || '', o['CÓDIGOS'] || '', '', '', '', '', 'ORI|' + o.ID]);
+            oriFus.push(filas.length); });
+          return;
+        }
         estilos.push([filas.length, /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03)\b/.test(r['CÓDIGOS'] || '') ? 'carrera' : /W03/.test(r['CÓDIGOS'] || '') ? 'ergo' : fab ? 'fabrik' : 'extra']);
       });
     });
   }
   sh.clear(); sh.setConditionalFormatRules([]);
-  if (sh.getMaxColumns() < 12) sh.insertColumnsAfter(sh.getMaxColumns(), 12 - sh.getMaxColumns());
-  sh.getRange(1, 1, sh.getMaxRows(), 12).clearDataValidations();
+  if (sh.getMaxColumns() < 13) sh.insertColumnsAfter(sh.getMaxColumns(), 13 - sh.getMaxColumns());
+  sh.getRange(1, 1, sh.getMaxRows(), 13).clearDataValidations();
   if (sh.getMaxRows() < filas.length + 5) sh.insertRowsAfter(sh.getMaxRows(), filas.length + 5 - sh.getMaxRows());
   sh.getRange(1, 1, filas.length, 12).setValues(filas.map(function (r) { return r.map(celdaSegura_); }));
   sh.getRange(1, 1).setFontWeight('bold').setFontSize(13);
@@ -1088,20 +1104,27 @@ function pintarHojaSemana_(lunes) {
   cancel.forEach(function (f) { bg[f - 1] = new Array(12).fill('#e5e5e5'); fc[f - 1] = new Array(12).fill('#8a8a8a'); });
   sh.getRange(1, 1, filas.length, 12).setBackgrounds(bg).setFontColors(fc).setFontWeights(fw);
   cancel.forEach(function (f) { sh.getRange(f, 3).setFontLine('line-through'); });
+  // v0.26 · columna propia para fusionar (propuesta que apruebas o rechazas)
+  sh.getRange(4, 13).setValue('🔗 FUSIONAR CON (propuesta)').setBackground('#e8590c').setFontColor('#ffffff').setFontWeight('bold'); sh.setColumnWidth(13, 260);
+  propFus.forEach(function (f) { sh.getRange(f, 1, 1, 13).setBackground('#fef3c7'); sh.getRange(f, 8).setFontWeight('bold').setFontColor('#b45309'); });
+  oriFus.forEach(function (f) { sh.getRange(f, 1, 1, 13).setBackground('#f5f5f4').setFontColor('#8a8a8a').setFontStyle('italic'); });
   var filasBloque = estilos.filter(function (e) { return /carrera|ergo|fabrik|extra/.test(e[1]); }).map(function (e) { return e[0]; });
   if (filasBloque.length) {
     var vMover = SpreadsheetApp.newDataValidation().requireValueInList(HUECOS_, true).setAllowInvalid(false).build();
     var vSwap = opcionesSwap.length ? SpreadsheetApp.newDataValidation().requireValueInList(opcionesSwap.slice(0, 450), true).setAllowInvalid(false).build() : null;
     var vEst = SpreadsheetApp.newDataValidation().requireValueInList(['PROGRAMADO', 'BORRADOR', 'CANCELADO', 'A PENDIENTES'], true).setAllowInvalid(true).build();
-    var opFus = opcionesSwap.map(function (x) { return '🔗 Fusionar con: ' + x; });
-    var vSwap2 = opcionesSwap.length ? SpreadsheetApp.newDataValidation().requireValueInList(opcionesSwap.concat(opFus).slice(0, 480), true).setAllowInvalid(false).build() : null;
+    var vSwap2 = vSwap;
+    var fusionables = plan.filter(function (r) { return /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO) && !esFusionPropuesta_(r); }).map(etq);
+    var vFus = fusionables.length > 1 ? SpreadsheetApp.newDataValidation().requireValueInList(fusionables.slice(0, 450), true).setAllowInvalid(false).setHelpText('Elige el otro bloque: te hago una propuesta de fusión para aprobar o rechazar.').build() : null;
+    var vProp = SpreadsheetApp.newDataValidation().requireValueInList(['✓ APROBAR FUSIÓN', '✗ RECHAZAR FUSIÓN'], true).setAllowInvalid(true).build();
     var vEstF = SpreadsheetApp.newDataValidation().requireValueInList(['PROGRAMADO', 'BORRADOR', 'CANCELADO', 'A PENDIENTES', '↶ DESHACER FUSIÓN'], true).setAllowInvalid(true).build();
     var listaE = null; try { listaE = estimulosLista_(lunes); } catch (e) {}
     var porId = {}; plan.forEach(function (r) { porId[r.ID] = r; });
     filasBloque.forEach(function (f) {
       var r = porId[filas[f - 1][11]] || {};
       sh.getRange(f, 9).setDataValidation(vMover); if (vSwap2) sh.getRange(f, 10).setDataValidation(vSwap2);
-      sh.getRange(f, 8).setDataValidation(norm(r.ORIGEN) === 'FUSION' ? vEstF : vEst);
+      sh.getRange(f, 8).setDataValidation(esFusionPropuesta_(r) ? vProp : norm(r.ORIGEN) === 'FUSION' ? vEstF : vEst);
+      if (vFus && /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO) && !esFusionPropuesta_(r)) sh.getRange(f, 13).setDataValidation(vFus).setBackground('#fff7ed');
       if (listaE && r.ID && norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'FUSION' && !/CARRERA/.test(norm(r.ORIGEN)) && /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO)) {   // v0.24 · cambiar el estímulo (misma familia primero)
         var ops = candidatosCambio_(r, listaE).filter(function (x) { return codigosDe_(r['CÓDIGOS']).indexOf(x.c) < 0; }).slice(0, 60).map(function (x) { return '⇄ ' + x.c + ' · ' + String(x.nombre).slice(0, 40) + (x.mismaFamilia ? ' ★' : '') + (x.falta > 0 ? ' · faltan ' + x.falta : ''); });
         if (ops.length) sh.getRange(f, 7).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ops, true).setAllowInvalid(true).build());
@@ -1161,6 +1184,17 @@ function alEditarHoja(e) {
     if (c === 7 && /^⇄\s*([A-Z][0-9]{2,3})/.test(String(v))) {   // v0.24 · cambiar estímulo
       var cn = String(v).match(/^⇄\s*([A-Z][0-9]{2,3})/)[1]; cambiarEstimulo_(id, cn); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estímulo cambiado a ' + cn + ' (cuenta en semana y mes)', 'Road To Elite', 4); return;
     }
+    if (/^ORI\|/.test(id)) { pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Ese bloque está dentro de una fusión propuesta: apruébala o recházala en la fila amarilla.', 'Road To Elite', 5); return; }
+    if (c === 13 && v) {   // v0.26 · fusionar: propuesta que se aprueba o se rechaza
+      var otroF = (String(v).match(/#(\S+)\s*$/) || [])[1]; if (!otroF || otroF === id) { pintarHojaSemana_(lunes); return; }
+      SpreadsheetApp.getActive().toast('Preparando la propuesta de fusión…', 'Road To Elite', 3);
+      try { var fp = fusionarBloques_([id, otroF], { propuesta: true }); MEMO = null; pintarHojaSemana_(lunes);
+        SpreadsheetApp.getActive().toast('Propuesta: «' + fp.bloque['TÍTULO'] + '» (' + fp.bloque.MIN + '′, antes ' + fp.minAntes + '′). ' + (fp.avisos[0] || '') + ' En su ESTADO: ✓ APROBAR o ✗ RECHAZAR.', 'Road To Elite', 10); }
+      catch (e3) { MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('No se puede fusionar: ' + e3.message, 'Road To Elite', 6); }
+      return;
+    }
+    if (c === 8 && /APROBAR FUSI/.test(String(v))) { var ef = aprobarFusion_(id); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Fusión aprobada (' + ef + '). Los bloques sueltos quedan sustituidos.', 'Road To Elite', 5); return; }
+    if (c === 8 && /RECHAZAR FUSI/.test(String(v))) { desfusionar_(id); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Fusión rechazada: los dos bloques vuelven a su sitio y a su estado.', 'Road To Elite', 5); return; }
     if (c === 10 && /^🔗/.test(String(v))) {   // v0.24 · fusionar desde el Sheet
       var otro = (String(v).match(/#(\S+)\s*$/) || [])[1]; if (!otro) return;
       SpreadsheetApp.getActive().toast('Fusionando…', 'Road To Elite', 3);
@@ -1417,6 +1451,7 @@ function noHacer_(b) {
     var est = b.cancelar ? 'CANCELADO' : 'NO HACER';   // v0.22 · CANCELADO = no se hace y no va a pendientes (se puede reactivar)
     if (x) {
       actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: est, ACTUALIZADO: ahora_() });
+      if (b.cancelar) quitarRegistroDe_(id);   // v0.26 · cancelado = fuera del cómputo, también si lo habías marcado como hecho
       if (!b.cancelar) anadirPendiente_(x, motivo);
     } else {
       var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh), iso = celdaIso_(b.fecha);
@@ -1428,6 +1463,11 @@ function noHacer_(b) {
   });
 }
 
+function quitarRegistroDe_(idPlan) {
+  var sh = hojaMia_(HOJAS.REGISTRO), n = 0;
+  listar_(HOJAS.REGISTRO).filter(function (r) { return r.ID_PLAN === idPlan; }).map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); n++; });
+  if (n) MEMO = null; return n;
+}
 /** v0.22 · Reactivar un bloque CANCELADO: vuelve a PROGRAMADO y cuenta otra vez para las metas. */
 function reactivarBloque_(id) {
   return bloqueo_(function () {
@@ -1577,6 +1617,9 @@ function fusionarBloques_(ids, opts) {
     GENERADO: 'manual ' + ahora_() + ' (candado · fusión)', REEMPLAZA: ids.join(','), ACTUALIZADO: ahora_() };
   var res = { bloque: nuevo, avisos: avisos, fase: fase.nombre, partes: P.map(function (p) { return { titulo: p.titulo, tipo: p.tipo, series: p.sets, pesado: p.pesado, ejercicios: p.ejer.length, min: p.min }; }), minAntes: Math.round(P.reduce(function (a, p) { return a + p.min; }, 0)) };
   if (opts.simular) return res;
+  if (opts.propuesta) {   // v0.26 · desde el Sheet: queda como PROPUESTA hasta que la apruebes (rechazar = todo vuelve a su sitio y estado)
+    nuevo.CAMBIO_ID = 'FUSPROP:' + nuevo.ESTADO; nuevo.ESTADO = 'BORRADOR'; nuevo.GENERADO = 'manual ' + ahora_() + ' (candado · fusión · PROPUESTA)';
+  }
   bloqueo_(function () {
     var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh);
     sh.getRange(Math.max(1, sh.getLastRow()) + 1, 1, 1, cab.length).setValues([filaDe_(cab, nuevo)]);
@@ -1595,6 +1638,16 @@ function desfusionar_(id) {
   });
   borrarFila_(HOJAS.PLAN, f._fila, { ID: f.ID });
 }
+
+/** v0.26 · Aprueba una fusión propuesta desde el Sheet: pasa al estado que le toca y deja de ser propuesta. */
+function aprobarFusion_(id) {
+  var f = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(id || ''); })[0];
+  if (!f || norm(f.ORIGEN) !== 'FUSION') throw new Error('no_es_fusion');
+  var est = (String(f.CAMBIO_ID || '').match(/^FUSPROP:(.+)$/) || [])[1] || f.ESTADO;
+  actualizarFila_(HOJAS.PLAN, f._fila, { ESTADO: est, CAMBIO_ID: '', GENERADO: String(f.GENERADO || '').replace(' · PROPUESTA', ''), ACTUALIZADO: ahora_() });
+  return est;
+}
+function esFusionPropuesta_(r) { return /^FUSPROP:/.test(String(r.CAMBIO_ID || '')); }
 
 // ===================== v0.24 · CAMBIAR EL ESTÍMULO DE UN BORRADOR =====================
 /** Lista de estímulos del catálogo con su familia (prioridad de la meta), carga, ámbito y lo que falta esta semana / este mes. */
@@ -1648,7 +1701,7 @@ function programarRango_(lunes, iso, turno) {
   var fin = sumarDias(lunes, 6), n = 0;
   bloqueo_(function () {
     listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA);
-      if (d < lunes || d > fin || r.ESTADO !== 'BORRADOR') return;
+      if (d < lunes || d > fin || r.ESTADO !== 'BORRADOR' || esFusionPropuesta_(r)) return;   // la fusión propuesta se aprueba o se rechaza antes
       if (iso && d !== iso) return; if (turno && (r.TURNO === 'AM' ? 'AM' : 'PM') !== turno) return;
       actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() }); n++; });
   });
@@ -1745,6 +1798,7 @@ function configurarSin_() {
   try { logc_('OK · Competis copiadas de ProgramAPP: ' + copiarCompetis_() + ' nuevas'); } catch (e) { logc_('AVISO · Competis: ' + e); }
   try { MEMO = null; logc_('OK · APP · COMPETIS (filtros en el Sheet): ' + pintarCompetisSheet_() + ' competis'); } catch (e) { logc_('AVISO · APP · COMPETIS: ' + e); }
   try { MEMO = null; logc_('OK · APP · ESTÍMULOS EN BLOQUES: ' + pintarHojaEstimulos_(lunesDe_(hoyIso_())) + ' filas (marca REDUCIBLE / INCENTIVAR)'); } catch (e) { logc_('AVISO · Estímulos en bloques: ' + e); }
+  try { logc_('OK · APRENDIZAJE: pestañas listas en Road to Elite · Motor (' + [HOJAS.APR_SEM, HOJAS.APR_ANA, HOJAS.APR_DN, HOJAS.APR_REG].filter(function (h) { return !!hojaMia_(h); }).length + ' de 4)'); } catch (e) { logc_('AVISO · Aprendizaje: ' + e); }
   try { logc_('OK · LESIONES · ADAPTACIONES: ' + prepararLesiones_() + ' propuestas nuevas (apruébalas en Road to Elite · Motor)'); } catch (e) { logc_('AVISO · Lesiones: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
@@ -2582,7 +2636,10 @@ function puntuarHuecos_(cand, ctx, todo) {
       if (cand.codigos.some(function (c) { return d.codigos.indexOf(c) >= 0; })) { p += 3; malos.push('ese estímulo ya está ese día'); }
       var vecino = [ctx.dias[i - 1], ctx.dias[i + 1]].some(function (o) { return o && cand.codigos.some(function (c) { return o.codigos.indexOf(c) >= 0; }); });
       if (vecino) { p += 1; malos.push('el mismo estímulo en un día contiguo'); }
+      var apz = sesgoAprendido_(cand.codigos, { iso: d.iso, codigosSesion: t === 'AM' ? (d.codigosAM || []) : d.codigos.filter(function (c) { return (d.codigosAM || []).indexOf(c) < 0; }), cargasAntes: ant.concat(i && ctx.dias[i - 1].duro ? ['DURA'] : []), cargasDespues: sig.concat(i < 6 && ctx.dias[i + 1].duro ? ['DURA'] : []) }, t);   // v0.26 · lo aprendido de tus cambios
+      if (apz.p) { p += apz.p; apz.contra.forEach(function (m) { malos.push(m); }); }
       if (!malos.length) motivos.push('sin choques con Fabrik ni con los días de alrededor');
+      apz.pro.forEach(function (m) { motivos.push(m); });
       if (t === 'AM' && cand.turno && cand.turno.indexOf('AM') >= 0) motivos.push('por la mañana, separado ≥6 h de la sesión de Fabrik');
       if (cand.duro && !malos.length) motivos.push('respeta ≥48 h con las otras sesiones duras');
       malos = malos.filter(function (m, j) { return malos.indexOf(m) === j; });
@@ -2901,6 +2958,7 @@ function generarExtras_(lunes, opts) {
     ponerConfig_('extras_parcial_' + lunes, uni.length >= 7 ? '' : JSON.stringify({ dias: uni, descanso: modoDesc }), 'Extras programados solo para unos días: queda «Programar resto de semana»'); }
   else ponerConfig_('extras_parcial_' + lunes, '', 'Extras programados solo para unos días: queda «Programar resto de semana»');
   try { escribirBalance_(lunes, 'Plan'); } catch (e) { Logger.log('Balance: ' + e); }
+  try { MEMO = null; procesarDeathnote_(); fotoSemana_(lunes, 'PROPUESTA', diasSel || null); } catch (e) { Logger.log('Aprendizaje · foto: ' + e); }   // v0.26
   return { creados: colocados.length, sinHueco: sinHueco, pctMes: pct, resumen: resumen };
 }
 /**
@@ -2991,10 +3049,11 @@ function carreraSemana_(lunes) {
   });
   out = reglasManualV2_(out, lunes, titulo);
   // Ajustes del histórico (domingo 22:00)
-  var aj = {}; try { aj = JSON.parse(PROPS.getProperty('CARRERA_AJUSTE') || '{}'); } catch (e) {}
+  var aj = {}; try { aj = ajusteCarrera_(sumarDias(lunes, -7)); } catch (e) { try { aj = JSON.parse(PROPS.getProperty('CARRERA_AJUSTE') || '{}'); } catch (e2) {} }   // v0.26 · con el feedback de la semana anterior, en directo
   out.forEach(function (s) {
+    if (aj.z2min && /W01/.test(s['CÓDIGOS'])) s.MIN = Math.min(75, Math.round((parseFloat(s.MIN) || 60) * 1.1), (parseFloat(s.MIN) || 60) + aj.z2min);
     var k = /R01/.test(s['CÓDIGOS']) ? 'potencia' : /W04/.test(s['CÓDIGOS']) ? 'calidad' : /W0[12]/.test(s['CÓDIGOS']) ? 'z2' : '';
-    if (k && aj[k]) s.CONTENIDO = '⚙ Ajuste por tu semana anterior: ' + aj[k] + '\n\n' + s.CONTENIDO;
+    if (k && aj[k]) s.CONTENIDO = '⚙ Ajuste por tu feedback de la semana anterior: ' + aj[k] + '\n\n' + s.CONTENIDO;
   });
   // Semana de test: el test sustituye la calidad
   eventosEntre_(lunes, sumarDias(lunes, 6)).filter(function (e) { return /^Test/i.test(e.EVENTO); }).forEach(function (e) {
@@ -3128,21 +3187,54 @@ function aplicarManualV2_() {
   ponerConfig_('manual_v2', ahora_(), 'Manual de rendimiento híbrido v2.0 aplicado (tests a enero en Calendar, ciencia del catálogo)');
   return n + ' tests actualizados en Google Calendar · catálogo alineado';
 }
-/** Domingo 22:00 (dentro de domingoNoche): con lo registrado esta semana, cómo ajustar la carrera de la siguiente. */
-function ajusteCarrera_() {
-  var lunes = lunesDe_(hoyIso_()), car = listar_(HOJAS.CARRERA).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
-  var aj = {}, n = function (v) { return parseFloat(String(v || '').replace(',', '.')) || 0; };
+/**
+ * v0.26 · Tu feedback de cada carrera decide las de la semana siguiente (se calcula al cargar la semana, no solo el domingo).
+ * Criterio: adaptarse a ti sin dejar de progresar → se sube UNA variable cada vez (ritmo o volumen, nunca las dos), solo con señales claras de margen;
+ * con señales de exceso se repite o se baja un punto; sin feedback no se progresa a ciegas; tras 3 semanas subiendo, una de consolidación.
+ */
+function ajusteCarrera_(lunesRef) {
+  var lunes = lunesRef ? lunesDe_(lunesRef) : lunesDe_(hoyIso_()), n = function (v) { return parseFloat(String(v || '').replace(',', '.')) || 0; };
+  var todas = listar_(HOJAS.CARRERA), de = function (l) { return todas.filter(function (r) { var d = celdaIso_(r.FECHA); return d >= l && d <= sumarDias(l, 6); }); };
+  var car = de(lunes), aj = {};
+  var sinFb = function (r) { return !n(r.RPE) && !r.PIERNAS && !r.MARGEN && !r['PARCIALES CUMPLIDOS']; };
+  var exceso = function (r) { return n(r.RPE) >= 9 || /pas[eé]/i.test(r.MARGEN || '') || r['PARCIALES CUMPLIDOS'] === 'No' || (/Ahogado/i.test(r['RESPIRACIÓN'] || '') && !/Z5|Z6|Test/i.test(r.TIPO)); };
+  var margen = function (r) { return /^S[ií]/i.test(r.MARGEN || '') && n(r.RPE) && n(r.RPE) <= 7 && r['PARCIALES CUMPLIDOS'] !== 'No' && !/Cargadas/i.test(r.PIERNAS || ''); };
+  var racha = function (re) { var k = 0; for (var w = 1; w <= 3; w++) { var a = de(sumarDias(lunes, -7 * w)).filter(function (r) { return re.test(r.TIPO); }); if (a.length && a.every(margen)) k++; else break; } return k; };
+  // calidad (Z4 / Z5 / test)
   var cal = car.filter(function (r) { return /Z4|Z5|Test/i.test(r.TIPO); });
-  if (cal.some(function (r) { return r['PARCIALES CUMPLIDOS'] === 'No' || n(r.RPE) >= 9; })) aj.calidad = 'la semana pasada no cumpliste parciales o fue RPE ≥9: repite el volumen anterior y no bajes el ritmo.';
-  else if (cal.length && cal.every(function (r) { return r['PARCIALES CUMPLIDOS'] === 'Sí' && n(r.RPE) && n(r.RPE) <= 7; })) aj.calidad = 'cumpliste con RPE ≤7: puedes ir al extremo rápido del rango.';
-  var z2 = car.filter(function (r) { return /^Z2/i.test(r.TIPO) && n(r['FC MEDIA']); }), fcObj = 149;
-  if (z2.length && z2.reduce(function (a, r) { return a + n(r['FC MEDIA']); }, 0) / z2.length > fcObj + 5) aj.z2 = 'la FC media en Z2 salió alta: ve 10–15″/km más lento para quedarte en ~' + fcObj + ' ppm.';
+  if (cal.length) {
+    if (cal.some(sinFb)) aj.calidad = 'falta tu feedback de la calidad anterior: repito la dosis (no progreso a ciegas). Apunta RPE, piernas, respiración y si podías más.';
+    else if (cal.some(exceso)) aj.calidad = 'la última calidad fue demasiado (parciales sin cumplir, RPE ≥9 o «me pasé»): misma sesión con 1 repetición menos y el ritmo en el extremo lento del rango. Cumplir todas las repeticiones vale más que una rápida.';
+    else if (cal.every(margen)) { var rc = racha(/Z4|Z5|Test/i);
+      aj.calidad = rc >= 2 ? 'tres semanas con margen: esta toca CONSOLIDAR (misma dosis y ritmo) para asimilar antes de volver a subir.' :
+        cal.some(function (r) { return /volumen/i.test(r.MARGEN || ''); }) ? 'cumpliste con margen de volumen: +1 repetición (o +1 km de trabajo) al MISMO ritmo. Solo sube una variable.' :
+        'cumpliste con margen de ritmo: mismas repeticiones 2–3″/km más rápido (extremo rápido del rango). Solo sube una variable.'; }
+    else aj.calidad = 'la calidad salió justa: se repite la dosis hasta que salga con margen (RPE ≤7 y parciales cumplidos).';
+    if (cal.some(function (r) { return /Cargadas/i.test(r.PIERNAS || ''); })) aj.calidad += ' Llegaste con las piernas cargadas: la coloco a ≥24 h de pierna pesada y sin metcon duro la víspera.';
+  }
+  // Z2
+  var z2 = car.filter(function (r) { return /^Z2/i.test(r.TIPO); }), fcObj = 149, z2fc = z2.filter(function (r) { return n(r['FC MEDIA']); });
+  if (z2.length) {
+    var partes = [], larga = z2.filter(function (r) { return /larga/i.test(r.TIPO) || segundos_(r.TIEMPO) >= 50 * 60; });
+    if (z2fc.length && z2fc.reduce(function (a, r) { return a + n(r['FC MEDIA']); }, 0) / z2fc.length > fcObj + 5) partes.push('la FC media salió alta: 10–15″/km más lento para quedarte en ~' + fcObj + ' ppm (en Z2 manda el pulso, no el ritmo).');
+    if (z2.some(function (r) { return n(r.RPE) >= 5 || /pas[eé]/i.test(r.MARGEN || '') || /Cargadas/i.test(r.PIERNAS || ''); })) { partes.push('la Z2 costó más de la cuenta (RPE ≥5, piernas cargadas o «me pasé»): mismos minutos, más suave, y la separo de la pierna pesada.'); aj.z2min = 0; }
+    else if (larga.length && larga.every(function (r) { return n(r.RPE) && n(r.RPE) <= 3 && /^S[ií]/i.test(r.MARGEN || ''); }) && !partes.length) {
+      if (racha(/^Z2/i) >= 2) partes.push('tres semanas subiendo la larga: esta se mantiene para consolidar.');
+      else { partes.push('la larga salió cómoda y con margen: +5′ esta semana (máx. 75′, nunca más de un 10 %).'); aj.z2min = 5; } }
+    if (z2.every(sinFb) && !partes.length) partes.push('sin feedback de la Z2 anterior: mismos minutos.');
+    if (partes.length) aj.z2 = partes.join(' ');
+  }
+  // potencia Z6–Z8
   var pot = car.filter(function (r) { return /Z6/.test(r.TIPO); });
-  if (pot.length && /ca[ií]da\s*(\d+)/i.test(pot[0].NOTAS || '') && +RegExp.$1 > 10) aj.potencia = 'caída de potencia >10 % (corte del manual §14.2): no progreses; repite la dosis y vigila que no cambie la mecánica.';
+  if (pot.length) {
+    if (/ca[ií]da\s*(\d+)/i.test(pot[0].NOTAS || pot[0].SENSACIONES || '') && +RegExp.$1 > 10) aj.potencia = 'caída de potencia >10 % (corte del manual §14.2): no progreses; repite la dosis y vigila que no cambie la mecánica.';
+    else if (pot.some(exceso) && pot.some(function (r) { return /Cargadas/i.test(r.PIERNAS || ''); })) aj.potencia = 'llegaste cargado y fue RPE ≥9: 1 serie menos, misma intensidad (la potencia se entrena fresco).';
+    else if (pot.every(margen)) aj.potencia = 'salió con margen: +1 serie o +1 repetición por serie (no las dos), misma recuperación.';
+  }
   var reg = listar_(HOJAS.REGISTRO).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6); });
   var no = reg.filter(function (r) { return r.HECHO === 'No'; }).length;
-  if (no >= 3) aj.z2 = (aj.z2 ? aj.z2 + ' ' : '') + 'Hubo ' + no + ' bloques sin hacer: semana conservadora, sin subir minutos.';
-  PROPS.setProperty('CARRERA_AJUSTE', JSON.stringify(aj));
+  if (no >= 3) { aj.z2 = (aj.z2 ? aj.z2 + ' ' : '') + 'Hubo ' + no + ' bloques sin hacer: semana conservadora, sin subir minutos.'; aj.z2min = 0; }
+  if (!lunesRef) PROPS.setProperty('CARRERA_AJUSTE', JSON.stringify(aj));
   return aj;
 }
 
@@ -3328,7 +3420,7 @@ function onOpen() {
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
     .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
     .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
-    .addItem('Competis · actualizar desde la app de Gabi', 'menuCompetis').addItem('Lesiones · completar con IA (Gemini)', 'menuLesionesIA').addItem('Estímulos en bloques (incentivar)', 'menuEstimulosBloques').addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Motor · KNOWLEDGE + aprender del ciclo ahora', 'menuAprenderCiclo').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
+    .addItem('Competis · actualizar desde la app de Gabi', 'menuCompetis').addItem('Lesiones · completar con IA (Gemini)', 'menuLesionesIA').addItem('Estímulos en bloques (incentivar)', 'menuEstimulosBloques').addItem('Aprendizaje · analizar la semana y generar preguntas', 'menuAprendizaje').addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Motor · KNOWLEDGE + aprender del ciclo ahora', 'menuAprenderCiclo').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
     .addItem('Base de datos WODs · token de lectura para otras apps', 'menuTokenBd').addToUi();
 }
 function menuCargarFabrikSiguiente() { SpreadsheetApp.getActive().toast(JSON.stringify(cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7)))); }
@@ -3836,11 +3928,13 @@ function pintarResumen_(an) {
     fila(['Semana', 'km', 'min totales', 'min Z2', 'sesiones', 'calidad', 'Z6–Z8', 'ritmo Z2', 'FC Z2', 'eficiencia Z2'], 'cab');
     (A.semanas || []).forEach(function (s) { fila([isoAFecha(s.lunes), s.km, s.min, s.minZ2, s.sesiones, s.calidad, s.z68, s.ritmoZ2, s.fcZ2, s.eficZ2]); });
     fila(['']);
+    if (false) {
     fila(['SENSACIONES · últimos 10 chequeos', '', '', '', '', '', '', '', '', '', ''], 'seccion');
     fila(['Fecha', 'Cansancio', 'Agujetas', 'Zonas cargadas', '', 'Sueño', 'Listo', 'Semáforo', 'Recomendación'], 'cab');
     listar_(HOJAS.CHEQUEO).sort(function (a, b) { return celdaIso_(a.FECHA) < celdaIso_(b.FECHA) ? 1 : -1; }).slice(0, 10).forEach(function (r) {
       fila([r.FECHA, r['CANSANCIO (1-10)'], r['AGUJETAS (1-10)'], r['ZONAS CARGADAS'], '', r['SUEÑO'], r['LISTO (0-100)'], r['SEMÁFORO'], String(r['RECOMENDACIÓN'] || '').slice(0, 400)]);
     });
+    }
     sh.clear(); sh.setConditionalFormatRules([]);
     if (sh.getMaxRows() < filas.length + 5) sh.insertRowsAfter(sh.getMaxRows(), filas.length + 5 - sh.getMaxRows());
     if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
@@ -3859,7 +3953,7 @@ function refrescarResumen_() { MEMO = null; try { pintarResumen_(); } catch (e) 
 
 // ===================== v0.11 · UNIFICAR PESTAÑAS =====================
 var LEGADO_ = ['Dashboard', 'Semana', 'Mes', 'Guía e histórico', 'APP · ANÁLISIS CARRERA'];
-var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · ESTÍMULOS EN BLOQUES', 'APP · COMPETIS', 'APP · PLAN', 'APP · METAS', 'APP · ESTÍMULOS', 'APP · BIBLIOTECA', 'APP · REGISTRO', 'APP · CHEQUEO', 'APP · CARRERA', 'carrera', 'APP · EVENTOS', 'APP · MARCAS'];
+var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · ESTÍMULOS EN BLOQUES', 'APP · COMPETIS', 'APP · PLAN', 'APP · METAS', 'APP · ESTÍMULOS', 'APP · BIBLIOTECA', 'APP · REGISTRO', 'APP · CARRERA', 'carrera', 'APP · EVENTOS', 'APP · MARCAS'];
 /** Una sola vez: copia completa del Sheet en Backups y fuera las pestañas antiguas (Dashboard, Semana, Mes, Guía e histórico, Análisis carrera). */
 function unificar_() {
   var cf = leerConfig_();
@@ -4129,11 +4223,28 @@ function prioridadFila_(r, w) {
   return p;
 }
 function horaDe_(iso, turno) { return new Date(iso + 'T' + (HORA_TURNO_[turno] < 10 ? '0' : '') + HORA_TURNO_[turno] + ':00:00').getTime(); }
+/** v0.26 · Punto de corte al reorganizar: la sesión en curso (mañana hasta las 14 h, tarde después). Todo lo anterior se da por hecho. */
+function corteAhora_() { var h = +Utilities.formatDate(new Date(), CONFIG.ZONA, 'H'); return { iso: hoyIso_(), turno: h < 14 ? 'AM' : 'PM' }; }
+function antesDeCorte_(iso, turno, c) { return iso < c.iso || (iso === c.iso && turno === 'AM' && c.turno === 'PM'); }
+/** Al aplicar una reorganización: lo anterior al corte sin registrar pasa a HECHO (cuenta en semana y mes). Se deshace con la reestructura. */
+function darPorHecho_(lunes, rid, excepto) {
+  var c = corteAhora_(), reg = {}, n = 0; excepto = excepto || {};
+  listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.ID_PLAN) reg[r.ID_PLAN] = 1; });
+  var nuevas = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= sumarDias(lunes, 6) && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && !reg[r.ID] && !excepto[r.ID] && antesDeCorte_(d, r.TURNO === 'AM' ? 'AM' : 'PM', c); })
+    .map(function (r) { n++; return { FECHA: r.FECHA, ID_PLAN: r.ID, BLOQUE: r['TÍTULO'] || r.BLOQUE || '', HECHO: 'Sí', NOTAS: 'Dado por hecho al reorganizar [' + rid + ']', REGISTRADO: ahora_() }; });
+  if (nuevas.length) { filasEnHoja_(HOJAS.REGISTRO, nuevas); MEMO = null; }
+  return n;
+}
+function quitarDadosPorHecho_(rid) {
+  var sh = hojaMia_(HOJAS.REGISTRO);
+  listar_(HOJAS.REGISTRO).filter(function (r) { return String(r.NOTAS || '').indexOf('[' + rid + ']') >= 0; }).map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
+  MEMO = null;
+}
 function filasSemanaActivas_(lunes) {
-  var fin = sumarDias(lunes, 6), hechos = {};
+  var fin = sumarDias(lunes, 6), hechos = {}, corte = corteAhora_();
   listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.HECHO === 'Sí') hechos[r.ID_PLAN] = 1; });
   return listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && EST_ACTIVO_.test(r.ESTADO); })
-    .map(function (r) { r._iso = celdaIso_(r.FECHA); r._turno = r.TURNO === 'AM' ? 'AM' : 'PM'; r._hecho = !!hechos[r.ID]; r._min = minFila_(r); return r; });
+    .map(function (r) { r._iso = celdaIso_(r.FECHA); r._turno = r.TURNO === 'AM' ? 'AM' : 'PM'; r._pasado = antesDeCorte_(r._iso, r._turno, corte); r._hecho = !!hechos[r.ID] || r._pasado; r._min = minFila_(r); return r; });   // v0.26 · lo anterior al corte no se reorganiza
 }
 /** Mitad del volumen manteniendo la intensidad: series, rondas, minutos de EMOM/AMRAP y AxB. */
 function mitadVolumen_(txt) {
@@ -4226,9 +4337,10 @@ function colocar_(fila, slots, ocupado, durasPorIso, opts) {
     if (dura) { var malo = Object.keys(durasPorIso).some(function (d) { return Math.abs((new Date(d) - new Date(s.iso)) / 864e5) < 2; }); if (malo && !opts.forzar) return false; }   // nunca dos duras el mismo día ni a <48 h
     return true;
   });
+  var cz = codigosDe_(fila['CÓDIGOS']), apr = function (s) { return cz.length ? sesgoAprendido_(cz, { iso: s.iso }, s.turno).p * 0.5 : 0; };   // v0.26 · preferencias aprendidas de turno y día
   cand.sort(function (a, b) {
-    var pa = (a.iso === fila._iso ? -3 : 0) + (a.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(a.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (a.turno === fila._turno ? -0.5 : 0);
-    var pb = (b.iso === fila._iso ? -3 : 0) + (b.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(b.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (b.turno === fila._turno ? -0.5 : 0);
+    var pa = apr(a) + (a.iso === fila._iso ? -3 : 0) + (a.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(a.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (a.turno === fila._turno ? -0.5 : 0);
+    var pb = apr(b) + (b.iso === fila._iso ? -3 : 0) + (b.tipo === 'casa' ? -1 : 0) + Math.abs(new Date(b.iso) - new Date(fila._iso)) / 864e5 * 0.3 + (b.turno === fila._turno ? -0.5 : 0);
     return pa - pb;
   });
   var s = cand[0]; if (!s) return null;
@@ -4790,6 +4902,7 @@ function reestAplicar_(id, ajustes) {
       asegurarColumna_(HOJAS.EVENTOS, 'MUY EXIGENTE'); var idEv = guardarEvento_({ EVENTO: (pp.tipo === 'fisica' ? 'Competición' : 'Grabación online') + ' (Reestructurar)', TIPO: 'Competición', INICIO: isoAFecha(d0), FIN: isoAFecha(d1), BLOQUEA: pp.tipo === 'fisica' ? 'Día completo' : (pp.turno === 'PM' ? 'Tarde' : 'Mañana'), 'CÓMO PROCEDER': 'Reestructurado ' + id, ESTADO: 'Decidido', sinCalendario: true });
       var ev = listar_(HOJAS.EVENTOS).filter(function (e) { return e.ID === idEv; })[0]; if (ev) actualizarFila_(HOJAS.EVENTOS, ev._fila, { 'MUY EXIGENTE': 'Sí' }); } catch (e) { Logger.log('Evento competi: ' + e); } }
     if (P.incentivo && P.incentivo.deltas) guardarIncentivo_(id, P.incentivo.lunes, P.incentivo.deltas);
+    if (/Viaje|Reorganiz|Competi|Lesi/.test(x.MODO)) try { var noH = {}, pr0 = {}; try { pr0 = JSON.parse(x.PARAMS || '{}'); } catch (eP) {} (pr0.noHechos || []).forEach(function (k) { noH[k] = 1; }); darPorHecho_(lunesDe_(celdaIso_(x.LUNES) || hoyIso_()), id, noH); } catch (eH) { Logger.log('darPorHecho: ' + eH); }
     MEMO = null;
     return { id: id, nuevas: nuevas.length };
   });
@@ -4807,6 +4920,7 @@ function reestDeshacer_(id) {
     listar_(HOJAS.PENDIENTES).forEach(function (p) { if (String(p.MOTIVO || '').indexOf('(' + id + ')') >= 0 && p.ESTADO === 'Pendiente') actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Descartado' }); });
     actualizarFila_(HOJAS.REEST, x._fila, { ESTADO: 'Deshecha' });
     if (x.MODO === 'Incentivar') guardarIncentivo_(id, null, null);
+    try { quitarDadosPorHecho_(id); } catch (eQ) {}
     MEMO = null;
     return true;
   });
@@ -6511,4 +6625,275 @@ function editarEstimulosSheet_(e) {
   var prop = String(leerConfig_().incentivo_propuesta || '');
   if (f > 5 && c === 7 && v === true && prop) { reestAplicar_(prop, []); ponerConfig_('incentivo_propuesta', ''); ponerConfig_('incentivar_sel', ''); refrescarResumen_(); MEMO = null; pintarHojaEstimulos_(lunes); refrescarHojaSemana_(lunes); toast('Incentivo aplicado (deshacer: app › Reestructurar › Aplicadas)'); return; }
   if (f > 5 && c === 9 && v === true && prop) { var xr = listar_(HOJAS.REEST).filter(function (r) { return r.ID === prop; })[0]; if (xr) actualizarFila_(HOJAS.REEST, xr._fila, { ESTADO: 'Descartada' }); ponerConfig_('incentivo_propuesta', ''); pintarHojaEstimulos_(lunes); toast('Propuesta descartada'); }
+}
+
+// ===================== v0.26 · APRENDIZAJE SEMANAL (propuesta vs. lo que hiciste) =====================
+/*
+ * Libro «Road to Elite · Motor»:
+ *  · APRENDIZAJE · SEMANAS   foto de la semana PROPUESTA (al cargar los extras) y de la FINAL (domingo noche).
+ *  · APRENDIZAJE · ANÁLISIS  bloque a bloque: dónde lo propuse, dónde acabó, con qué estaba y con qué quedó, qué tenía el día antes / después.
+ *  · APRENDIZAJE · DEATHNOTE preguntas para ti (se contestan en la hoja o en la app › Menú › Aprendizaje).
+ *  · APRENDIZAJE · REGLAS    lo aprendido, con peso. Lo usa el código (puntuarHuecos_, colocar_) y cualquier IA (reglasAprendidasTexto_, acción «aprendizaje»).
+ * Las reglas suman con cada semana que confirma el patrón y pesan más cuando tú contestas. Desactiva una regla con ACTIVA = No.
+ */
+HOJAS.APR_SEM = 'APRENDIZAJE · SEMANAS'; HOJAS.APR_ANA = 'APRENDIZAJE · ANÁLISIS'; HOJAS.APR_DN = 'APRENDIZAJE · DEATHNOTE'; HOJAS.APR_REG = 'APRENDIZAJE · REGLAS';
+ESQ_BD_[HOJAS.APR_SEM] = { cab: ['LUNES', 'FOTO', 'ID', 'FECHA', 'DÍA', 'TURNO', 'POS', 'ORIGEN', 'TÍTULO', 'CÓDIGOS', 'MIN', 'INTENSIDAD', 'ESTADO', 'HECHO', 'CARGAS', 'SESIÓN CON', 'DÍA ANTES', 'DÍA DESPUÉS', 'REEMPLAZA', 'CAPTURADO'],
+  anchos: [90, 90, 80, 90, 80, 55, 45, 90, 240, 110, 50, 110, 100, 60, 150, 320, 220, 220, 120, 120], negrita: 'TÍTULO', color: '#7c3aed', fechas: ['LUNES', 'FECHA'], listas: { FOTO: ['PROPUESTA', 'FINAL'] } };
+ESQ_BD_[HOJAS.APR_ANA] = { cab: ['LUNES', 'ID', 'BLOQUE', 'ORIGEN', 'CÓDIGOS', 'CAMBIO', 'PROPUESTO', 'FINAL', 'CON QUÉ ESTABA (propuesta)', 'CON QUÉ QUEDÓ (final)', 'DÍA ANTES (propuesta → final)', 'DÍA DESPUÉS (propuesta → final)', 'LECTURA', 'ACTUALIZADO'],
+  anchos: [90, 80, 240, 90, 110, 150, 110, 110, 300, 300, 280, 280, 380, 120], negrita: 'BLOQUE', color: '#7c3aed', fechas: ['LUNES'] };
+var DN_OPC_ = { movido: ['Interferencia con otro bloque', 'Falta de tiempo ese día', 'Prefiero ese turno siempre', 'Prefiero ese día siempre', 'Fatiga o molestia', 'Solo esta vez (no aprender)'],
+  quitado: ['Sin tiempo', 'Demasiada carga en esa sesión', 'No me gusta ahí', 'Fatiga o molestia', 'No me interesa ese estímulo ahora', 'Solo esta vez (no aprender)'],
+  anadido: ['Sí, ahí normalmente', 'Sí, pero en cualquier hueco', 'Solo esta vez (no aprender)'],
+  orden: ['Sí, siempre en ese orden', 'Solo esta vez (no aprender)'],
+  carrera: ['Por la sesión del día anterior', 'Por la sesión del día siguiente', 'Por horario / tiempo', 'Prefiero ese día siempre', 'Prefiero ese turno siempre', 'Solo esta vez (no aprender)'],
+  estimulo: ['Prefiero siempre el nuevo', 'No tenía el material', 'Solo esta vez (no aprender)'], ia: [] };
+ESQ_BD_[HOJAS.APR_DN] = { cab: ['ID', 'LUNES', 'BLOQUE_ID', 'BLOQUE', 'TIPO', 'PREGUNTA', 'OPCIONES', 'RESPUESTA', 'COMENTARIO', 'ESTADO', 'CONTEXTO', 'CREADO', 'PROCESADO'],
+  anchos: [80, 90, 80, 220, 90, 420, 320, 220, 320, 110, 120, 120, 120], negrita: 'PREGUNTA', color: '#111111', fechas: ['LUNES'],
+  colores: [['ESTADO', 'PENDIENTE', '#fef3c7'], ['ESTADO', 'APLICADA', '#dcfce7']], listas: { ESTADO: ['PENDIENTE', 'APLICADA', 'DESCARTADA'] } };
+ESQ_BD_[HOJAS.APR_REG] = { cab: ['CLAVE', 'TIPO', 'SUJETO', 'VALOR', 'PESO', 'EVIDENCIAS', 'TEXTO', 'ORIGEN', 'ACTIVA', 'ÚLTIMA SEMANA', 'ACTUALIZADO'],
+  anchos: [220, 90, 150, 150, 60, 90, 460, 110, 70, 110, 120], negrita: 'TEXTO', color: '#7c3aed', listas: { ACTIVA: ['Sí', 'No'] } };
+
+function dcIso_(iso) { return DIAS_CORTO_[(new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7]; }
+/** Sujeto de una regla: el código del estímulo; sin código, el tipo de bloque de Fabrik. */
+function sujetoApr_(r) { var c = codigosDe_(r['CÓDIGOS'])[0]; return c || ((norm(r.ORIGEN) === 'FABRIK' ? 'FAB·' : 'BLQ·') + tipoSeccion_(r)); }
+function nombreSujeto_(s) { if (/^(FAB|BLQ)·/.test(s)) return (/^FAB/.test(s) ? 'Fabrik · ' : '') + s.split('·')[1]; var e = catalogo_()[s]; return e ? s + ' ' + (e.NOMBRE || '') : s; }
+
+/** Foto de la semana. tipo: PROPUESTA (lo que te propongo) | FINAL (lo que acabó siendo). soloDias: al regenerar unos días, solo se rehacen esos. */
+function fotoSemana_(lunes, tipo, soloDias) {
+  lunes = lunesDe_(lunes); var fin = sumarDias(lunes, 6), hechos = {};
+  listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.ID_PLAN) hechos[r.ID_PLAN] = r.HECHO; });
+  var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO) && (tipo === 'FINAL' || /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO)); })
+    .map(function (r) { r._iso = celdaIso_(r.FECHA); r._turno = r.TURNO === 'AM' ? 'AM' : 'PM'; r._ord = parseFloat(String(r.ORDEN).replace(',', '.')) || 0; r._vivo = /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO); return r; });
+  var vivos = plan.filter(function (r) { return r._vivo; });
+  var cargasDia = function (iso) { var o = [], duro = false; vivos.filter(function (r) { return r._iso === iso; }).forEach(function (r) { cargasFila_(r).forEach(function (c) { if (o.indexOf(c) < 0) o.push(c); }); if (esDura_(r)) duro = true; }); return (duro ? ['DURA'] : []).concat(o).join(', '); };
+  var filas = plan.map(function (r) {
+    var ses = vivos.filter(function (x) { return x._iso === r._iso && x._turno === r._turno; }).sort(function (a, b) { return a._ord - b._ord; });
+    return { LUNES: isoAFecha(lunes), FOTO: tipo, ID: r.ID, FECHA: isoAFecha(r._iso), 'DÍA': dcIso_(r._iso), TURNO: r._turno, POS: r._vivo ? ses.indexOf(r) + 1 : '', ORIGEN: r.ORIGEN || '', 'TÍTULO': String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 120),
+      'CÓDIGOS': r['CÓDIGOS'] || '', MIN: r.MIN || '', INTENSIDAD: r.INTENSIDAD || '', ESTADO: r.ESTADO, HECHO: hechos[r.ID] || '', CARGAS: cargasFila_(r).join(', '),
+      'SESIÓN CON': ses.filter(function (x) { return x !== r; }).map(function (x) { return sujetoApr_(x) + '~' + String(x['TÍTULO'] || x.BLOQUE || '').slice(0, 30); }).join(' | '),
+      'DÍA ANTES': cargasDia(sumarDias(r._iso, -1)), 'DÍA DESPUÉS': cargasDia(sumarDias(r._iso, 1)), REEMPLAZA: r.REEMPLAZA || '', CAPTURADO: ahora_(), _iso: r._iso };
+  });
+  var sh = hojaMia_(HOJAS.APR_SEM); if (!sh) return 0;
+  var prev = listar_(HOJAS.APR_SEM).filter(function (r) { return celdaIso_(r.LUNES) === lunes && r.FOTO === tipo; }), dias = soloDias && soloDias.length ? soloDias : null;
+  var borrar = prev.filter(function (r) { return !dias || dias.indexOf(celdaIso_(r.FECHA)) >= 0; }), quedan = {};
+  prev.forEach(function (r) { if (borrar.indexOf(r) < 0) quedan[r.ID] = 1; });
+  borrar.map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); });
+  MEMO = null;
+  var nuevas = filas.filter(function (r) { return (!dias || dias.indexOf(r._iso) >= 0) && !quedan[r.ID]; });   // un bloque que ya moviste conserva su sitio propuesto
+  filasEnHoja_(HOJAS.APR_SEM, nuevas); MEMO = null;
+  return nuevas.length;
+}
+
+// ---------- reglas ----------
+function reglasAprendidas_() {
+  if (reglasAprendidas_.c) return reglasAprendidas_.c;
+  var o = []; try { o = listar_(HOJAS.APR_REG).filter(function (r) { return r.ACTIVA !== 'No'; }).map(function (r) { return { tipo: r.TIPO, suj: r.SUJETO, val: r.VALOR, peso: parseFloat(String(r.PESO).replace(',', '.')) || 0, n: +r.EVIDENCIAS || 0, texto: r.TEXTO, origen: r.ORIGEN }; }); } catch (e) {}
+  return (reglasAprendidas_.c = o);
+}
+var UMBRAL_REGLA_ = 1.5;   // por debajo es una observación suelta: todavía no mueve nada
+function textoRegla_(tipo, suj, val, peso) {
+  var S = nombreSujeto_(suj), pos = peso >= 0;
+  if (tipo === 'TURNO') return S + ': ' + (pos ? 'lo sueles poner' : 'evitas ponerlo') + ' por la ' + (val === 'AM' ? 'mañana' : 'tarde') + '.';
+  if (tipo === 'DÍA') return S + ': ' + (pos ? 'lo sueles poner' : 'evitas ponerlo') + ' el ' + val + '.';
+  if (tipo === 'JUNTO') return S + ': ' + (pos ? 'lo juntas en la misma sesión con ' : 'no lo juntas con ') + nombreSujeto_(val) + '.';
+  if (tipo === 'SEPARAR') return S + ': lo separas de ' + nombreSujeto_(val) + ' (no en la misma sesión).';
+  if (tipo === 'TRAS') return S + ': no lo quieres el día después de ' + String(val).toLowerCase() + '.';
+  if (tipo === 'ANTES') return S + ': no lo quieres el día antes de ' + String(val).toLowerCase() + '.';
+  if (tipo === 'ORDEN') return S + ': dentro de la sesión va ' + (val === 'INICIO' ? 'al principio' : val === 'FINAL' ? 'al final' : 'antes de ' + nombreSujeto_(val)) + '.';
+  if (tipo === 'QUITA') return S + ': lo quitas a menudo' + (val ? ' (' + val + ')' : '') + '.';
+  return S + ': ' + val;
+}
+/** deltas: [[tipo, sujeto, valor, Δpeso]] */
+function sumarReglas_(deltas, lunes, origen) {
+  if (!deltas || !deltas.length) return 0;
+  var sh = hojaMia_(HOJAS.APR_REG); if (!sh) return 0;
+  var ex = {}; listar_(HOJAS.APR_REG).forEach(function (r) { ex[r.CLAVE] = r; });
+  var acc = {}; deltas.forEach(function (d) { if (!d || !d[1] || d[2] === '' || d[2] == null) return; var k = d[0] + '|' + d[1] + '|' + d[2]; acc[k] = acc[k] || { t: d[0], s: d[1], v: d[2], p: 0 }; acc[k].p += +d[3] || 0; });
+  var nuevas = [];
+  Object.keys(acc).forEach(function (k) { var a = acc[k], r = ex[k];
+    if (r) { var p = Math.max(-8, Math.min(8, (parseFloat(String(r.PESO).replace(',', '.')) || 0) + a.p)); p = Math.round(p * 100) / 100;
+      actualizarFila_(HOJAS.APR_REG, r._fila, { PESO: String(p).replace('.', ','), EVIDENCIAS: String((+r.EVIDENCIAS || 0) + 1), TEXTO: textoRegla_(a.t, a.s, a.v, p), ORIGEN: origen === 'respuesta' ? 'respuesta' : (r.ORIGEN || 'auto'), 'ÚLTIMA SEMANA': lunes ? isoAFecha(lunes) : r['ÚLTIMA SEMANA'], ACTUALIZADO: ahora_() }); }
+    else if (a.p) nuevas.push({ CLAVE: k, TIPO: a.t, SUJETO: a.s, VALOR: a.v, PESO: String(Math.round(a.p * 100) / 100).replace('.', ','), EVIDENCIAS: '1', TEXTO: textoRegla_(a.t, a.s, a.v, a.p), ORIGEN: origen || 'auto', ACTIVA: 'Sí', 'ÚLTIMA SEMANA': lunes ? isoAFecha(lunes) : '', ACTUALIZADO: ahora_() });
+  });
+  filasEnHoja_(HOJAS.APR_REG, nuevas); MEMO = null; reglasAprendidas_.c = null;
+  return Object.keys(acc).length;
+}
+/** Sesgo de lo aprendido para colocar un bloque (negativo = mejor hueco). d: { iso, codigosSesion[], cargasAntes[], cargasDespues[] } */
+function sesgoAprendido_(codigos, d, turno) {
+  var R = reglasAprendidas_(), p = 0, pro = [], contra = []; if (!R.length || !codigos || !codigos.length) return { p: 0, pro: pro, contra: contra };
+  var dia = dcIso_(d.iso), lim = function (x) { return Math.max(-4, Math.min(4, x)); };
+  R.forEach(function (r) {
+    if (codigos.indexOf(r.suj) < 0 || Math.abs(r.peso) < UMBRAL_REGLA_) return;
+    var k = 0;
+    if (r.tipo === 'TURNO' && r.val === turno) k = -lim(r.peso) * 0.8;
+    else if (r.tipo === 'DÍA' && r.val === dia) k = -lim(r.peso) * 0.6;
+    else if (r.tipo === 'JUNTO' && (d.codigosSesion || []).indexOf(r.val) >= 0) k = -lim(r.peso) * 0.7;
+    else if (r.tipo === 'SEPARAR' && (d.codigosSesion || []).indexOf(r.val) >= 0) k = Math.abs(lim(r.peso)) * 1.0;
+    else if (r.tipo === 'TRAS' && (d.cargasAntes || []).indexOf(r.val) >= 0) k = Math.abs(lim(r.peso)) * 0.9;
+    else if (r.tipo === 'ANTES' && (d.cargasDespues || []).indexOf(r.val) >= 0) k = Math.abs(lim(r.peso)) * 0.9;
+    if (!k) return; p += k; (k < 0 ? pro : contra).push('🧠 ' + r.texto);
+  });
+  return { p: Math.round(p * 10) / 10, pro: pro, contra: contra };
+}
+/** Para cualquier IA (Gemini, Claude): lo aprendido en texto, lo más firme primero. */
+function reglasAprendidasTexto_(max) {
+  var R = reglasAprendidas_().filter(function (r) { return Math.abs(r.peso) >= UMBRAL_REGLA_ || r.tipo === 'NOTA'; }).sort(function (a, b) { return Math.abs(b.peso) - Math.abs(a.peso); }).slice(0, max || 40);
+  if (!R.length) return '';
+  return 'PREFERENCIAS APRENDIDAS DE PABLO AL COLOCAR BLOQUES (peso = firmeza; respétalas salvo que rompan una regla de seguridad o de 48 h):\n' + R.map(function (r) { return '- [' + r.peso + '] ' + r.texto + (r.origen === 'respuesta' ? ' (lo confirmó él)' : ''); }).join('\n');
+}
+
+// ---------- comparar propuesta y final ----------
+function analizarSemana_(lunes) {
+  lunes = lunesDe_(lunes);
+  var fotos = listar_(HOJAS.APR_SEM).filter(function (r) { return celdaIso_(r.LUNES) === lunes; });
+  var P = {}, F = {}; fotos.forEach(function (r) { (r.FOTO === 'FINAL' ? F : P)[r.ID] = r; });
+  if (!Object.keys(P).length) return { error: 'sin_propuesta', preguntas: 0, analisis: 0 };
+  if (!Object.keys(F).length) return { error: 'sin_final', preguntas: 0, analisis: 0 };
+  var vivo = function (r) { return r && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO); };
+  var suj = function (r) { return sujetoApr_(r); }, con = function (r) { return String(r['SESIÓN CON'] || '').split(' | ').filter(Boolean).map(function (x) { return x.split('~')[0]; }); };
+  var conTxt = function (r) { return String(r['SESIÓN CON'] || '').split(' | ').filter(Boolean).map(function (x) { return x.split('~')[1] || x; }).join(' · ') || '—'; };
+  var lista = function (t) { return String(t || '').split(/\s*,\s*/).filter(Boolean); }, sitio = function (r) { return r['DÍA'] + ' ' + r.TURNO + ' · ' + (r.POS || '–') + 'º'; };
+  var esCarr = function (r) { return /CARRERA|Z6/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R01|R02|R03|V01)\b/.test(r['CÓDIGOS'] || ''); };
+  var fusion = {}; Object.keys(F).forEach(function (id) { String(F[id].REEMPLAZA || '').split(',').filter(Boolean).forEach(function (o) { fusion[o] = F[id]; }); });
+  var ana = [], preg = [], deltas = [], nPreg = 0, MAXQ = 14;
+  var q = function (r, tipo, texto, ctx, autos) { if (nPreg >= MAXQ) return; nPreg++; ctx = ctx || {}; ctx.a = autos || [];
+    preg.push({ ID: 'DN' + nuevoId_(), LUNES: isoAFecha(lunes), BLOQUE_ID: r.ID, BLOQUE: r['TÍTULO'], TIPO: tipo, PREGUNTA: texto, OPCIONES: (DN_OPC_[tipo] || []).join(' | '), RESPUESTA: '', COMENTARIO: '', ESTADO: 'PENDIENTE', CONTEXTO: JSON.stringify(ctx).slice(0, 4000), CREADO: ahora_() }); };
+  var push = function (r, cambio, p, f, lectura) { ana.push({ LUNES: isoAFecha(lunes), ID: r.ID, BLOQUE: r['TÍTULO'], ORIGEN: r.ORIGEN, 'CÓDIGOS': r['CÓDIGOS'], CAMBIO: cambio, PROPUESTO: p ? sitio(p) : '—', FINAL: f && vivo(f) ? sitio(f) : (f ? f.ESTADO : '—'),
+    'CON QUÉ ESTABA (propuesta)': p ? conTxt(p) : '—', 'CON QUÉ QUEDÓ (final)': f && vivo(f) ? conTxt(f) : '—', 'DÍA ANTES (propuesta → final)': (p ? p['DÍA ANTES'] || 'nada' : '—') + ' → ' + (f && vivo(f) ? f['DÍA ANTES'] || 'nada' : '—'),
+    'DÍA DESPUÉS (propuesta → final)': (p ? p['DÍA DESPUÉS'] || 'nada' : '—') + ' → ' + (f && vivo(f) ? f['DÍA DESPUÉS'] || 'nada' : '—'), LECTURA: lectura || '', ACTUALIZADO: ahora_() }); };
+  Object.keys(P).forEach(function (id) {
+    var p = P[id], f = F[id], s = suj(p);
+    if (fusion[id]) { push(p, 'Fusionado', p, fusion[id], 'Lo uniste en «' + fusion[id]['TÍTULO'] + '».');
+      var otros = String(fusion[id].REEMPLAZA).split(',').filter(function (o) { return o !== id && P[o]; }).map(function (o) { return suj(P[o]); });
+      otros.forEach(function (o) { deltas.push(['JUNTO', s, o, 1]); }); return; }
+    if (!f || !vivo(f)) {
+      var est = f ? f.ESTADO : 'BORRADO', au = [['QUITA', s, p.TURNO, 1]];
+      push(p, est === 'CANCELADO' ? 'Cancelado' : /NO HACER/.test(est) ? 'A pendientes' : 'Quitado', p, f, 'Estaba el ' + sitio(p) + ' con: ' + conTxt(p) + '.');
+      if (norm(p.ORIGEN) !== 'FABRIK') { deltas = deltas.concat(au); q(p, 'quitado', 'Quitaste «' + p['TÍTULO'] + '» (' + p['DÍA'] + ' ' + p.TURNO + ', junto a: ' + conTxt(p) + '). ¿Por qué?', { s: s, tp: p.TURNO, dp: p['DÍA'], vp: con(p) }, au); }
+      return;
+    }
+    var mDia = p['DÍA'] !== f['DÍA'], mTur = p.TURNO !== f.TURNO, vp = con(p), vf = con(f), nuevosV = vf.filter(function (x) { return vp.indexOf(x) < 0; }), fueraV = vp.filter(function (x) { return vf.indexOf(x) < 0; });
+    var antP = lista(p['DÍA ANTES']), antF = lista(f['DÍA ANTES']), desP = lista(p['DÍA DESPUÉS']), desF = lista(f['DÍA DESPUÉS']);
+    var estimulo = String(p['CÓDIGOS'] || '') !== String(f['CÓDIGOS'] || '');
+    if (estimulo) { push(p, 'Estímulo cambiado', p, f, (p['CÓDIGOS'] || '—') + ' → ' + (f['CÓDIGOS'] || '—'));
+      q(f, 'estimulo', 'Cambiaste el estímulo de «' + p['TÍTULO'] + '» (' + (p['CÓDIGOS'] || '—') + ') por «' + f['TÍTULO'] + '» (' + (f['CÓDIGOS'] || '—') + '). ¿Por qué?', { s: s, sf: suj(f) }, []); }
+    if (mDia || mTur) {
+      var au2 = [];
+      if (mTur) { au2.push(['TURNO', s, f.TURNO, 1]); au2.push(['TURNO', s, p.TURNO, -0.5]); }
+      if (mDia) { au2.push(['DÍA', s, f['DÍA'], 0.75]); au2.push(['DÍA', s, p['DÍA'], -0.4]); }
+      nuevosV.forEach(function (x) { au2.push(['JUNTO', s, x, 0.75]); }); fueraV.forEach(function (x) { au2.push(['SEPARAR', s, x, 0.5]); });
+      antP.filter(function (c) { return antF.indexOf(c) < 0 && (esCarr(p) ? /^(DURA|PIERNA|SNC|IMPACTO)$/ : /^(DURA|PIERNA|SNC|HOMBRO|AGARRE|IMPACTO)$/).test(c) && (c === 'DURA' || lista(p.CARGAS).indexOf(c) >= 0 || esCarr(p)); }).forEach(function (c) { au2.push(['TRAS', s, c, 0.6]); });
+      desP.filter(function (c) { return desF.indexOf(c) < 0 && /^(DURA|PIERNA|SNC)$/.test(c); }).forEach(function (c) { au2.push(['ANTES', s, c, 0.4]); });
+      deltas = deltas.concat(au2);
+      var lec = 'De ' + sitio(p) + ' a ' + sitio(f) + '.' + (nuevosV.length ? ' Ahora comparte sesión con ' + nuevosV.map(nombreSujeto_).join(', ') + '.' : '') + (fueraV.length ? ' Ya no está con ' + fueraV.map(nombreSujeto_).join(', ') + '.' : '') +
+        (antP.join() !== antF.join() ? ' Día anterior: ' + (antP.join(', ') || 'nada') + ' → ' + (antF.join(', ') || 'nada') + '.' : '') + (desP.join() !== desF.join() ? ' Día siguiente: ' + (desP.join(', ') || 'nada') + ' → ' + (desF.join(', ') || 'nada') + '.' : '');
+      push(p, mDia && mTur ? 'Movido de día y turno' : mDia ? 'Movido de día' : 'Movido de turno', p, f, lec);
+      var ctx = { s: s, tp: p.TURNO, tf: f.TURNO, dp: p['DÍA'], df: f['DÍA'], vp: vp, vf: vf, ap: antP, af: antF, sp: desP, sf2: desF };
+      if (esCarr(p)) q(f, 'carrera', 'La carrera «' + p['TÍTULO'] + '» la propuse el ' + p['DÍA'] + ' ' + p.TURNO + ' (día antes: ' + (antP.join(', ') || 'nada duro') + '; día después: ' + (desP.join(', ') || 'nada duro') + ') y acabó el ' + f['DÍA'] + ' ' + f.TURNO + ' (día antes: ' + (antF.join(', ') || 'nada duro') + '; después: ' + (desF.join(', ') || 'nada duro') + '). ¿Por qué ahí?', ctx, au2);
+      else q(f, 'movido', 'Moviste «' + p['TÍTULO'] + '» de ' + p['DÍA'] + ' ' + p.TURNO + ' (con: ' + conTxt(p) + ') a ' + f['DÍA'] + ' ' + f.TURNO + ' (con: ' + conTxt(f) + '). ¿Por qué?', ctx, au2);
+      return;
+    }
+    if (String(p.POS) !== String(f.POS) && vp.join() === vf.join() && vp.length) {
+      var au3 = [['ORDEN', s, +f.POS === 1 ? 'INICIO' : +f.POS === vf.length + 1 ? 'FINAL' : 'MEDIO', 0.75]];
+      if (au3[0][2] !== 'MEDIO') deltas = deltas.concat(au3); else au3 = [];
+      push(p, 'Reordenado', p, f, 'Mismo día y turno, pasa de ' + p.POS + 'º a ' + f.POS + 'º.');
+      q(f, 'orden', 'Dentro del ' + f['DÍA'] + ' ' + f.TURNO + ' pusiste «' + p['TÍTULO'] + '» en el puesto ' + f.POS + ' (yo lo puse en el ' + p.POS + '). ¿Siempre en ese orden?', { s: s, pos: au3.length ? au3[0][2] : '' }, au3);
+      return;
+    }
+    if (!estimulo) { push(p, 'Igual', p, f, f.HECHO === 'Sí' ? 'Lo dejaste donde lo propuse y lo hiciste.' : 'Lo dejaste donde lo propuse.');
+      if (norm(p.ORIGEN) !== 'FABRIK') { deltas.push(['TURNO', s, f.TURNO, 0.25]); deltas.push(['DÍA', s, f['DÍA'], 0.15]); } }   // confirmación suave
+  });
+  Object.keys(F).forEach(function (id) {
+    var f = F[id]; if (P[id] || !vivo(f)) return;
+    if (norm(f.ORIGEN) === 'FUSION' || f.REEMPLAZA) { push(f, 'Bloque fusionado (nuevo)', null, f, 'Une: ' + f.REEMPLAZA); return; }
+    var s = suj(f), au = [['TURNO', s, f.TURNO, 0.5], ['DÍA', s, f['DÍA'], 0.4]].concat(con(f).map(function (x) { return ['JUNTO', s, x, 0.5]; }));
+    deltas = deltas.concat(au);
+    push(f, 'Añadido por ti', null, f, 'No estaba en mi propuesta. Quedó el ' + sitio(f) + ' con: ' + conTxt(f) + '.');
+    q(f, 'anadido', 'Añadiste «' + f['TÍTULO'] + '» el ' + f['DÍA'] + ' ' + f.TURNO + ' (con: ' + conTxt(f) + '). ¿Lo quieres ahí normalmente?', { s: s, tf: f.TURNO, df: f['DÍA'], vf: con(f) }, au);
+  });
+  // escribir (se rehace la semana entera si se repite el análisis; las preguntas ya contestadas se conservan)
+  var borra = function (hoja, test) { var sh = hojaMia_(hoja); listar_(hoja).filter(test).map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); }); MEMO = null; };
+  var yaHecho = String(leerConfig_()['aprendizaje_' + lunes] || '');
+  borra(HOJAS.APR_ANA, function (r) { return celdaIso_(r.LUNES) === lunes; });
+  filasEnHoja_(HOJAS.APR_ANA, ana); MEMO = null;
+  if (!yaHecho) {   // reglas y preguntas: una sola vez por semana (no se duplican evidencias)
+    sumarReglas_(deltas, lunes, 'auto');
+    filasEnHoja_(HOJAS.APR_DN, preg); MEMO = null;
+    ponerConfig_('aprendizaje_' + lunes, ahora_() + ' · ' + ana.length + ' bloques · ' + preg.length + ' preguntas', 'Análisis semanal de aprendizaje (propuesta vs final)');
+  }
+  return { analisis: ana.length, cambios: ana.filter(function (a) { return a.CAMBIO !== 'Igual'; }).length, preguntas: yaHecho ? 0 : preg.length, reglas: yaHecho ? 0 : deltas.length };
+}
+
+// ---------- respuestas del deathnote → reglas ----------
+function procesarDeathnote_() {
+  var filas = []; try { filas = listar_(HOJAS.APR_DN).filter(function (r) { return r.ESTADO === 'PENDIENTE' && (String(r.RESPUESTA || '').trim() || String(r.COMENTARIO || '').trim()); }); } catch (e) { return 0; }
+  filas.forEach(function (r) {
+    var c = {}; try { c = JSON.parse(r.CONTEXTO || '{}'); } catch (e) {}
+    var R = norm(r.RESPUESTA || ''), d = [], autos = c.a || [], s = c.s, lunes = celdaIso_(r.LUNES);
+    var revertir = function () { autos.forEach(function (a) { d.push([a[0], a[1], a[2], -a[3]]); }); };
+    if (/SOLO ESTA VEZ|NO APRENDER|CASUALIDAD|FALTA DE TIEMPO|SIN TIEMPO|HORARIO|FATIGA|MOLESTIA|MATERIAL/.test(R)) revertir();   // no era una preferencia: lo observado no cuenta
+    else if (/TURNO SIEMPRE/.test(R) && c.tf) { d.push(['TURNO', s, c.tf, 3]); if (c.tp && c.tp !== c.tf) d.push(['TURNO', s, c.tp, -2]); }
+    else if (/DIA SIEMPRE/.test(R) && c.df) { d.push(['DÍA', s, c.df, 3]); }
+    else if (/INTERFERENCIA/.test(R)) { (c.vp || []).filter(function (x) { return (c.vf || []).indexOf(x) < 0; }).forEach(function (x) { d.push(['SEPARAR', s, x, 2]); });
+      (c.ap || []).filter(function (x) { return (c.af || []).indexOf(x) < 0; }).forEach(function (x) { d.push(['TRAS', s, x, 2]); }); (c.sp || []).filter(function (x) { return (c.sf2 || []).indexOf(x) < 0; }).forEach(function (x) { d.push(['ANTES', s, x, 1.5]); }); }
+    else if (/DIA ANTERIOR/.test(R)) (c.ap || []).filter(function (x) { return (c.af || []).indexOf(x) < 0; }).forEach(function (x) { d.push(['TRAS', s, x, 3]); });
+    else if (/DIA SIGUIENTE/.test(R)) (c.sp || []).filter(function (x) { return (c.sf2 || []).indexOf(x) < 0; }).forEach(function (x) { d.push(['ANTES', s, x, 3]); });
+    else if (/DEMASIADA CARGA/.test(R)) (c.vp || []).forEach(function (x) { d.push(['SEPARAR', s, x, 1.5]); });
+    else if (/NO ME GUSTA AHI/.test(R)) { if (c.tp) d.push(['TURNO', s, c.tp, -2]); if (c.dp) d.push(['DÍA', s, c.dp, -1.5]); }
+    else if (/NO ME INTERESA/.test(R)) d.push(['QUITA', s, 'no interesa ahora', 3]);
+    else if (/AHI NORMALMENTE/.test(R)) { if (c.tf) d.push(['TURNO', s, c.tf, 2.5]); if (c.df) d.push(['DÍA', s, c.df, 2]); (c.vf || []).forEach(function (x) { d.push(['JUNTO', s, x, 1.5]); }); }
+    else if (/CUALQUIER HUECO/.test(R)) revertir();
+    else if (/SIEMPRE EN ESE ORDEN/.test(R) && c.pos) d.push(['ORDEN', s, c.pos, 3]);
+    else if (/SIEMPRE EL NUEVO/.test(R) && c.sf) d.push(['NOTA', s, 'prefiere ' + nombreSujeto_(c.sf) + ' en su lugar', 3]);
+    var com = String(r.COMENTARIO || '').trim();
+    if (com) d.push(['NOTA', s || 'GENERAL', com.slice(0, 300), 2]);
+    if (!d.length && String(r.RESPUESTA || '').trim()) d.push(['NOTA', s || 'GENERAL', String(r.RESPUESTA).trim().slice(0, 300), 2]);   // respuesta libre
+    sumarReglas_(d, lunes, 'respuesta');
+    actualizarFila_(HOJAS.APR_DN, r._fila, { ESTADO: 'APLICADA', PROCESADO: ahora_() });
+  });
+  if (filas.length) { MEMO = null; reglasAprendidas_.c = null; }
+  return filas.length;
+}
+/** Gemini (gratis) lee el análisis de la semana y añade su lectura y hasta 4 preguntas más. Si falla, no pasa nada. */
+function aprendizajeIA_(lunes) {
+  if (!PROPS.getProperty('GEMINI_KEY')) return 0;
+  var ana = listar_(HOJAS.APR_ANA).filter(function (r) { return celdaIso_(r.LUNES) === lunes && r.CAMBIO !== 'Igual'; }); if (!ana.length) return 0;
+  var g = geminiLlamar_('Eres preparador físico de un atleta de CrossFit RX que corre (híbrido). Yo le propongo cada semana dónde colocar sus bloques y él los cambia. Estos son los cambios de esta semana (PROPUESTO → FINAL, con qué compartía sesión y qué había el día antes y después):\n' +
+    ana.map(function (a) { return '- ' + a.BLOQUE + ' [' + a['CÓDIGOS'] + '] · ' + a.CAMBIO + ' · ' + a.PROPUESTO + ' → ' + a.FINAL + ' · ' + a.LECTURA; }).join('\n').slice(0, 6000) + '\n\n' + reglasAprendidasTexto_(25) +
+    '\n\nResponde en español, sin markdown. Primero 3–5 frases con los patrones que ves (qué intenta evitar o conseguir con sus cambios, sobre todo con la carrera). Después, hasta 4 preguntas concretas que le harías para afinar la programación, cada una en una línea que empiece por «? ». No inventes datos.', 900, 0.3);
+  if (!g.ok || !g.texto) return 0;
+  var lineas = String(g.texto).split('\n'), qs = lineas.filter(function (l) { return /^\s*\?\s+/.test(l); }).slice(0, 4), lectura = lineas.filter(function (l) { return !/^\s*\?\s+/.test(l); }).join(' ').trim();
+  filasEnHoja_(HOJAS.APR_ANA, [{ LUNES: isoAFecha(lunes), ID: 'IA', BLOQUE: 'LECTURA DE LA SEMANA (Gemini)', CAMBIO: 'IA', LECTURA: lectura.slice(0, 3000), ACTUALIZADO: ahora_() }]);
+  filasEnHoja_(HOJAS.APR_DN, qs.map(function (l) { return { ID: 'DN' + nuevoId_(), LUNES: isoAFecha(lunes), BLOQUE: 'Pregunta de la IA', TIPO: 'ia', PREGUNTA: l.replace(/^\s*\?\s+/, '').slice(0, 500), OPCIONES: '', ESTADO: 'PENDIENTE', CONTEXTO: '{}', CREADO: ahora_() }; }));
+  MEMO = null; return qs.length;
+}
+/** Domingo noche: foto FINAL, comparación, reglas y deathnote. También a mano desde el menú. */
+function aprendizajeSemanal(lunesRef) {
+  var hoy = hoyIso_(); if (!lunesRef && new Date(hoy + 'T12:00:00Z').getUTCDay() === 1) hoy = sumarDias(hoy, -1);
+  var lunes = lunesDe_(typeof lunesRef === 'string' && lunesRef ? lunesRef : hoy);
+  procesarDeathnote_();
+  fotoSemana_(lunes, 'FINAL');
+  var r = analizarSemana_(lunes);
+  if (r.error) return 'sin análisis (' + r.error + ')';
+  var nia = 0; if (r.preguntas || r.reglas) { try { nia = aprendizajeIA_(lunes); } catch (e) {} }
+  try { if (r.preguntas + nia > 0 && pushActivo_()) enviarPush_('Deathnote de la semana', (r.preguntas + nia) + ' preguntas sobre tus cambios (' + r.cambios + ' bloques). Contéstalas en Menú › Aprendizaje: cada respuesta afina la programación.'); } catch (e) {}
+  return r.analisis + ' bloques · ' + r.cambios + ' cambios · ' + (r.preguntas + nia) + ' preguntas';
+}
+function menuAprendizaje() { var t = aprendizajeSemanal(leerConfig_().semana_bloques || ''); SpreadsheetApp.getUi().alert('Aprendizaje: ' + t + '\n\nResponde en «Road to Elite · Motor» › ' + HOJAS.APR_DN + ' o en la app › Menú › Aprendizaje.'); }
+function datosAprendizaje_() {
+  procesarDeathnote_();
+  var dn = listar_(HOJAS.APR_DN);
+  return { preguntas: dn.filter(function (r) { return r.ESTADO === 'PENDIENTE'; }).map(function (r) { return { id: r.ID, lunes: celdaIso_(r.LUNES), bloque: r.BLOQUE, tipo: r.TIPO, pregunta: r.PREGUNTA, opciones: String(r.OPCIONES || '').split(' | ').filter(Boolean) }; }),
+    contestadas: dn.filter(function (r) { return r.ESTADO === 'APLICADA'; }).length,
+    reglas: reglasAprendidas_().slice().sort(function (a, b) { return Math.abs(b.peso) - Math.abs(a.peso); }).slice(0, 60).map(function (r) { return { texto: r.texto, peso: r.peso, n: r.n, origen: r.origen, firme: Math.abs(r.peso) >= UMBRAL_REGLA_ || r.tipo === 'NOTA' }; }),
+    texto: reglasAprendidasTexto_(40) };
+}
+function responderDeathnote_(respuestas) {
+  var dn = listar_(HOJAS.APR_DN), n = 0;
+  (respuestas || []).forEach(function (a) { var r = dn.filter(function (x) { return x.ID === String(a.id); })[0]; if (!r || r.ESTADO !== 'PENDIENTE') return;
+    if (a.descartar) { actualizarFila_(HOJAS.APR_DN, r._fila, { ESTADO: 'DESCARTADA', PROCESADO: ahora_() }); n++; return; }
+    if (!String(a.respuesta || '').trim() && !String(a.comentario || '').trim()) return;
+    actualizarFila_(HOJAS.APR_DN, r._fila, { RESPUESTA: String(a.respuesta || '').slice(0, 300), COMENTARIO: String(a.comentario || '').slice(0, 600) }); n++; });
+  MEMO = null; procesarDeathnote_();
+  return n;
 }

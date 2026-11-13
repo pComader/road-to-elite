@@ -23,6 +23,7 @@
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link reest-link" type="button" id="ir-reest"><span class="set-ico">🔀</span>Reestructurar · viaje, reorganizar, competi<span class="go">›</span></button>';
+    html += '<button class="set-link" type="button" id="ir-aprendizaje"><span class="set-ico">🧠</span>Aprendizaje · deathnote y lo aprendido<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-competis"><span class="set-ico">🏆</span>Competis · España y Europa · seguimiento<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
@@ -54,6 +55,7 @@
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     $app.querySelectorAll('[data-unidad]').forEach(function (b) { b.onclick = function () { guardar('rte-unidad', b.dataset.unidad); S._abrir = 's-unid'; render(); toast('Cargas en ' + b.dataset.unidad); }; });
     document.getElementById('ir-reest').onclick = function () { S.vista = 'reest'; S.reest = {}; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-aprendizaje').onclick = function () { S.vista = 'aprendizaje'; S.apr = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-competis').onclick = function () { S.vista = 'competis'; S.competis = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
@@ -1093,7 +1095,7 @@
     if (!d.push || !CFG.vapidKey) return '<div class="hint">Pendiente de activar en el servidor (2 pasos, sin coste). Cuando esté, aquí podrás activarlos en cada dispositivo.</div>';
     if (!listo) return '<div class="hint">Este navegador no admite avisos. En iPhone, instala primero la app en la pantalla de inicio.</div>';
     var on = Notification.permission === 'granted' && leer('rte-push-ok');
-    return '<div class="hint">Te aviso de: plan listo para aprobar, propuesta de cambios, confirmar la semana (domingo) y el chequeo de la mañana si no lo has hecho.</div>' +
+    return '<div class="hint">Te aviso de: plan listo para aprobar, propuesta de cambios, confirmar la semana (domingo), tu feedback de la carrera si falta y las preguntas de aprendizaje del domingo.</div>' +
       '<button class="btn' + (on ? '' : ' btn-primary') + '" type="button" id="push-on">' + (on ? 'Mandar un aviso de prueba' : 'Activar avisos en este dispositivo') + '</button>';
   }
   function cargarScript(src) { return new Promise(function (bien, mal) { var s = document.createElement('script'); s.src = src; s.onload = bien; s.onerror = mal; document.head.appendChild(s); }); }
@@ -1538,6 +1540,43 @@
     var url = x.WEB || x.WODBUSTER || x.INSTAGRAM || '', ins = x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN'];
     return ['🏆 *' + x.NOMBRE + '*', '📅 ' + x.INICIO + (x.FIN && x.FIN !== x.INICIO ? ' – ' + x.FIN : ''), '📍 ' + [x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', '),
       x['CATEGORÍAS'] ? '👥 ' + x['CATEGORÍAS'] : '', ins ? '📝 Inscripción: ' + ins : '', x.CLASIFICATORIO ? '🎯 Clasificatorio: ' + x.CLASIFICATORIO : '', x.PRECIO ? '💶 ' + x.PRECIO : '', url ? '🔗 ' + url : ''].filter(Boolean).join('\n');
+  }
+  // v0.26 · Aprendizaje: preguntas (deathnote) sobre tus cambios y lo que ya se ha aprendido
+  function renderAprendizaje() {
+    var A = S.apr, html = cabeceraVista('Aprendizaje', 'Menú');
+    if (!A) {
+      $app.innerHTML = html + '<div class="hint">Cargando…</div>'; document.getElementById('atras').onclick = function () { abrirAjustes(); };
+      api({ action: 'aprendizaje' }).then(ok).then(function (r) { S.apr = r; S.aprR = {}; if (S.vista === 'aprendizaje') render(); }).catch(function (e) { toast(mensajeError(e.message)); });
+      return;
+    }
+    var R = S.aprR = S.aprR || {};
+    html += '<div class="hint">Cada domingo comparo la semana que te propuse con la que hiciste. Tus respuestas pesan más que lo que yo observo: «solo esta vez» borra lo observado; «siempre» lo fija. Contesta todas y pulsa guardar.</div>';
+    html += '<h3 class="sec-t">Deathnote · ' + A.preguntas.length + ' pendientes</h3>';
+    if (!A.preguntas.length) html += '<div class="hint">No hay preguntas pendientes. Llegan el domingo por la noche si has cambiado algo de lo que te propuse.</div>';
+    html += A.preguntas.map(function (q) { var r = R[q.id] || {};
+      return '<section class="dn-q" data-q="' + esc(q.id) + '"><div class="hint">Semana del ' + esc(etqDia(q.lunes)) + ' · ' + esc(q.bloque || '') + '</div><b>' + esc(q.pregunta) + '</b>' +
+        (q.opciones.length ? '<div class="zonas">' + q.opciones.map(function (o) { return '<button type="button" class="zona" data-op="' + esc(o) + '" aria-pressed="' + (r.respuesta === o) + '">' + esc(o) + '</button>'; }).join('') + '</div>' : '') +
+        '<input type="text" data-com placeholder="' + (q.opciones.length ? 'Comentario (opcional): el porqué con tus palabras' : 'Tu respuesta') + '" value="' + esc(r.comentario || '') + '">' +
+        '<button class="btn-ghost" type="button" data-desc>No preguntar esto</button></section>'; }).join('');
+    if (A.preguntas.length) html += '<button class="btn btn-primary" type="button" id="dn-ok">Guardar respuestas</button>';
+    html += '<h3 class="sec-t">Lo aprendido · ' + A.reglas.filter(function (x) { return x.firme; }).length + ' reglas firmes</h3><div class="hint">Peso positivo = lo prefieres; negativo = lo evitas. Las que aún no llegan a ±1,5 son observaciones sueltas y no mueven nada. Para desactivar una: «Road to Elite · Motor» › APRENDIZAJE · REGLAS › ACTIVA = No.</div>' +
+      (A.reglas.length ? A.reglas.map(function (x) { return '<div class="dn-r" style="opacity:' + (x.firme ? 1 : 0.55) + '"><b>' + (x.peso > 0 ? '+' : '') + esc(x.peso) + '</b><span>' + esc(x.texto) + (x.origen === 'respuesta' ? ' ✓' : '') + '</span></div>'; }).join('') : '<div class="hint">Todavía nada: hace falta al menos una semana comparada.</div>') +
+      '<button class="btn" type="button" id="dn-an">Analizar ahora la semana en curso</button>';
+    $app.innerHTML = html; document.getElementById('atras').onclick = function () { abrirAjustes(); };
+    $app.querySelectorAll('.dn-q').forEach(function (sec) { var id = sec.dataset.q;
+      sec.querySelectorAll('[data-op]').forEach(function (b) { b.onclick = function () { var ya = b.getAttribute('aria-pressed') === 'true'; sec.querySelectorAll('[data-op]').forEach(function (y) { y.setAttribute('aria-pressed', 'false'); }); if (!ya) b.setAttribute('aria-pressed', 'true'); R[id] = R[id] || {}; R[id].respuesta = ya ? '' : b.dataset.op; }; });
+      sec.querySelector('[data-com]').oninput = function () { R[id] = R[id] || {}; R[id].comentario = this.value; };
+      sec.querySelector('[data-desc]').onclick = function () { R[id] = { descartar: true }; sec.style.opacity = 0.35; };
+    });
+    var okb = document.getElementById('dn-ok');
+    if (okb) okb.onclick = function () {
+      var l = Object.keys(R).map(function (k) { return { id: k, respuesta: R[k].respuesta || '', comentario: R[k].comentario || '', descartar: !!R[k].descartar }; }).filter(function (x) { return x.respuesta || x.comentario || x.descartar; });
+      if (!l.length) { toast('Contesta al menos una'); return; }
+      okb.disabled = true; okb.textContent = 'Guardando…';
+      api({ action: 'deathnote_responder', respuestas: l }).then(ok).then(function (r) { S.apr = r; S.aprR = {}; render(); toast(r.guardadas + ' respuestas aplicadas a la programación'); }).catch(falloApi(okb));
+    };
+    document.getElementById('dn-an').onclick = function () { var b = this; b.disabled = true; b.textContent = 'Analizando…';
+      api({ action: 'aprendizaje_analizar' }).then(ok).then(function (r) { S.apr = r; render(); toast('Análisis: ' + r.resultado); }).catch(falloApi(b)); };
   }
   function renderCompetis() {
     var html = cabeceraVista('Competis', 'Menú');

@@ -582,12 +582,13 @@
     if (S.vista === 'extras') return renderExtras();
     if (S.vista === 'reest') return renderReest();
     if (S.vista === 'competis') return renderCompetis();
+    if (S.vista === 'aprendizaje') return renderAprendizaje();
     TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
       (S.aviso ? '<div class="stale">' + esc(S.aviso) + '</div>' : '');
     enlazarCabecera();
-    if (S._autoChq && $scrim.hidden) { var iq = S._autoChq; guardar('rte-chq-' + iq, 1); setTimeout(function () { abrirChequeo(iq); }, 350); }   // se abre solo una vez al abrir la sesión del día
+    if (false && S._autoChq && $scrim.hidden) { var iq = S._autoChq; guardar('rte-chq-' + iq, 1); setTimeout(function () { abrirChequeo(iq); }, 350); }   // se abre solo una vez al abrir la sesión del día
   }
 
   function cabecera(d) {
@@ -709,7 +710,7 @@
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
-    html += htmlChequeo(d, x) + htmlCombustible(x);
+    html += htmlCombustible(x);   // v0.26 · sin chequeo diario
     if (cambiado && (d.reest || []).some(function (r) { return r.modo === 'Viaje'; }) && !(S.verOrig && S.verOrig[x.iso])) html += '<button class="btn-ghost sm reest-mat" type="button" data-matnuevo="' + x.iso + '">＋ Tengo material nuevo hoy</button>';
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
@@ -802,7 +803,7 @@
     if (b.clave) tagEst += '<div class="b-clave">🎯 Clave para tus carencias · ' + esc(b.clave) + '</div>';
     if (b.editado && !b.extra) tagEst += '<div class="b-state">✎ Editado por ti: la recarga de Fabrik no lo cambia.</div>';
     if (b.refCambio) tagEst += '<div class="b-state warn">⚠ Este hueco de Fabrik era «' + esc(b.refCambio) + '» cuando se programó: el orden ha cambiado. Revisa el bloque antes de entrenar.</div>';
-    var chq = chequeoDe(d, x.iso);
+    var chq = null;
     if (chq && /Ámbar|Rojo/.test(chq['SEMÁFORO']) && (/Z6|CALIDAD|Z4|Z5/.test(norm(b.origen + ' ' + b.titulo + ' ' + (b.codigos || ''))) || /R01|R02|R03|W04/.test(b.codigos || '')))
       tagEst += '<div class="b-state ' + (chq['SEMÁFORO'] === 'Rojo' ? 'no' : 'warn') + '">Semáforo ' + esc(chq['SEMÁFORO'].toLowerCase()) + ' hoy: ' + esc(String(chq['RECOMENDACIÓN'] || '').split('. ')[0]) + '.</div>';
     var grab = gr ? '<details class="grab"><summary>📷 Grabación' + (gr.reels.length ? ' · ' + esc(gr.reels.map(function (r) { return r.idea; }).join(' · ')) : ' · story') + '</summary><div class="exp-body">' +
@@ -983,7 +984,12 @@
   function htmlCamposCarrera(c, abierto, tipoDef) {
     var sel = function (id, v, l) { return '<select id="' + id + '"><option value=""></option>' + l.map(function (x) { return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>'; };
     var cum = c['PARCIALES CUMPLIDOS'] || '';
-    return '<details class="run-f"' + (abierto ? ' open' : '') + '><summary>🏃 Datos de carrera (Garmin)</summary><div class="exp-body">' +
+    var fbg = function (k, l, v) { return '<div class="seg" role="group" data-fbg="' + k + '">' + l.map(function (x) { return '<button type="button" data-fb="' + esc(x) + '" aria-pressed="' + (x === v) + '">' + esc(x) + '</button>'; }).join('') + '</div>'; };
+    return '<div class="run-fb"><div class="part-lbl">Tu feedback · ajusta las carreras de la semana que viene</div>' +
+      '<label>Piernas</label>' + fbg('PIERNAS', ['Frescas', 'Normales', 'Cargadas'], c.PIERNAS || '') +
+      '<label>Respiración</label>' + fbg('RESPIRACIÓN', ['Cómoda', 'Justa', 'Ahogado'], c['RESPIRACIÓN'] || '') +
+      '<label>¿Podías más?</label>' + fbg('MARGEN', ['Sí, más ritmo', 'Sí, más volumen', 'Justo', 'Me pasé'], c.MARGEN || '') + '</div>' +
+      '<details class="run-f"' + (abierto ? ' open' : '') + '><summary>🏃 Datos de carrera (Garmin)</summary><div class="exp-body">' +
       '<div class="two"><div><label for="ca-t">Tipo</label>' + sel('ca-t', c.TIPO || tipoDef || '', TIPOS_CARRERA) + '</div>' +
       '<div><label for="ca-km">Distancia (km)</label><input id="ca-km" inputmode="decimal" value="' + esc(c['DISTANCIA (km)'] || '') + '" placeholder="8,2"></div></div>' +
       '<div class="two"><div><label for="ca-ti">Tiempo</label><input id="ca-ti" value="' + esc(c.TIEMPO || '') + '" placeholder="45:30 o 1:02:10"></div>' +
@@ -1003,17 +1009,20 @@
       '</div></details>';
   }
   function enlazarCamposCarrera() {
+    $scrim.querySelectorAll('[data-fbg]').forEach(function (g) { g.querySelectorAll('[data-fb]').forEach(function (bt) { bt.onclick = function () {
+      var ya = bt.getAttribute('aria-pressed') === 'true'; g.querySelectorAll('[data-fb]').forEach(function (y) { y.setAttribute('aria-pressed', 'false'); }); if (!ya) bt.setAttribute('aria-pressed', 'true'); }; }); });
     $scrim.querySelectorAll('[data-cu]').forEach(function (bt) { bt.onclick = function () {
       var ya = bt.getAttribute('aria-pressed') === 'true';
       $scrim.querySelectorAll('[data-cu]').forEach(function (y) { y.setAttribute('aria-pressed', 'false'); }); if (!ya) bt.setAttribute('aria-pressed', 'true'); }; });
   }
   function leerCamposCarrera() {
     var cu = $scrim.querySelector('[data-cu][aria-pressed="true"]');
-    return { TIPO: val('ca-t'), 'DISTANCIA (km)': val('ca-km').replace('.', ','), TIEMPO: val('ca-ti'), 'RITMO MEDIO (/km)': val('ca-ri'), 'FC MEDIA': val('ca-fc'), 'FC MÁX': val('ca-fm'),
+    var fb = function (k) { var b = $scrim.querySelector('[data-fbg="' + k + '"] [aria-pressed="true"]'); return b ? b.dataset.fb : ''; };
+    return { PIERNAS: fb('PIERNAS'), 'RESPIRACIÓN': fb('RESPIRACIÓN'), MARGEN: fb('MARGEN'), TIPO: val('ca-t'), 'DISTANCIA (km)': val('ca-km').replace('.', ','), TIEMPO: val('ca-ti'), 'RITMO MEDIO (/km)': val('ca-ri'), 'FC MEDIA': val('ca-fc'), 'FC MÁX': val('ca-fm'),
       'FC ESTABLE (min)': val('ca-fe'), 'PARCIALES POR KM': val('ca-pk'), 'SERIES (tiempos)': val('ca-se'), 'PARCIALES CUMPLIDOS': cu ? cu.dataset.cu : '', CADENCIA: val('ca-cad'),
       'DESNIVEL (m)': val('ca-des'), 'TEMPERATURA (°C)': val('ca-tem'), SUPERFICIE: val('ca-su'), SENSACIONES: val('ca-sen') };
   }
-  function hayDatosCarrera(c) { return !!(c['DISTANCIA (km)'] || c.TIEMPO || c['FC MEDIA'] || c['SERIES (tiempos)'] || c['PARCIALES POR KM']); }
+  function hayDatosCarrera(c) { return !!(c.PIERNAS || c['RESPIRACIÓN'] || c.MARGEN || c['DISTANCIA (km)'] || c.TIEMPO || c['FC MEDIA'] || c['SERIES (tiempos)'] || c['PARCIALES POR KM']); }
   function guardarCarreraApi(c) {
     return apiGuardar({ action: 'carrera', carrera: c }).then(ok).then(function (r) {
       S.analisis = r.analisis || null;
@@ -1034,7 +1043,7 @@
       ev.preventDefault();
       var o = leerCamposCarrera(); o.FECHA = aTxt(val('ca-f')); o['SESIÓN'] = val('ca-n'); o.ID_PLAN = ref.id || ''; o.RPE = val('ca-rpe');
       o.ID = c.ID || ref.idCarrera || (ref.idCarrera = 'c' + uid());          // mismo ID en cada reintento: no se duplica
-      if (!hayDatosCarrera(o)) { toast('Pon al menos distancia, tiempo o FC'); return; }
+      if (!hayDatosCarrera(o)) { toast('Pon al menos tu feedback, distancia, tiempo o FC'); return; }
       var b = document.getElementById('ca-ok'); b.disabled = true;
       guardarCarreraApi(o).then(function () { cerrarHoja(); render(); toast('Carrera guardada · análisis actualizado'); }).catch(falloApi(b));
     };
@@ -1839,7 +1848,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -2011,7 +2020,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.25';
+  var WEB_VERSION = 'web 0.26';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
