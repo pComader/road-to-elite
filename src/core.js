@@ -375,7 +375,7 @@
     return { semana: sem.lunes, hoy: sem.hoy, ciclo: fab ? fab.ciclo : cicloPara(S.ciclo || leer('rte-ciclo'), sem.lunes), dias: dias,
       erratas: sem.erratasFabrik || [], registro: sem.registro || [], plan: sem.plan || [], borrador: plan.some(function (r) { return norm(r.ESTADO) === 'BORRADOR'; }),
       misMarcas: S.misMarcas || [], hayFabrik: !!fab, eventos: sem.eventos || [], conf: sem.conf, confSiguiente: sem.confSiguiente,
-      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
+      pendientes: sem.pendientes || [], cambios: sem.cambios || [], propuestas: propuestas, carrera: sem.carrera || [], metas: sem.metas || null, chequeos: sem.chequeos || [], op: sem.op || null, push: !!sem.push, fabrikCambios: sem.fabrikCambios || [],
       refuerzos: sem.refuerzos || [], refuerzosSig: sem.refuerzosSig || [], notasBloque: sem.notasBloque || [], grabacion: sem.grabacion || {}, avisosVistos: sem.avisosVistos || [],
       fabrikCargado: !!sem.fabrikCargado, porAprobar: sem.eventosPorAprobar || [], enduranceManana: !!sem.enduranceManana,
       sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, videosVer: sem.videosVer || '', competisPreguntas: sem.competisPreguntas || [], fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
@@ -583,6 +583,7 @@
     if (S.vista === 'reest') return renderReest();
     if (S.vista === 'competis') return renderCompetis();
     if (S.vista === 'aprendizaje') return renderAprendizaje();
+    if (S.vista === 'operacion') return renderOperacion();
     TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
@@ -677,6 +678,15 @@
 
   // ---------- cuenta atrás a los tests (APP · CONFIG) ----------
   /** Tests y competiciones próximos: salen de APP · EVENTOS (una sola fuente); si no están ahí, de APP · CONFIG. */
+  // v0.27 · cabecera del modo operación en el día
+  function htmlOperacion(d, x) {
+    var o = d.op; if (!o || !o.activo) return '';
+    var f = (o.dias || {})[x.iso]; if (!f || f.clave === 'NORMAL') return '';
+    var dn = f.dn == null ? (o.faltan != null ? 'faltan ' + Math.round((Date.parse(o.fecha || o.prevista) - Date.parse(x.iso)) / 864e5) + ' días' + (o.fecha ? '' : ' (fecha prevista)') : '') : 'D' + (f.dn >= 0 ? '+' : '') + f.dn;
+    return '<button type="button" class="unpub op-ban' + (o.alarma ? ' warn' : '') + '" data-irop>🩺 <b>' + esc(f.nombre || 'Modo operación') + '</b>' + (dn ? ' · ' + esc(dn) : '') +
+      (o.alarma ? '<br>⛔ Alarma activa: detén la actividad y contacta con la clínica. Fase congelada.' : '') + (o.pendiente && f.pendiente !== false && x.iso >= d.hoy ? '<br>⚠ ' + esc(o.pendiente) : '') +
+      ((o.tareas || []).length && x.iso === d.hoy ? '<br>📌 ' + esc(o.tareas.map(function (t) { return t.ref; }).join(' · ')) : '') + '</button>';
+  }
   function htmlCuentaAtras(d) {
     var c = S.config || {}, out = '', vistos = {};
     (d.eventos || []).filter(function (e) { return /^test\b/i.test(e.EVENTO || '') || /Competición|HYROX/.test(e.TIPO || ''); }).forEach(function (e) {
@@ -710,7 +720,7 @@
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
-    html += htmlCombustible(x);   // v0.26 · sin chequeo diario
+    html += htmlOperacion(d, x) + htmlCombustible(x);   // v0.26 · sin chequeo diario · v0.27 · modo operación
     if (cambiado && (d.reest || []).some(function (r) { return r.modo === 'Viaje'; }) && !(S.verOrig && S.verOrig[x.iso])) html += '<button class="btn-ghost sm reest-mat" type="button" data-matnuevo="' + x.iso + '">＋ Tengo material nuevo hoy</button>';
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
@@ -765,6 +775,11 @@
         b.partes.filter(function (p) { return p.tipo === 'main'; }).map(function (p) { return '<div class="board small">' + esc((p.etiqueta ? p.etiqueta + '\n' : '') + p.texto) + '</div>'; }).join('') +
         '<div class="b-acc"><button type="button" class="btn sm" data-reactivar="' + esc(idc) + '">↺ Reactivar</button></div></div></details>';
     }
+    if (b.opOculto) {   // v0.27 · modo operación: lo de Fabrik que no aplica va plegado
+      return '<details class="block cancel"><summary><span class="b-num">🩺</span><span class="b-title">' + esc(b.titulo) + '</span><span class="tag">' + esc(b.opOculto) + '</span></summary>' +
+        '<div class="exp-body"><div class="hint">Modo operación: este bloque de Fabrik no se hace hoy. Se enseña solo como referencia; Fabrik no se modifica.</div>' +
+        b.partes.filter(function (p) { return p.tipo === 'main'; }).map(function (p) { return '<div class="board small">' + esc((p.etiqueta ? p.etiqueta + '\n' : '') + p.texto) + '</div>'; }).join('') + '</div></details>';
+    }
     var todo = b.partes.map(function (p) { return p.etiqueta + '\n' + p.texto; }).join('\n');
     var mk = marcasKilos();
     var ctxB = { bloque: movimientoEn(b.titulo, mk), desdePower: /DEL POWER SNATCH/.test(norm(todo)), baseBloque: baseDeParte(todo, mk) };
@@ -786,6 +801,7 @@
       }).join('') + '</dl>';
     }
     if (b.nota) notas += '<div class="prose">' + prosa(b.nota) + '</div>';
+    if (b.opNota) notas = '<div class="unpub op-nota">🩺 ' + esc(b.opNota) + '</div>' + notas;
 
     var gk = b.extra ? x.iso + '|' + b.id : sumarDias(d.semana, DIAS7.indexOf(b.fabrikDia || x.nombre)) + '|' + b.n, gr = (d.grabacion || {})[gk];
     var cam = gr && gr.reels && gr.reels.length ? '<span class="b-cam" title="Encaja en un reel">📷</span>' : '';
@@ -1316,7 +1332,7 @@
   }
   function urlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
   function mensajeError(m) {
-    return { elige_estimulo: 'Marca al menos un estímulo para incentivar.', zona_no_valida: 'Elige la zona de la molestia.', fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
+    return { fecha_no_valida: 'Esa fecha no es válida.', elige_estimulo: 'Marca al menos un estímulo para incentivar.', zona_no_valida: 'Elige la zona de la molestia.', fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
       marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
@@ -1801,7 +1817,8 @@
   }, true);
   ['pointerup', 'pointercancel'].forEach(function (ev) { document.addEventListener(ev, function () { if (lp) { clearTimeout(lp.t); lp = null; } }, true); });
   document.addEventListener('pointermove', function (e) { if (lp && (Math.abs(e.clientX - lp.x) > 10 || Math.abs(e.clientY - lp.y) > 10)) { clearTimeout(lp.t); lp = null; } }, true);
-  document.addEventListener('click', function (e) { if (lpHecho) { lpHecho = false; e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener('click', function (e) {
+    var io = e.target.closest && e.target.closest('[data-irop]'); if (io) { S.vista = 'operacion'; S.opv = null; render(); window.scrollTo({ top: 0 }); return; } if (lpHecho) { lpHecho = false; e.preventDefault(); e.stopPropagation(); } }, true);
   document.addEventListener('contextmenu', function (e) { if (e.target.closest && e.target.closest('[data-ver-blq]')) e.preventDefault(); }, true);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$scrim.hidden) cerrarHoja(); });
 
@@ -1848,7 +1865,7 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), renderOperacion = perezoso('menu', 'renderOperacion'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -2020,7 +2037,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.26';
+  var WEB_VERSION = 'web 0.27';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

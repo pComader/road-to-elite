@@ -1095,3 +1095,9 @@ details.cf summary{cursor:pointer}
 .dn-r b{min-width:34px;text-align:right}
 .dn-q .zona[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
 .dn-q input[type=text]{width:100%;box-sizing:border-box;margin:4px 0 8px}
+/* v0.27 · modo operación */
+.op-ban{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;border:1px solid var(--line,#2a2f3a)}
+.op-nota{margin:6px 0}
+#opw textarea{width:100%;box-sizing:border-box}
+.zona[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.dn-q input[type=text],#opr input[type=text]{width:100%;box-sizing:border-box}

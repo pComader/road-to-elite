@@ -23,6 +23,7 @@
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     html += '<button class="set-link reest-link" type="button" id="ir-reest"><span class="set-ico">🔀</span>Reestructurar · viaje, reorganizar, competi<span class="go">›</span></button>';
+    if (d.op) html += '<button class="set-link" type="button" id="ir-operacion"><span class="set-ico">🩺</span>Modo operación' + (d.op.activo ? ' · ' + esc(d.op.nombre || 'activo') : ' · apagado') + '<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-aprendizaje"><span class="set-ico">🧠</span>Aprendizaje · deathnote y lo aprendido<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-competis"><span class="set-ico">🏆</span>Competis · España y Europa · seguimiento<span class="go">›</span></button>';
     html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
@@ -55,6 +56,7 @@
     document.getElementById('ir-calendario').onclick = function () { abrirCalendario(); };
     $app.querySelectorAll('[data-unidad]').forEach(function (b) { b.onclick = function () { guardar('rte-unidad', b.dataset.unidad); S._abrir = 's-unid'; render(); toast('Cargas en ' + b.dataset.unidad); }; });
     document.getElementById('ir-reest').onclick = function () { S.vista = 'reest'; S.reest = {}; render(); window.scrollTo({ top: 0 }); };
+    if (document.getElementById('ir-operacion')) document.getElementById('ir-operacion').onclick = function () { S.vista = 'operacion'; S.opv = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-aprendizaje').onclick = function () { S.vista = 'aprendizaje'; S.apr = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-competis').onclick = function () { S.vista = 'competis'; S.competis = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
@@ -1577,6 +1579,66 @@
     };
     document.getElementById('dn-an').onclick = function () { var b = this; b.disabled = true; b.textContent = 'Analizando…';
       api({ action: 'aprendizaje_analizar' }).then(ok).then(function (r) { S.apr = r; render(); toast('Análisis: ' + r.resultado); }).catch(falloApi(b)); };
+  }
+  // v0.27 · Modo operación capilar: fecha, autorizaciones de la clínica, fases, registro diario, referencias y WOD de la WPD
+  function renderOperacion() {
+    var V = S.opv, html = cabeceraVista('Modo operación', 'Menú');
+    var atras = function () { document.getElementById('atras').onclick = function () { abrirAjustes(); }; };
+    if (!V) { $app.innerHTML = html + '<div class="hint">Cargando…</div>'; atras();
+      api({ action: 'op_estado', lunes: S.data.semana }).then(ok).then(function (r) { S.opv = r; if (S.vista === 'operacion') render(); }).catch(function (e) { toast(mensajeError(e.message)); }); return; }
+    var o = V.op, hoy = S.data.hoy || hoyLocal(), f1 = function (iso) { return iso ? ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'][new Date(iso + 'T12:00:00').getDay()] + ' ' + iso.slice(8) + '/' + iso.slice(5, 7) + (iso.slice(0, 4) !== String(new Date().getFullYear()) ? '/' + iso.slice(2, 4) : '') : ''; };
+    if (!o) { $app.innerHTML = html + '<div class="hint">El modo operación aún no está instalado: ejecuta «configurar» en Apps Script.</div>'; atras(); return; }
+    var si = function (id, txt, on, nota) { return '<label class="sh-b"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><span>' + txt + (nota ? '<span class="hint"> · ' + esc(nota) + '</span>' : '') + '</span></label>'; };
+    html += '<section class="me" style="display:block"><b>' + (o.activo ? esc(o.nombre || 'Modo activo') : 'Modo apagado') + '</b>' +
+      (o.activo ? ' · ' + (o.dn != null ? 'D' + (o.dn >= 0 ? '+' : '') + o.dn : o.faltan != null ? 'faltan ' + o.faltan + ' días' + (o.fecha ? '' : ' (fecha prevista ' + esc(f1(o.prevista)) + ')') : '') : '') +
+      '<div class="hint">' + esc(o.tecnica) + ' · ' + esc(o.aviso) + '</div>' +
+      (o.alarma ? '<div class="unpub warn">⛔ Alarma activa desde el ' + esc(f1(o.alarma)) + ': <b>detén la actividad y contacta con la clínica</b>. La fase está congelada.</div><button class="btn" type="button" id="op-qa">Ya está resuelto · quitar la alarma</button>' : '') +
+      (o.pendiente ? '<div class="unpub warn">⚠ ' + esc(o.pendiente) + '</div>' : '') +
+      (o.finPregunta ? '<div class="unpub">El modo termina en D48. ¿Lo desactivo al llegar?</div><div class="two"><button class="btn btn-primary" type="button" id="op-fin">Sí, desactivar ya</button><button class="btn" type="button" id="op-pro">Prolongar 7 días</button></div>' : '') + '</section>';
+    html += '<form id="opf" class="avf"><h3 class="sec-t">Fecha y autorizaciones de la clínica</h3>' +
+      '<label for="op-fe">Fecha de la operación (D0)</label><input type="date" id="op-fe" value="' + esc(o.fecha || '') + '"><div class="hint">Vacía = prevista ' + esc(f1(o.prevista)) + '. Al ponerla se calculan las fases, el test de 2 km pasa a D−6/D−5 y el de 10 km a abril.</div>' +
+      si('op-co', 'La clínica ha confirmado la fecha', o.confirmada) +
+      '<div class="part-lbl">Autorizaciones (márcalas solo cuando te las den)</div>' + o.aut.map(function (a) { return si('op-a-' + a.clave, '<b>' + esc(a.nombre) + '</b>' + (a.si && a.fecha ? ' ✓ ' + esc(f1(a.fecha)) : ''), a.si, a.nota); }).join('') +
+      '<div class="part-lbl">Reglas</div>' + si('op-re', 'Tras D47: 2 P1–P4 por semana hasta el HYROX (salvo taper y competición)', o.residual) + si('op-ac', 'Modo operación activo', o.activo) +
+      '<button class="btn btn-primary" type="submit" id="op-ok">Guardar cambios</button></form>';
+    html += '<h3 class="sec-t">Fases' + (o.previsto ? ' · previstas' : '') + '</h3>' + o.fases.map(function (f) { var act = o.activo && hoy >= f.desde && (!f.hasta || hoy <= f.hasta) && o.fase === f.clave;
+      return '<div class="dn-r"' + (act ? ' style="font-weight:700"' : '') + '><span>' + esc(f.nombre) + '</span><span class="hint" style="margin-left:auto">' + esc(f1(f.desde)) + (f.hasta ? ' → ' + esc(f1(f.hasta)) : ' →') + (f.pendiente ? ' · ⚠ falta autorización' : f.aut ? ' · ' + esc(f.aut.replace(/_/g, ' ')) : '') + '</span></div>'; }).join('');
+    if (o.bloqueado.length) html += '<h3 class="sec-t">Bloqueado ahora</h3><div class="hint">En los bloques de Fabrik se marca con ⛔ y su sustituto. Fabrik no se modifica.</div>' + o.bloqueado.map(function (b) { return '<div class="dn-r"><span>⛔ ' + esc(b) + '</span></div>'; }).join('');
+    if (o.tareas.length) html += '<h3 class="sec-t">Referencias de esta semana</h3>' + o.tareas.map(function (t, k) { return '<section class="dn-q"><b>' + esc(t.ref) + '</b><div class="hint">' + esc(t.texto) + '</div><input type="text" data-refv="' + k + '" placeholder="Resultado (kg, kcal, metros, ritmo, FC…)"><button class="btn sm" type="button" data-refok="' + k + '">Guardar referencia</button></section>'; }).join('');
+    var sin = [['sangrado', 'Sangrado'], ['dolor', 'Dolor creciente'], ['enrojecimiento', 'Enrojecimiento'], ['hinchazon', 'Hinchazón'], ['fiebre', 'Fiebre ≥38 °C'], ['golpe', 'Golpe en la zona']];
+    html += '<form id="opr" class="avf"><h3 class="sec-t">Registro de hoy</h3><div class="part-lbl">Síntomas</div><div class="zonas">' + sin.map(function (x) { return '<button type="button" class="zona" data-sin="' + x[0] + '" aria-pressed="false">' + x[1] + '</button>'; }).join('') + '</div>' +
+      '<input type="text" id="or-ns" placeholder="Nota de síntomas (opcional)">' +
+      '<label for="or-ac">Actividad</label><input type="text" id="or-ac" placeholder="Paseo 20′, bici suave, aislados…">' +
+      '<div class="two"><div><label for="or-mi">Minutos</label><input id="or-mi" inputmode="numeric"></div><div><label for="or-rp">RPE</label><input id="or-rp" inputmode="numeric"></div></div>' +
+      '<div class="two"><div><label for="or-fa">Fatiga 1–10</label><input id="or-fa" inputmode="numeric"></div><div><label for="or-ag">Agujetas 1–10</label><input id="or-ag" inputmode="numeric"></div></div>' +
+      '<label for="or-zo">Zonas cargadas</label><input type="text" id="or-zo">' +
+      '<label>¿Cómo respondiste a lo de ayer?</label>' + segHtml('or-re', [['Bien', 'Bien'], ['Regular', 'Regular'], ['Mal', 'Mal']], '') +
+      '<label>Decisión</label>' + segHtml('or-de', [['Mantener', 'Mantener'], ['Avanzar', 'Avanzar'], ['Reducir', 'Reducir'], ['Consultar', 'Consultar']], '') +
+      '<button class="btn btn-primary" type="submit" id="or-ok">Guardar registro</button></form>';
+    html += '<form id="opw" class="avf"><h3 class="sec-t">WOD de la WPD League</h3><div class="hint">Pégalo: lo comparo con P1–P4 y sustituye al que más se parezca (no se añade el extra equivalente). Si no se parece a ninguno, cuenta como intensidad de metcon.</div>' +
+      '<textarea id="ow-t" rows="5" placeholder="AMRAP 12: 10 thrusters 43 kg + 8 C2B…"></textarea>' +
+      '<div class="two"><div><label for="ow-f">Día</label><select id="ow-f">' + S.data.dias.map(function (x) { return '<option value="' + x.iso + '">' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div><div><label>Turno</label>' + segHtml('ow-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div>' +
+      '<button class="btn btn-primary" type="submit" id="ow-ok">Analizar y programar</button></form>';
+    if ((V.registro || []).length) html += '<h3 class="sec-t">Últimos registros</h3>' + V.registro.slice(0, 6).map(function (r) { return '<div class="dn-r"><span>' + esc(r.FECHA) + (r.DN !== '' ? ' · D' + esc(r.DN) : '') + ' · ' + esc(r.TIPO === 'DIARIO' ? (r.ACTIVIDAD || 'sin actividad') + (r.RPE ? ' · RPE ' + r.RPE : '') : r.REFERENCIA + ': ' + r.VALOR) + '</span></div>'; }).join('');
+    $app.innerHTML = html; atras();
+    var marca = function (id) { var e = document.getElementById(id); return !!(e && e.checked); };
+    var manda = function (cuerpo, b, msg) { if (b) { b.disabled = true; }
+      api(Object.assign({ action: 'op_config', lunes: S.data.semana }, cuerpo)).then(ok).then(function (r) { if (r.semana) aplicarSemana(r.semana); S.opv = null; render(); toast(msg + ((r.movidos || []).length ? ' · ' + r.movidos.join(' · ') : '')); }).catch(falloApi(b)); };
+    document.getElementById('opf').onsubmit = function (ev) { ev.preventDefault(); var aut = {}; o.aut.forEach(function (a) { aut[a.clave] = marca('op-a-' + a.clave); });
+      manda({ fecha: val('op-fe'), confirmada: marca('op-co'), residual: marca('op-re'), activo: marca('op-ac'), aut: aut }, document.getElementById('op-ok'), 'Guardado'); };
+    if (document.getElementById('op-qa')) document.getElementById('op-qa').onclick = function () { manda({ quitarAlarma: true }, this, 'Alarma quitada: la fase se reanuda'); };
+    if (document.getElementById('op-fin')) document.getElementById('op-fin').onclick = function () { manda({ activo: false }, this, 'Modo operación desactivado'); };
+    if (document.getElementById('op-pro')) document.getElementById('op-pro').onclick = function () { manda({ prolongar: 7 }, this, 'Prolongado 7 días'); };
+    $app.querySelectorAll('[data-sin]').forEach(function (b) { b.onclick = function () { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); }; });
+    enlazarSeg('or-re'); enlazarSeg('or-de'); enlazarSeg('ow-tu');
+    var reg = function (cuerpo, b, msg) { b.disabled = true; api(Object.assign({ action: 'op_registro', fecha: hoy }, cuerpo)).then(ok).then(function (r) { S.opv = { op: r.op, registro: r.registro }; if (S.data.op) S.data.op.alarma = r.op.alarma; render(); toast(r.alarma ? '⛔ Detén la actividad y contacta con la clínica' : msg); }).catch(falloApi(b)); };
+    document.getElementById('opr').onsubmit = function (ev) { ev.preventDefault(); var c = { tipo: 'DIARIO', notaSintomas: val('or-ns'), actividad: val('or-ac'), min: val('or-mi'), rpe: val('or-rp'), fatiga: val('or-fa'), agujetas: val('or-ag'), zonas: val('or-zo'), respuesta: valSeg('or-re') || '', decision: valSeg('or-de') || '' };
+      $app.querySelectorAll('[data-sin]').forEach(function (b) { c[b.dataset.sin] = b.getAttribute('aria-pressed') === 'true'; }); reg(c, document.getElementById('or-ok'), 'Registro guardado'); };
+    $app.querySelectorAll('[data-refok]').forEach(function (b) { b.onclick = function () { var k = b.dataset.refok, v = $app.querySelector('[data-refv="' + k + '"]').value.trim(); if (!v) { toast('Escribe el resultado'); return; }
+      reg({ tipo: /^Vuelta/.test(o.tareas[k].ref) ? 'COMPROBACIÓN' : 'REFERENCIA', referencia: o.tareas[k].ref, valor: v }, b, 'Referencia guardada'); }; });
+    document.getElementById('opw').onsubmit = function (ev) { ev.preventDefault(); var t = val('ow-t'); if (!t) { toast('Pega el WOD'); return; } var b = document.getElementById('ow-ok'); b.disabled = true; b.textContent = 'Analizando…';
+      api({ action: 'op_wpd', texto: t, fecha: val('ow-f'), turno: valSeg('ow-tu') || 'AM' }).then(ok).then(function (r) { if (r.semana) aplicarSemana(r.semana); S.opv = null; render();
+        toast((r.p ? 'Sustituye ' + r.p + (r.sustituido ? ' («' + r.sustituido + '»)' : '') : 'Sin P: cuenta como intensidad de metcon') + (r.avisos.length ? ' · ⚠ ' + r.avisos[0] : '')); }).catch(falloApi(b)); };
   }
   function renderCompetis() {
     var html = cabeceraVista('Competis', 'Menú');
