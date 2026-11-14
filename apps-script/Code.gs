@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.30.0',
+  VERSION: '0.30.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -159,6 +159,7 @@ function accion_(a, body, user) {
       case 'murph_fecha': return json_(murphFecha_(body.fecha));
       case 'ritmos_confirmar': return json_(ritmosConfirmar_());
       case 'strava_sync': return json_(stravaSync_());
+      case 'pausa_quitar': reanudarEstimulo_(body.codigo); return json_({ ok: true, semana: semanaCompleta_(body.semana) });
       case 'garmin_sync': return json_(garminDiario_(body.iso || ''));
       case 'fichas': return json_({ ok: true, fichas: fichas_() });
       case 'ficha_guardar': var fg = guardarFicha_(body.ficha || {}); return json_({ ok: true, ficha: fg, fichas: fichas_() });
@@ -422,6 +423,7 @@ function semanaCompletaSin_(semana) {
   try { out.clave = claveSemana_(lunes, base.plan); } catch (e) { out.clave = {}; }
   try { out.reest = reestActiva_(lunes); } catch (e) { out.reest = []; }
   try { out.activacion = activacionSemana_(lunes); } catch (e) { out.activacion = {}; }   // v0.29
+  try { out.pausa = pausaInfo_(); } catch (e) { out.pausa = []; }   // v0.30
   try { var hoyF = hoyIso_(); out.feedbackAyer = hoyF >= lunes && hoyF <= sumarDias(lunes, 7) ? feedbackAyer_(hoyF) : []; } catch (e) { out.feedbackAyer = []; }
   try { out.op = opPayload_(lunes); if (out.op && out.op.activo && out.fabrik) out.fabrik = opFabrik_(out.fabrik, opSemana_(lunes)); } catch (e) { out.op = null; }   // v0.27 · modo operación (Fabrik solo se filtra al enseñarlo)
   try { var pk = pesoKg_(); out.combustible = {}; for (var k = 0; k < 7; k++) { var dk = sumarDias(lunes, k); out.combustible[dk] = combustibleDia_(dk, pk); } } catch (e) { out.combustible = {}; }
@@ -2904,7 +2906,8 @@ function generarExtras_(lunes, opts) {
     o.REFUERZO_ID = r.ID; o._prio = 'refuerzo';
     cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Programado', 'CÓDIGO': c || '' }); } });
   });
-  pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes && !z2Usados[p.ID]; }).forEach(function (p) {
+  var pausaP = pausaCodigos_();
+  pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes && !z2Usados[p.ID] && !/EN PAUSA/.test(p.NOTAS || '') && !(pausaP.length && codigosDe_((listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {})['CÓDIGOS']).some(function (c) { return pausaP.indexOf(c) >= 0; })); }).forEach(function (p) {
     var orig = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {};
     var z2m = p._Z2 ? Math.max(10, Math.round((parseFloat(p._MIN) || 40) * 0.25)) : 0;
     if (!z2m && p._MAS25) { p._MIN = Math.round((parseFloat(p._MIN || orig.MIN) || 30) * 1.25); p._CONTENIDO = '+25 % DE VOLUMEN (lo pediste al dejarlo pendiente): ' + p._MIN + '′ en total, misma intensidad.\n\n' + (p._CONTENIDO || orig.CONTENIDO || ''); }
@@ -7453,6 +7456,7 @@ function caducarPendientes_() {
   var lunes = lunesDe_(hoyIso_()), n = 0;
   listar_(HOJAS.PENDIENTES).forEach(function (r) {
     if (r.ESTADO !== 'Pendiente' && r.ESTADO !== 'Propuesto') return;
+    if (/EN PAUSA/.test(r.NOTAS || '')) return;   // v0.30 · pausados por ti: esperan a que los reanudes
     var d = celdaIso_(r['FECHA ORIGINAL']) || celdaIso_(String(r.CREADO || '').slice(0, 10)); if (!d) return;
     if (lunesDe_(d) < sumarDias(lunes, -7)) { actualizarFila_(HOJAS.PENDIENTES, r._fila, { ESTADO: 'Descartado', NOTAS: ((r.NOTAS || '') + ' · Caducado: no entró en la semana siguiente').trim() }); n++; }   // era de hace 2 semanas o más: no entró en la siguiente
   });
@@ -7471,7 +7475,7 @@ function estadoCarga_(lunes) {
   return { media: Math.round(media * 10) / 10, n: cans.length, sinDescanso: !descanso, descarga: ult.length >= 2 && media >= 8 && !descanso };
 }
 // ---------- factores de meta: duplicar HSPU/RMU hasta la operación e intensivos de vuelta ----------
-var DUP_PREVIA_ = /\b(W15|W16|W17|W31|W13|M30|M49)\b/, INT_PINO_ = /\b(W32|W33|W25|W26|W27|W28|M56|M57)\b/, INT_HSPU_ = /\b(W15|W16|W17|W31|W32)\b/;
+var DUP_PREVIA_ = /\b(W15|W16|W17|W31|W13|M30|M49|W32|W33|M53|M55)\b/, INT_PINO_ = /\b(W32|W33|W25|W26|W27|W28|M56|M57)\b/, INT_HSPU_ = /\b(W15|W16|W17|W31|W32)\b/;
 function ventanasIntensivo_() {
   if (ventanasIntensivo_.c !== undefined) return ventanasIntensivo_.c;
   var o = null; try { var cfg = opCfg_(); if (cfg.existe && cfg.d0) { var fs = opFases_(cfg), p6 = fs.filter(function (f) { return f.clave === 'POST6'; })[0], p7 = fs.filter(function (f) { return f.clave === 'POST7'; })[0];
@@ -7482,7 +7486,7 @@ function ventanasIntensivo_() {
 function factorMeta_(m, desde, ambito) {
   var v = ventanasIntensivo_(); if (!v) return { f: 1 };
   var cods = String(m['CÓDIGOS'] || m.codigos || ''), jue = ambito === 'Mes' ? sumarDias(desde, 14) : sumarDias(desde, 3), dentro = function (w) { return w && jue >= w[0] && jue <= w[1]; };
-  if (v.cfg.activo && jue >= v.cfg.inicio && (!v.cfg.d0 || jue < sumarDias(v.cfg.d0, -3)) && DUP_PREVIA_.test(cods)) return { f: 2, por: 'hasta la operación se duplican HSPU y RMU' };
+  if (v.cfg.activo && jue >= v.cfg.inicio && (!v.cfg.d0 || jue < sumarDias(v.cfg.d0, -3)) && DUP_PREVIA_.test(cods)) return { f: 2, por: 'hasta la operación se duplican HSPU, RMU, pino (HSW y estático) y press OH' };
   if (ambito !== 'Mes' && dentro(v.pino) && INT_PINO_.test(cods)) return { f: 2, por: 'intensivo de pino y sandbag (3 semanas desde que vuelve el pino)' };
   if (ambito !== 'Mes' && dentro(v.hspu) && INT_HSPU_.test(cods)) return { f: 2, por: 'intensivo de HSPU y flexiones libres (3 semanas desde que vuelven las HSPU)' };
   return { f: 1 };
@@ -7508,6 +7512,7 @@ function sesgoCiclo_(cods, ciclo) {
 }
 /** Al cerrar la lista de bloques nuevos: material, ciclo, tope de minutos y descarga. Carrera, P1–P4 y lo del modo operación no se tocan. */
 function ajustarNuevos_(nuevos, lunes, log) {
+  pausarNuevos_(nuevos, lunes, log);   // v0.30 · estímulos en pausa (quedan en pendientes)
   var ciclo = cicloExtras_(lunes), carga = { descarga: false }; try { carga = estadoCarga_(lunes); } catch (e) {}
   var op = null; try { op = opSemana_(lunes); } catch (e) {}
   var postVuelta = op && op.enModo && op.post >= 3, lesSem = lesionSemana_(lunes);   // en la vuelta manda la intensidad: no se descarga
@@ -7522,9 +7527,11 @@ function ajustarNuevos_(nuevos, lunes, log) {
     if (ciclo.k === 4 && !/Mínimo|DOSIS MENSUAL/.test(o.CONTENIDO || '')) { min = Math.max(5, Math.round(min * 0.6)); }
     if (carga.descarga && !postVuelta) { min = Math.max(5, Math.round(min * 0.5)); pre.unshift('DESCARGA AUTOMÁTICA (cansancio medio ' + carga.media + '/10 y sin día de descanso): la mitad de series, formato técnico, sin fallo.'); o.INTENSIDAD = '🟢 Técnico'; }
     var fm = factorMeta_({ 'CÓDIGOS': o['CÓDIGOS'] }, lunes, 'Semana'); if (fm.f > 1) { pre.unshift('×2 esta semana: ' + fm.por + '. Microdosis de calidad, no más volumen por sesión.'); min = Math.min(min, 12); }
+    var ab = pinoAB_(lunes, cods, nuevos); if (ab) { pre.unshift(ab.texto); min = ab.min; o['TÍTULO'] = ab.titulo || o['TÍTULO']; }   // v0.30 · semanas A/B de pino
     o.MIN = min; o.CONTENIDO = pre.join('\n') + '\n\n' + (o.CONTENIDO || '');
   });
   if (carga.descarga && !postVuelta && log) log.push('Descarga automática: cansancio medio ' + carga.media + '/10 y dos semanas sin día de descanso → extras a la mitad y en formato técnico');
+  try { var tAB = tipoSemanaPino_(lunes); if (tAB && log) log.push('Pino · semana ' + tAB.tipo + ' (' + tAB.metros + ' m de HSW + técnica ' + (tAB.tipo === 'A' ? 'normal' : 'doble') + ')'); } catch (eAB) {}
   if (log) log.push('Ciclo de extras: ' + ciclo.modo.toLowerCase() + ' (semana ' + ciclo.k + '/4' + (ciclo.fabrik ? ' · Fabrik: ' + ciclo.fabrik : '') + ')');
   return nuevos;
 }
@@ -7661,6 +7668,68 @@ function reglaActiva_(clave, activa) {
   actualizarFila_(HOJAS.APR_REG, r._fila, { ACTIVA: activa ? 'Sí' : 'No', ACTUALIZADO: ahora_() }); MEMO = null; reglasAprendidas_.c = null; return true;
 }
 
+
+// ===================== v0.30 · SEMANAS A/B DE PINO + ESTÍMULOS EN PAUSA =====================
+// A = acumulación 200 m de HSW + técnica (pino estático, free HSPU, pirueta, rampa). B = 100 m y el doble de tiempo de esas skills.
+// Se alternan cada semana desde «pino_ab_ancla» (lunes de una semana A). Las metas semanales (W32 HSW, W33 pino estático) garantizan los estímulos;
+// esto solo reparte la dosis entre los bloques de la semana. En la operación, el filtro del modo quita las inversiones solo.
+function tipoSemanaPino_(lunes) {
+  var cfg = leerConfig_(), ancla = celdaIso_(String(cfg.pino_ab_ancla || '').replace(/^'/, '')); if (!ancla) return null;
+  var n = Math.round((Date.parse(lunes) - Date.parse(ancla)) / 6048e5); if (n < 0) return null;
+  var A = n % 2 === 0;
+  return { tipo: A ? 'A' : 'B', metros: A ? (+cfg.pino_metros_A || 200) : (+cfg.pino_metros_B || 100), tecnica: A ? 1 : 2 };
+}
+function pinoAB_(lunes, cods, nuevos) {
+  var t = tipoSemanaPino_(lunes); if (!t) return null;
+  var hsw = cods.indexOf('W32') >= 0, est = cods.indexOf('W33') >= 0; if (!hsw && !est) return null;
+  if (hsw) {
+    var n = nuevos.filter(function (x) { return codigosDe_(x['CÓDIGOS']).indexOf('W32') >= 0; }).length || 1;
+    var m = Math.max(10, Math.round(t.metros / n / 5) * 5), tec = 6 * t.tecnica, tramos = Math.ceil(m / 10);
+    return { min: Math.round(m / 10 * 1.5 + tec + 3), titulo: 'HSW · semana ' + t.tipo + ' · ' + m + ' m + técnica ' + tec + '′',
+      texto: 'PINO · SEMANA ' + t.tipo + ' (' + (t.tipo === 'A' ? 'ACUMULACIÓN ' + t.metros + ' m/semana' : 'TÉCNICA DOBLE · ' + t.metros + ' m/semana') + ')\n' +
+        '1) HSW: ' + m + ' m en ' + tramos + ' tramos de 10 m' + (m % 10 ? ' (el último de 5 m)' : '') + '. Objetivo: cada tramo en ≤1′ (cuenta desde que subes). Descanso: el mismo tiempo que tardaste.' +
+        (t.tipo === 'A' ? ' Una vez por semana (el bloque más tardío): 40 m seguidos tras 1′ de trabajo de hombro o agarre para meter fatiga real.' : '') + '\n' +
+        '2) Técnica ' + tec + '′ (rota cada sesión): pirueta 3+3 · rampa subiendo y bajando · free HSPU negativas o parciales · hold libre. Calidad, sin fallo.\n' +
+        'Registra: metros sin caer, tiempo por tramo, caídas y qué skill tocaste. Si Fabrik ya trae HSW esa semana, sus metros cuentan.' };
+  }
+  var s = 5 * t.tecnica;
+  return { min: Math.round(s * 1.2 + 3), titulo: 'Pino estático · semana ' + t.tipo + ' · ' + s + ' × 30″',
+    texto: 'PINO ESTÁTICO · SEMANA ' + t.tipo + ': ' + s + ' × 30″ libre (o pecho a pared si cae antes de 15″) / 45″. Línea hueca, empuje activo y correcciones con los dedos.' +
+      (t.tipo === 'B' ? ' Semana B: el doble de tiempo de skill; termina con 2 × free HSPU negativa lenta.' : '') };
+}
+/** Estímulos en pausa (APP · CONFIG › pausa_estimulos = códigos separados por comas). No se programan y sus pendientes no caducan. */
+function pausaCodigos_() {
+  var v = String(leerConfig_().pausa_estimulos || '').toUpperCase().match(/[A-Z]{1,3}\d{2}/g) || []; return v;
+}
+function pausarNuevos_(nuevos, lunes, log) {
+  var P = pausaCodigos_(); if (!P.length) return;
+  var quitados = [];
+  for (var i = nuevos.length - 1; i >= 0; i--) {
+    var o = nuevos[i], cods = codigosDe_(o['CÓDIGOS']); if (!cods.some(function (c) { return P.indexOf(c) >= 0; })) continue;
+    var resto = cods.filter(function (c) { return P.indexOf(c) < 0; });
+    if (P.indexOf(cods[0]) >= 0 || !resto.length) { quitados.push(o['TÍTULO'] || cods[0]); nuevos.splice(i, 1); continue; }
+    o['CÓDIGOS'] = resto.join('|');
+    o.CONTENIDO = 'EN PAUSA (' + cods.filter(function (c) { return P.indexOf(c) >= 0; }).join(', ') + '): sáltate esa parte del bloque.\n\n' + (o.CONTENIDO || '');
+  }
+  if (quitados.length && log) log.push('En pausa (quedan en pendientes): ' + quitados.join(', '));
+}
+function pausaInfo_() {
+  var P = pausaCodigos_(); if (!P.length) return [];
+  var cat = {}; try { listar_(HOJAS.ESTIMULOS).forEach(function (e) { cat[e['CÓDIGO']] = e.NOMBRE; }); } catch (e) {}
+  return P.map(function (c) { return { codigo: c, nombre: cat[c] || c }; });
+}
+/** Reanudar: sale de la pausa y sus pendientes vuelven a la cola normal (se proponen la semana siguiente). */
+function reanudarEstimulo_(codigo) {
+  codigo = String(codigo || '').toUpperCase(); var P = pausaCodigos_().filter(function (c) { return c !== codigo; });
+  ponerConfig_('pausa_estimulos', P.join(', '), 'Estímulos en pausa: no se programan y sus pendientes esperan (reanúdalos desde la app)');
+  var plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
+  listar_(HOJAS.PENDIENTES).forEach(function (p) {
+    if (p.ESTADO !== 'Pendiente' || !/EN PAUSA/.test(p.NOTAS || '')) return;
+    var cs = codigosDe_((plan[p.ID_PLAN] || {})['CÓDIGOS']); if (cs.indexOf(codigo) < 0 || cs.some(function (c) { return P.indexOf(c) >= 0; })) return;
+    actualizarFila_(HOJAS.PENDIENTES, p._fila, { NOTAS: String(p.NOTAS).replace(/\s*·?\s*EN PAUSA[^·]*/, '').trim() + ' · Reanudado ' + isoAFecha(hoyIso_()), 'FECHA ORIGINAL': isoAFecha(hoyIso_()) });
+  });
+  MEMO = null;
+}
 // ===================== v29a · RENDIMIENTO · GABI · MURPH · RITMOS · STRAVA =====================
 /*
  * Se añade tal cual al final de Code.gs. ES5 (var, function). Todo lo de aquí usa funciones globales de Code.gs.
@@ -7685,6 +7754,7 @@ var INDICADORES_ = [
   { clave: 'cj', nombre: 'Clean & jerk 1RM', unidad: 'kg', mejorEs: 'mayor', tipo: 'num', codigos: ['W23', 'W24', 'W34', 'M17', 'M07', 'M51'] },
   { clave: 'rmu', nombre: 'RMU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W13', 'M30', 'M49'] },
   { clave: 'hspu', nombre: 'HSPU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W15', 'W16', 'W17', 'W31', 'OP1'] },
+  { clave: 'hsw', nombre: 'HSW · 10 m en fatiga', unidad: 'min:seg', mejorEs: 'menor', tipo: 'tiempo', codigos: ['W32', 'W33'] },
   { clave: 'metcon', nombre: 'Metcon de referencia', unidad: '', mejorEs: 'menor', tipo: 'texto', codigos: ['R01', 'R04'] }   // tendencia solo si el valor es un tiempo
 ];
 

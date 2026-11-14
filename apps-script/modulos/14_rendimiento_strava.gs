@@ -22,6 +22,7 @@ var INDICADORES_ = [
   { clave: 'cj', nombre: 'Clean & jerk 1RM', unidad: 'kg', mejorEs: 'mayor', tipo: 'num', codigos: ['W23', 'W24', 'W34', 'M17', 'M07', 'M51'] },
   { clave: 'rmu', nombre: 'RMU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W13', 'M30', 'M49'] },
   { clave: 'hspu', nombre: 'HSPU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W15', 'W16', 'W17', 'W31', 'OP1'] },
+  { clave: 'hsw', nombre: 'HSW · 10 m en fatiga', unidad: 'min:seg', mejorEs: 'menor', tipo: 'tiempo', codigos: ['W32', 'W33'] },
   { clave: 'metcon', nombre: 'Metcon de referencia', unidad: '', mejorEs: 'menor', tipo: 'texto', codigos: ['R01', 'R04'] }   // tendencia solo si el valor es un tiempo
 ];
 

@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.30.0',
+  VERSION: '0.30.1',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -159,6 +159,7 @@ function accion_(a, body, user) {
       case 'murph_fecha': return json_(murphFecha_(body.fecha));
       case 'ritmos_confirmar': return json_(ritmosConfirmar_());
       case 'strava_sync': return json_(stravaSync_());
+      case 'pausa_quitar': reanudarEstimulo_(body.codigo); return json_({ ok: true, semana: semanaCompleta_(body.semana) });
       case 'garmin_sync': return json_(garminDiario_(body.iso || ''));
       case 'fichas': return json_({ ok: true, fichas: fichas_() });
       case 'ficha_guardar': var fg = guardarFicha_(body.ficha || {}); return json_({ ok: true, ficha: fg, fichas: fichas_() });

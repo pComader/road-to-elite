@@ -571,7 +571,8 @@ function generarExtras_(lunes, opts) {
     o.REFUERZO_ID = r.ID; o._prio = 'refuerzo';
     cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.REFUERZOS, r._fila, { ESTADO: 'Programado', 'CÓDIGO': c || '' }); } });
   });
-  pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes && !z2Usados[p.ID]; }).forEach(function (p) {
+  var pausaP = pausaCodigos_();
+  pendientesAbiertos_().filter(function (p) { return !EXC && p.ESTADO === 'Pendiente' && celdaIso_(p['FECHA ORIGINAL']) < lunes && !z2Usados[p.ID] && !/EN PAUSA/.test(p.NOTAS || '') && !(pausaP.length && codigosDe_((listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {})['CÓDIGOS']).some(function (c) { return pausaP.indexOf(c) >= 0; })); }).forEach(function (p) {
     var orig = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === p.ID_PLAN; })[0] || {};
     var z2m = p._Z2 ? Math.max(10, Math.round((parseFloat(p._MIN) || 40) * 0.25)) : 0;
     if (!z2m && p._MAS25) { p._MIN = Math.round((parseFloat(p._MIN || orig.MIN) || 30) * 1.25); p._CONTENIDO = '+25 % DE VOLUMEN (lo pediste al dejarlo pendiente): ' + p._MIN + '′ en total, misma intensidad.\n\n' + (p._CONTENIDO || orig.CONTENIDO || ''); }
