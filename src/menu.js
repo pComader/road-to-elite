@@ -537,8 +537,9 @@
         return '<button type="button" class="zona' + (zonas.indexOf(z) >= 0 ? ' on' : '') + '" data-z="' + esc(z) + '" aria-pressed="' + (zonas.indexOf(z) >= 0) + '">' + esc(z) + '</button>'; }).join('') + '</div>' +
       '<label>Sueño' + lblRef('SUEÑO') + '</label><div class="seg" role="group" id="ch-su">' + ['Bien', 'Regular', 'Mal'].map(function (v) { return '<button type="button" data-su="' + v + '" aria-pressed="' + (c['SUEÑO'] === v) + '">' + v + '</button>'; }).join('') + '</div>' +
       '<label for="ch-n">Notas</label><input id="ch-n" maxlength="300" value="' + esc(c.NOTAS || '') + '" placeholder="Opcional">' +
-      '<div class="hint">Lo cruzo con lo que toca hoy y con lo de los 3 días anteriores: si una zona cargada choca con un bloque, te digo cómo ajustarlo y de dónde viene.' + (corre ? ' Hoy corres: tus sensaciones quedan junto a los datos de la carrera para explicar el resultado.' : '') + '</div>' +
-      '<button class="btn btn-primary" type="submit" id="ch-ok">Guardar y ver cómo ajusto el día</button></form>');
+      '<label for="ch-pe">Peso (kg) · opcional</label><input id="ch-pe" inputmode="decimal" value="' + esc(c['PESO (kg)'] || '') + '">' +
+      '<div class="hint">Solo datos: no cambia tu sesión ni te doy indicaciones. Sirve para ver qué estímulos te dejan más residuo y para decidir la descarga.</div>' +
+      '<button class="btn btn-primary" type="submit" id="ch-ok">Guardar</button></form>');
     $scrim.querySelectorAll('.esc').forEach(function (g) {
       g.querySelectorAll('.esc-chip').forEach(function (b) { b.onclick = function () { var ya = b.classList.contains('on'); g.querySelectorAll('.esc-chip').forEach(function (y) { y.classList.remove('on'); }); if (!ya) b.classList.add('on'); }; });
     });
@@ -548,13 +549,13 @@
       ev.preventDefault();
       var su = $scrim.querySelector('[data-su][aria-pressed="true"]');
       var o = { FECHA: aTxt(iso), 'CANSANCIO (1-10)': leerEscala('ch-ca'), 'AGUJETAS (1-10)': leerEscala('ch-ag'),
-        'ZONAS CARGADAS': [].map.call($scrim.querySelectorAll('[data-z].on'), function (b) { return b.dataset.z; }).join(', '), 'SUEÑO': su ? su.dataset.su : '', NOTAS: val('ch-n') };
+        'ZONAS CARGADAS': [].map.call($scrim.querySelectorAll('[data-z].on'), function (b) { return b.dataset.z; }).join(', '), 'SUEÑO': su ? su.dataset.su : '', 'PESO (kg)': val('ch-pe'), NOTAS: val('ch-n') };
       if (!o['CANSANCIO (1-10)'] && !o['AGUJETAS (1-10)']) { toast('Marca al menos el cansancio o las agujetas'); return; }
       var b = document.getElementById('ch-ok'); b.disabled = true;
       apiGuardar({ action: 'chequeo', chequeo: o }).then(ok).then(function (r) {
         var nuevo = r.chequeo || Object.assign({ 'RECOMENDACIÓN': 'Guardado sin conexión: el ajuste se calcula al volver la red.' }, o);
         S.data.chequeos = (S.data.chequeos || []).filter(function (x) { return aIso(x.FECHA) !== iso; }).concat([nuevo]);
-        cerrarHoja(); render(); toast(nuevo['SEMÁFORO'] ? 'Semáforo ' + nuevo['SEMÁFORO'].toLowerCase() : 'Guardado');
+        cerrarHoja(); render(); toast('Batería guardada');
       }).catch(falloApi(b));
     };
   }

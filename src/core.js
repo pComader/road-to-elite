@@ -662,18 +662,11 @@
 
   // ---------- chequeo de la mañana (APP · CHEQUEO) ----------
   function chequeoDe(d, iso) { return (d.chequeos || []).filter(function (c) { return aIso(c.FECHA) === iso; })[0] || null; }
-  function htmlChequeo(d, x) {
+  function htmlChequeo(d, x) {   // v0.28 · batería muda: sin semáforo ni recomendaciones, solo datos para el análisis
     var c = chequeoDe(d, x.iso);
-    if (c) {
-      var sem = c['SEMÁFORO'] || '', cls = { Verde: 'ok', 'Ámbar': 'warn', Rojo: 'no' }[sem] || '';
-      return '<button class="chq ' + cls + '" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>' + (sem ? 'Semáforo ' + esc(sem.toLowerCase()) : 'Chequeo') + '</b>' +
-        (c['LISTO (0-100)'] ? '<span class="chq-n">' + esc(c['LISTO (0-100)']) + '/100</span>' : '') + '</span><span class="chq-r">' + esc(c['RECOMENDACIÓN'] || '') + '</span></button>';
-    }
-    if (x.iso !== d.hoy) return '';
-    if (!x.bloques.length) return '';
-    if (!leer('rte-chq-' + x.iso)) S._autoChq = x.iso;
-    return '<button class="chq pend" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>🫀 ¿Cómo llegas hoy?</b><span class="chq-n">15 s</span></span>' +
-      '<span class="chq-r">Cansancio, agujetas y zonas cargadas: ajusto lo de hoy y explico tu carrera.</span></button>';
+    if (c) return x.iso === d.hoy ? '<button class="chq ok" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>🔋 Batería registrada</b><span class="chq-n">editar</span></span></button>' : '';
+    if (x.iso !== d.hoy || !x.bloques.length) return '';
+    return '<button class="chq pend" type="button" data-chequeo="' + x.iso + '"><span class="chq-t"><b>🔋 Batería de hoy</b><span class="chq-n">15 s</span></span></button>';
   }
 
   // ---------- cuenta atrás a los tests (APP · CONFIG) ----------
@@ -720,7 +713,7 @@
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
-    html += htmlOperacion(d, x) + htmlCombustible(x);   // v0.26 · sin chequeo diario · v0.27 · modo operación
+    html += htmlOperacion(d, x) + htmlChequeo(d, x) + htmlCombustible(x);   // v0.28 · la batería vuelve, muda: solo recoge datos   // v0.26 · sin chequeo diario · v0.27 · modo operación
     if (cambiado && (d.reest || []).some(function (r) { return r.modo === 'Viaje'; }) && !(S.verOrig && S.verOrig[x.iso])) html += '<button class="btn-ghost sm reest-mat" type="button" data-matnuevo="' + x.iso + '">＋ Tengo material nuevo hoy</button>';
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
@@ -2037,7 +2030,7 @@
   });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.27';
+  var WEB_VERSION = 'web 0.28';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
