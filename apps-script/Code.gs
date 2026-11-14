@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.29.0',
+  VERSION: '0.30.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -159,6 +159,7 @@ function accion_(a, body, user) {
       case 'murph_fecha': return json_(murphFecha_(body.fecha));
       case 'ritmos_confirmar': return json_(ritmosConfirmar_());
       case 'strava_sync': return json_(stravaSync_());
+      case 'garmin_sync': return json_(garminDiario_(body.iso || ''));
       case 'fichas': return json_({ ok: true, fichas: fichas_() });
       case 'ficha_guardar': var fg = guardarFicha_(body.ficha || {}); return json_({ ok: true, ficha: fg, fichas: fichas_() });
       case 'plan_competi': return json_({ ok: true, plan: planCompeti_(body.id) });
@@ -7843,6 +7844,7 @@ function rendimiento_() {
   try { out.residuo = residuo_(); } catch (e) { Logger.log('Rendimiento · residuo: ' + e); }
   try { out.ritmos = { vigentes: v29CfgJson_('ritmos_zonas'), propuesta: v29CfgJson_('ritmos_propuesta'), texto: ritmosTexto_() }; } catch (e) { Logger.log('Rendimiento · ritmos: ' + e); }
   try { out.strava = stravaEstado_(); } catch (e) { Logger.log('Rendimiento · strava: ' + e); }
+  try { out.garmin = garminEstado_(); } catch (e) { Logger.log('Rendimiento · garmin: ' + e); }
   return out;
 }
 /** Guarda un valor a mano en APP · RENDIMIENTO. b = {clave, valor, fecha, notas}. */
@@ -8237,6 +8239,7 @@ function v29aDiario_() {
   var r = {};
   try { r.gabi = importarGabi_(); } catch (e) { Logger.log('v29a · Gabi: ' + e); }
   try { r.ritmos = revisarRitmos_(); } catch (e) { Logger.log('v29a · ritmos: ' + e); }
+  try { r.garmin = garminDiario_(); } catch (e) { Logger.log('Garmin: ' + e); }   // v0.30
   return r;
 }
 /** Cada hora (colgar de revisarAvisos): sincroniza Strava solo si está conectado. */
@@ -8245,6 +8248,101 @@ function v29aCadaHora_() {
   return null;
 }
 
+
+// ===================== v0.30 · GARMIN (API personal gratuita) · 1 vez al día, solo días de carrera o ergómetro =====================
+// Clave: Apps Script › Propiedades del script › GARMIN_KEY (nunca en el código ni en el Sheet). Doc: developer.garmin.com/gc-developer-program/personal/
+var GARMIN_API_ = 'https://personal.connectapi.garmin.com';
+var GARMIN_ERG_ = /ROW|REMO|SKI|BIKE|ASSAULT|AIR ?BIKE|ECHO|ERG|BICI|AIRBIKE/;
+function garminToken_() {
+  var key = PROPS.getProperty('GARMIN_KEY'); if (!key) return '';
+  var c = CacheService.getScriptCache(), t = c.get('garmin_token'); if (t) return t;
+  var r = UrlFetchApp.fetch(GARMIN_API_ + '/personalapitoken-service/personal-api/personal-api-key/token', { method: 'post', headers: { Authorization: 'ApiKey ' + key }, muteHttpExceptions: true });
+  if (r.getResponseCode() !== 200) throw new Error('garmin_token_' + r.getResponseCode());
+  var txt = r.getContentText() || '', d = {}; try { d = JSON.parse(txt); } catch (e) { d = { access_token: txt.trim() }; }
+  t = d.access_token || d.accessToken || d.token || ''; if (!t) throw new Error('garmin_token_vacio');
+  var vida = Math.max(300, Math.min(21600, (+d.expires_in || +d.expiresIn || 3600) - 120));
+  c.put('garmin_token', t, vida);
+  return t;
+}
+function garminGet_(ruta) {
+  var tok = garminToken_(); if (!tok) throw new Error('garmin_sin_clave');
+  var r = UrlFetchApp.fetch(GARMIN_API_ + ruta, { headers: { Authorization: 'Bearer ' + tok, Accept: 'application/json' }, muteHttpExceptions: true });
+  if (r.getResponseCode() === 401) { CacheService.getScriptCache().remove('garmin_token'); throw new Error('garmin_401'); }
+  if (r.getResponseCode() !== 200) throw new Error('garmin_' + r.getResponseCode());
+  return JSON.parse(r.getContentText() || 'null');
+}
+/** Qué toca ese día según el plan: carrera, ergómetro o nada (nada → no se llama a Garmin). */
+function garminQueToca_(iso) {
+  var plan = v29Seguro_(HOJAS.PLAN).filter(function (p) { return celdaIso_(p.FECHA) === iso && !/CANCEL|SUSTITU|NO HACER|PROPUESTA|SIN HUECO/.test(norm(p.ESTADO)); });
+  var esErg = function (p) { var t = norm((p['TÍTULO'] || '') + ' ' + (p.BLOQUE || '') + ' ' + (p.CONTENIDO || '')); return GARMIN_ERG_.test(t) || codigosDe_(p['CÓDIGOS']).some(function (c) { return c === 'W03' || c === 'R01'; }); };
+  var carrera = plan.filter(function (p) { return v29EsPlanCarrera_(p) && !(esErg(p) && !/RUN|CARRERA|CORRER|TROTE/.test(norm((p['TÍTULO'] || '') + ' ' + (p.CONTENIDO || '')))); });
+  var erg = plan.filter(function (p) { return esErg(p) && carrera.indexOf(p) < 0; });
+  var manual = v29Seguro_(HOJAS.CARRERA).some(function (c) { return celdaIso_(c.FECHA) === iso; });
+  return { carrera: carrera, erg: erg, toca: !!(carrera.length || erg.length || manual) };
+}
+function garminTiempo_(seg) { seg = Math.round(seg || 0); return seg >= 3600 ? Math.floor(seg / 3600) + ':' + ('0' + Math.floor((seg % 3600) / 60)).slice(-2) + ':' + ('0' + (seg % 60)).slice(-2) : mmss_(seg); }
+/** Un día: carreras → APP · CARRERA (completa lo que tengas a mano, sin duplicar); ergómetro → datos del bloque en APP · REGISTRO. */
+function garminDia_(iso) {
+  var q = garminQueToca_(iso), res = { iso: iso, carrera: 0, erg: 0, vistas: 0, saltado: !q.toca };
+  if (!q.toca) return res;
+  var acts = garminGet_('/activitylist-service/activities/search/activities?startDate=' + iso + '&endDate=' + iso + '&limit=20&sortOrder=asc') || [];
+  res.vistas = acts.length;
+  var carr = v29Seguro_(HOJAS.CARRERA), regs = v29Seguro_(HOJAS.REGISTRO), usadosC = {}, usadosE = {};
+  acts.forEach(function (a) {
+    var tipo = String((a.activityType && a.activityType.typeKey) || '').toLowerCase(), nota = 'Garmin · ' + String(a.activityName || tipo).slice(0, 100) + ' #' + a.activityId;
+    var km = (+a.distance || 0) / 1000, seg = +a.movingDuration || +a.duration || 0; if (!(seg > 0)) return;
+    if (/run/.test(tipo)) {
+      var p = q.carrera.filter(function (x) { return !usadosC[x.ID]; })[0] || null; if (p) usadosC[p.ID] = 1;
+      var ex = carr.filter(function (c) { return celdaIso_(c.FECHA) === iso && String(c.NOTAS || '').indexOf('#' + a.activityId) >= 0; })[0] ||
+        (p && carr.filter(function (c) { return celdaIso_(c.FECHA) === iso && c.ID_PLAN === p.ID; })[0]) ||
+        carr.filter(function (c) { var kc = v29Num_(c['DISTANCIA (km)']); return celdaIso_(c.FECHA) === iso && !String(c.ID_PLAN || '').trim() && !/Garmin|Strava/.test(String(c.NOTAS || '')) && (!kc || (km > 0 && Math.abs(kc - km) / km <= 0.05)); })[0] || null;
+      var n = { FECHA: isoAFecha(iso), ID_PLAN: p ? p.ID : (ex ? ex.ID_PLAN || '' : ''), TIPO: p ? v29TipoCarrera_(p) : 'Z2', 'DISTANCIA (km)': km.toFixed(2).replace('.', ','), TIEMPO: garminTiempo_(seg), NOTAS: nota };
+      if (km > 0) n['RITMO MEDIO (/km)'] = mmss_(seg / km);
+      if (a.averageHR) n['FC MEDIA'] = Math.round(a.averageHR);
+      if (a.maxHR) n['FC MÁX'] = Math.round(a.maxHR);
+      if (a.elevationGain != null) n['DESNIVEL (m)'] = Math.round(a.elevationGain);
+      if (a.averageRunningCadenceInStepsPerMinute) n.CADENCIA = Math.round(a.averageRunningCadenceInStepsPerMinute);
+      if (a.maxTemperature != null && a.minTemperature != null) n['TEMPERATURA (°C)'] = Math.round((a.maxTemperature + a.minTemperature) / 2);
+      if (ex) {
+        var vac = {}, hay = false;
+        Object.keys(n).forEach(function (h) { if (!String(ex[h] == null ? '' : ex[h]).trim() && String(n[h]) !== '') { vac[h] = n[h]; hay = true; } });
+        if (String(ex.NOTAS || '').indexOf('#' + a.activityId) < 0) { vac.NOTAS = (ex.NOTAS ? ex.NOTAS + ' · ' : '') + nota; hay = true; }
+        if (hay) { actualizarFila_(HOJAS.CARRERA, ex._fila, vac); res.carrera++; }
+      } else { n.ID = nuevoId_(); n.REGISTRADO = ahora_(); anadirFila_(HOJAS.CARRERA, n); res.carrera++; carr.push(Object.assign({ _fila: 0 }, n)); }
+      return;
+    }
+    if (/row|cycl|bik|ski|cardio|elliptical|stair/.test(tipo)) {
+      var b = q.erg.filter(function (x) { return !usadosE[x.ID]; })[0]; if (!b) return; usadosE[b.ID] = 1;
+      var dat = 'Garmin · ' + (a.activityName || tipo) + ' · ' + (km > 0 ? Math.round(km * 1000) + ' m · ' : '') + garminTiempo_(seg) +
+        (a.averageHR ? ' · FC ' + Math.round(a.averageHR) + (a.maxHR ? '/' + Math.round(a.maxHR) : '') : '') + (a.avgPower ? ' · ' + Math.round(a.avgPower) + ' W' : '') + (a.calories ? ' · ' + Math.round(a.calories) + ' kcal' : '') + ' #' + a.activityId;
+      var r = regs.filter(function (x) { return x.ID_PLAN === b.ID && celdaIso_(x.FECHA) === iso; })[0];
+      if (r) { if (String(r['DATOS (parciales/vatios)'] || '').indexOf('#' + a.activityId) < 0) { actualizarFila_(HOJAS.REGISTRO, r._fila, { 'DATOS (parciales/vatios)': (r['DATOS (parciales/vatios)'] ? r['DATOS (parciales/vatios)'] + ' · ' : '') + dat, MIN_REAL: r.MIN_REAL || String(Math.round(seg / 60)) }); res.erg++; } }
+      else { guardarRegistro_({ FECHA: isoAFecha(iso), ID_PLAN: b.ID, BLOQUE: b['TÍTULO'] || b.BLOQUE || '', HECHO: 'Sí', MIN_REAL: String(Math.round(seg / 60)), 'DATOS (parciales/vatios)': dat, NOTAS: 'Desde Garmin' }); res.erg++; }
+    }
+  });
+  MEMO = null;
+  return res;
+}
+/** Diario (04:00): los días pendientes desde la última vez hasta ayer (máx. 7), solo si ese día había carrera o ergómetro. */
+function garminDiario_(forzarIso) {
+  if (!PROPS.getProperty('GARMIN_KEY')) return { ok: false, motivo: 'sin_clave' };
+  var cfg = leerConfig_(), ayer = sumarDias(hoyIso_(), -1), ult = celdaIso_(String(cfg.garmin_ultimo || '').replace(/^'/, '')) || sumarDias(ayer, -2);
+  var dias = []; if (forzarIso) dias = [celdaIso_(forzarIso)]; else for (var d = sumarDias(ult, 1); d <= ayer && dias.length < 7; d = sumarDias(d, 1)) dias.push(d);
+  var out = { ok: true, dias: [], carrera: 0, erg: 0 };
+  try {
+    dias.forEach(function (d) { var r = garminDia_(d); out.dias.push(r); out.carrera += r.carrera; out.erg += r.erg; if (!forzarIso) ponerConfig_('garmin_ultimo', "'" + d, 'Garmin · último día revisado (solo días de carrera o ergómetro)'); });
+    ponerConfig_('garmin_estado', ahora_() + ' · OK · ' + out.carrera + ' carreras · ' + out.erg + ' ergómetro', 'Garmin · resultado de la última sincronización');
+    if (out.carrera) { try { analizarCarrera_(); } catch (e) {} }
+  } catch (err) {
+    out = { ok: false, motivo: String(err && err.message || err) };
+    ponerConfig_('garmin_estado', ahora_() + ' · FALLO · ' + out.motivo, 'Garmin · resultado de la última sincronización');
+  }
+  return out;
+}
+function garminEstado_() {
+  var cfg = leerConfig_();
+  return { configurado: !!PROPS.getProperty('GARMIN_KEY'), ultimo: String(cfg.garmin_ultimo || '').replace(/^'/, ''), estado: String(cfg.garmin_estado || '') };
+}
 // =====================================================================================================
 // v0.29b · COMPETICIÓN (fichas, taper, plan del día) · RESUMEN DEL LUNES · SALUD DE TAREAS · ARCHIVO · CACHÉ · LOTES
 // Se añade tal cual al final de Code.gs (usa sus funciones globales). ES5: var, function, sin flechas ni template literals.

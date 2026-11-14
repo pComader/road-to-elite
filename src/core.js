@@ -2089,7 +2089,7 @@
   document.addEventListener('input', function (e) { var t = e.target; if (t && t.dataset && t.dataset.fbtxt) { var F = S.fbAy = S.fbAy || {}; F[t.dataset.fbtxt] = F[t.dataset.fbtxt] || {}; F[t.dataset.fbtxt].txt = t.value; } });
 
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.29';
+  var WEB_VERSION = 'web 0.30';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;
