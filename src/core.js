@@ -301,6 +301,11 @@
   }
   /** v0.14 · Reestructurar: la semana adaptada por defecto y la original para el selector «Original | Adaptada». */
   function construirDatos(sem) {
+    var d = construirDatos0(sem);
+    d.activacion = (sem && sem.activacion) || {}; d.feedbackAyer = (sem && sem.feedbackAyer) || [];   // v0.29 · activación 6–8′ por turno · feedback de los extras de ayer
+    return d;
+  }
+  function construirDatos0(sem) {
     var re = (sem && sem.plan || []).filter(function (r) { return r.REESTRUCTURA; });
     if (!re.length) return construirDatosBase(sem);
     var ocultos = {}; re.forEach(function (r) { if (norm(r.ESTADO) === 'SUSTITUIDO' && norm(r.ORIGEN) === 'FABRIK') { var f = refFabrik(r); if (f) ocultos[f.dia + '·' + f.n] = 1; } });
@@ -584,6 +589,8 @@
     if (S.vista === 'competis') return renderCompetis();
     if (S.vista === 'aprendizaje') return renderAprendizaje();
     if (S.vista === 'operacion') return renderOperacion();
+    if (S.vista === 'rendimiento') return renderRendimiento();
+    if (S.vista === 'resumen') return renderResumenLunes();
     TM.reg = []; S._autoChq = null;
     var aviso = avisosArriba(d);
     $app.innerHTML = cabecera(d) + bannerInstalar() + aviso + ciclo(d) + semana(d) + '<main class="day" id="day">' + dia(d, d.dias[S.dia]) + '</main>' +
@@ -708,12 +715,14 @@
     if (cambiado && S.verOrig && S.verOrig[x.iso] && d.diasOrig) x = d.diasOrig[idx];
     var togRe = cambiado ? '<div class="seg reest-tog" role="group" aria-label="Ver plan"><button type="button" data-verorig="' + x.iso + '|0" aria-pressed="' + !(S.verOrig && S.verOrig[x.iso]) + '">🔀 Adaptada</button><button type="button" data-verorig="' + x.iso + '|1" aria-pressed="' + !!(S.verOrig && S.verOrig[x.iso]) + '">Original (Fabrik + extras)</button></div>' : '';
     var html = togRe + '<div class="day-title"><h1>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</h1>' +
-      (x.bloques.length ? '<button class="share-btn" type="button" data-compartir="' + idx + '" aria-label="Compartir el día">⤴ Compartir</button>' : '') +
+      (x.bloques.length ? '<button class="share-btn" type="button" data-compartir="' + idx + '" aria-label="Compartir el día">⤴ Compartir</button>' +
+        '<button class="share-btn ses-go" type="button" data-sesion="' + idx + '" aria-label="Modo sesión">▶ Sesión</button>' +
+        (x.iso <= d.hoy && hayPorRegistrar(d, x) ? '<button class="share-btn" type="button" data-todo-hecho="' + x.iso + '" aria-label="Marcar todo el día como hecho">✓ Todo hecho</button>' : '') : '') +
       (x.rpe ? '<div class="rpe-pill" style="--c:' + rpeColor(x.rpe) + '"><b>' + esc(x.rpe) + '</b><span>' + (x.rpe === 'Z2' ? 'Recovery' : /≈/.test(x.rpe) ? 'RPE estimado' : 'RPE del metcon') + '</span></div>' :
         x.doble ? '<div class="rpe-pill" style="--c:var(--accent)"><b>×2</b><span>Sesión doble</span></div>' : '') + '</div>';
     if (x.foco && x.foco.length) html += '<div class="focus">' + x.foco.map(function (f) { return '<span>' + esc(cap(f)) + '</span>'; }).join('') + '</div>';
     if (S.dia === diaInicial()) html += htmlCuentaAtras(d);
-    html += htmlOperacion(d, x) + htmlChequeo(d, x) + htmlCombustible(x);   // v0.28 · la batería vuelve, muda: solo recoge datos   // v0.26 · sin chequeo diario · v0.27 · modo operación
+    html += htmlOperacion(d, x) + htmlChequeo(d, x) + htmlCombustible(x) + htmlFeedbackAyer(d, x);   // v0.28 · la batería vuelve, muda: solo recoge datos   // v0.26 · sin chequeo diario · v0.27 · modo operación
     if (cambiado && (d.reest || []).some(function (r) { return r.modo === 'Viaje'; }) && !(S.verOrig && S.verOrig[x.iso])) html += '<button class="btn-ghost sm reest-mat" type="button" data-matnuevo="' + x.iso + '">＋ Tengo material nuevo hoy</button>';
     var fc = (d.fabrikCambios || []).filter(function (c) { return x.fabrik && norm(c.dia) === norm(x.fabrik); })[0];
     if (fc) html += '<div class="unpub warn">⚠ Fabrik ' + (fc.nuevo ? 'ha subido este día' : 'ha cambiado este día') + ' después de aprobar la semana' + (fc.aprobado ? ' (' + esc(fc.aprobado) + ')' : '') + '. Revisa si choca con tus extras; si hace falta, «Ha surgido algo».</div>';
@@ -727,10 +736,12 @@
     if (x.variantesNombres && x.variantesNombres.length) html += '<div class="variant-note">' + x.variantesNombres.map(function (n) {
       return '<span class="v-tag">' + esc(nombreVersion(n)) + '</span>'; }).join('') + '<span>Si compites, abre los desplegables naranjas de cada bloque: ahí está lo que cambia.</span></div>';
     if (!x.bloques.length) html += '<div class="empty">' + (x.iso === d.hoy ? 'Hoy' : 'Este día') + ' no hay nada programado. Descanso.</div>';
-    var turno = null;
+    var turno = null, turnoAct = {};
     html += '<div class="blocks">' + x.bloques.map(function (b) {
       var sep = '';
       if (x.doble && b.turno !== turno) { turno = b.turno; sep = '<div class="turno">' + (turno === 'AM' ? '☀️ Mañana' : '🌙 Tarde') + '</div>'; }
+      var tk = b.turno === 'PM' ? 'PM' : 'AM';
+      if (!turnoAct[tk] && !/CANCELADO/.test(norm(b.estado))) { turnoAct[tk] = 1; sep += htmlActivacion(d, x.iso, tk); }
       return sep + bloque(b, x, d);
     }).join('') + (x.variantesExtra || []).map(bloqueExtra).join('') + '</div>' +
       (x.iso >= sumarDias(d.hoy, -1) ? '<button class="add-blk" type="button" data-nuevo-bloque="' + x.iso + '">＋ Añadir bloque <span>(entra en borrador)</span></button>' : '');
@@ -746,6 +757,30 @@
       c.items.map(function (i) { return '<div class="fuel-i"><b>' + esc(i.m) + '</b><span>' + esc(i.t) + '</span></div>'; }).join('') +
       (c.recuperacion ? '<div class="fuel-i rec"><b>Recuperar para la siguiente</b><span>' + esc(c.recuperacion) + '</span></div>' : '') +
       '<div class="hint">Calculado con tu peso y la carga del día y del siguiente. ' + esc(c.fuentes || '') + '. No sustituye a un nutricionista.</div></div></details>';
+  }
+  /** v0.29 · bloques de hoy o anteriores aún sin registro (para «✓ Todo hecho»). */
+  function hayPorRegistrar(d, x) {
+    return x.bloques.some(function (b) { return !b.opOculto && !/NO HACER|CANCELADO|PROPUESTA/.test(norm(b.estado)) && !registroDe(x.iso, idPlanDe(x, b)); });
+  }
+  /** v0.29 · activación 6–8′ antes del primer bloque de cada turno (plegada). */
+  function htmlActivacion(d, iso, tk) {
+    var l = (d.activacion || {})[iso + '|' + tk];
+    if (!l || !l.length) return '';
+    return '<details class="activ"><summary>🔥 Activación 6–8′</summary><ul>' + l.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></details>';
+  }
+  /** v0.29 · «¿Cómo salieron ayer tus extras?»: resultado, RPE opcional y texto por bloque. */
+  function htmlFeedbackAyer(d, x) {
+    var L = d.feedbackAyer || []; if (x.iso !== d.hoy || !L.length) return '';
+    var F = S.fbAy = S.fbAy || {};
+    return '<section class="fb-ayer" aria-label="Feedback de ayer"><h3>¿Cómo salieron ayer tus extras?</h3>' + L.map(function (e) {
+      var v = F[e.id] || {};
+      return '<div class="fb-i" data-fbi="' + esc(e.id) + '"><b>' + esc(e.titulo) + (e.codigos ? ' <span class="hint">' + esc(e.codigos) + '</span>' : '') + '</b>' +
+        '<div class="seg" role="group" aria-label="Resultado">' + ['Completado', 'A medias', 'No salió'].map(function (r) {
+          return '<button type="button" data-fbr="' + esc(e.id) + '|' + r + '" aria-pressed="' + (v.res === r) + '">' + r + '</button>'; }).join('') + '</div>' +
+        '<div class="chips fb-rpe" role="group" aria-label="RPE (opcional)">' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (k) {
+          return '<button type="button" class="rpe-chip' + (String(k) === String(v.rpe) ? ' on' : '') + '" style="--c:' + rpeColor(String(k)) + '" data-fbrpe="' + esc(e.id) + '|' + k + '">' + k + '</button>'; }).join('') + '</div>' +
+        '<textarea class="inp" rows="2" data-fbtxt="' + esc(e.id) + '" placeholder="Qué pasó y por qué (opcional)">' + esc(v.txt || '') + '</textarea></div>';
+    }).join('') + '<button class="btn btn-primary" type="button" data-fb-guardar>Guardar</button></section>';
   }
   function esMetcon(b) {
     return /METCON|\bWOD\b|ACONDICIONAMIENTO|CONDITIONING/.test(norm(b.titulo)) || b.partes.some(function (p) { return /^\s*METCON\s*:/.test(norm(p.texto)); });
@@ -1013,7 +1048,8 @@
       '<div class="three"><div><label for="ca-cad">Cadencia</label><input id="ca-cad" inputmode="numeric" value="' + esc(c.CADENCIA || '') + '"></div>' +
       '<div><label for="ca-des">Desnivel (m)</label><input id="ca-des" inputmode="numeric" value="' + esc(c['DESNIVEL (m)'] || '') + '"></div>' +
       '<div><label for="ca-tem">Temp. (°C)</label><input id="ca-tem" inputmode="numeric" value="' + esc(c['TEMPERATURA (°C)'] || '') + '"></div></div>' +
-      '<label for="ca-su">Superficie</label>' + sel('ca-su', c.SUPERFICIE || '', ['Asfalto', 'Pista', 'Tierra', 'Cinta', 'Mixta']) +
+      '<div class="two"><div><label for="ca-su">Superficie</label>' + sel('ca-su', c.SUPERFICIE || '', ['Asfalto', 'Pista', 'Tierra', 'Cinta', 'Mixta']) + '</div>' +
+      '<div><label for="ca-hum">Humedad (%)</label><input id="ca-hum" inputmode="numeric" value="' + esc(c['HUMEDAD (%)'] || '') + '"></div></div>' +
       '<label for="ca-sen">Sensaciones</label><input id="ca-sen" maxlength="300" value="' + esc(c.SENSACIONES || '') + '" placeholder="Piernas, respiración, pulso…">' +
       '</div></details>';
   }
@@ -1029,7 +1065,7 @@
     var fb = function (k) { var b = $scrim.querySelector('[data-fbg="' + k + '"] [aria-pressed="true"]'); return b ? b.dataset.fb : ''; };
     return { PIERNAS: fb('PIERNAS'), 'RESPIRACIÓN': fb('RESPIRACIÓN'), MARGEN: fb('MARGEN'), TIPO: val('ca-t'), 'DISTANCIA (km)': val('ca-km').replace('.', ','), TIEMPO: val('ca-ti'), 'RITMO MEDIO (/km)': val('ca-ri'), 'FC MEDIA': val('ca-fc'), 'FC MÁX': val('ca-fm'),
       'FC ESTABLE (min)': val('ca-fe'), 'PARCIALES POR KM': val('ca-pk'), 'SERIES (tiempos)': val('ca-se'), 'PARCIALES CUMPLIDOS': cu ? cu.dataset.cu : '', CADENCIA: val('ca-cad'),
-      'DESNIVEL (m)': val('ca-des'), 'TEMPERATURA (°C)': val('ca-tem'), SUPERFICIE: val('ca-su'), SENSACIONES: val('ca-sen') };
+      'DESNIVEL (m)': val('ca-des'), 'TEMPERATURA (°C)': val('ca-tem'), 'HUMEDAD (%)': val('ca-hum'), SUPERFICIE: val('ca-su'), SENSACIONES: val('ca-sen') };
   }
   function hayDatosCarrera(c) { return !!(c.PIERNAS || c['RESPIRACIÓN'] || c.MARGEN || c['DISTANCIA (km)'] || c.TIEMPO || c['FC MEDIA'] || c['SERIES (tiempos)'] || c['PARCIALES POR KM']); }
   function guardarCarreraApi(c) {
@@ -1858,7 +1894,8 @@
     renderCalendario = perezoso('menu', 'renderCalendario'), abrirFormEvento = perezoso('menu', 'abrirFormEvento'), pintarDescuentos = perezoso('menu', 'pintarDescuentos'),
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
-    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), renderOperacion = perezoso('menu', 'renderOperacion'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento');
+    renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), renderOperacion = perezoso('menu', 'renderOperacion'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento'),
+    renderRendimiento = perezoso('menu', 'renderRendimiento'), renderResumenLunes = perezoso('menu', 'renderResumenLunes'), abrirSesion = perezoso('menu', 'abrirSesion'), guardarFeedbackAyer = perezoso('menu', 'guardarFeedbackAyer');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1906,6 +1943,22 @@
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
     if ((b = t.closest('[data-compartir]'))) { abrirCompartir(+b.dataset.compartir); return; }
+    if ((b = t.closest('[data-sesion]'))) { abrirSesion(+b.dataset.sesion); return; }
+    if ((b = t.closest('[data-todo-hecho]'))) {
+      if (!confirmar(b, '¿Todo hecho? Toca otra vez')) return;
+      b.disabled = true;
+      api({ action: 'registrar_dia', iso: b.dataset.todoHecho }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast((r.n || 0) + (r.n === 1 ? ' bloque marcado como hecho' : ' bloques marcados como hechos')); }).catch(falloApi(b));
+      return;
+    }
+    if ((b = t.closest('[data-fbr]'))) {
+      var fr = b.dataset.fbr.split('|'), F1 = S.fbAy = S.fbAy || {}; F1[fr[0]] = F1[fr[0]] || {}; F1[fr[0]].res = fr[1];
+      [].forEach.call(b.parentNode.querySelectorAll('[data-fbr]'), function (y) { y.setAttribute('aria-pressed', String(y === b)); }); return;
+    }
+    if ((b = t.closest('[data-fbrpe]'))) {
+      var fp = b.dataset.fbrpe.split('|'), F2 = S.fbAy = S.fbAy || {}; F2[fp[0]] = F2[fp[0]] || {}; var ya2 = b.classList.contains('on');
+      [].forEach.call(b.parentNode.querySelectorAll('[data-fbrpe]'), function (y) { y.classList.remove('on'); }); if (!ya2) b.classList.add('on'); F2[fp[0]].rpe = ya2 ? '' : fp[1]; return;
+    }
+    if ((b = t.closest('[data-fb-guardar]'))) { guardarFeedbackAyer(b); return; }
     if ((b = t.closest('[data-verorig]'))) { var vo = b.dataset.verorig.split('|'); S.verOrig = S.verOrig || {}; S.verOrig[vo[0]] = vo[1] === '1'; render(); return; }
     if ((b = t.closest('[data-matnuevo]'))) { abrirMaterialNuevo(b.dataset.matnuevo); return; }
     if ((b = t.closest('[data-visto]'))) {
@@ -2029,8 +2082,10 @@
     }
   });
 
+  document.addEventListener('input', function (e) { var t = e.target; if (t && t.dataset && t.dataset.fbtxt) { var F = S.fbAy = S.fbAy || {}; F[t.dataset.fbtxt] = F[t.dataset.fbtxt] || {}; F[t.dataset.fbtxt].txt = t.value; } });
+
   // ---------- siempre la última versión ----------
-  var WEB_VERSION = 'web 0.28';
+  var WEB_VERSION = 'web 0.29';
   var ultimaActividad = Date.now(), habiaControlador = !!(navigator.serviceWorker && navigator.serviceWorker.controller), recargando = false;
   function recargarApp() {
     if (recargando) return;

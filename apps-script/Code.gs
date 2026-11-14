@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.28.0',
+  VERSION: '0.29.0',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -152,6 +152,9 @@ function accion_(a, body, user) {
       case 'aprendizaje': return json_(Object.assign({ ok: true }, datosAprendizaje_()));
       case 'deathnote_responder': var nr = responderDeathnote_(body.respuestas); return json_(Object.assign({ ok: true, guardadas: nr }, datosAprendizaje_()));
       case 'aprendizaje_analizar': return json_(Object.assign({ ok: true, resultado: aprendizajeSemanal(body.lunes || '') }, datosAprendizaje_()));
+      case 'feedback_extra': return json_({ ok: true, registro: feedbackExtra_(body) });
+      case 'registrar_dia': var nRd = registrarDia_(body.iso); return json_({ ok: true, n: nRd, semana: semanaCompleta_(body.iso) });
+      case 'regla_activa': reglaActiva_(body.clave, !!body.activa); return json_(Object.assign({ ok: true }, datosAprendizaje_()));
       case 'lesion_zonas': return json_({ ok: true, zonas: ZONAS_LESION_ });
       case 'competis': return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
       case 'competi_seguir': seguirCompeti_(body); return json_({ ok: true, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
@@ -405,6 +408,8 @@ function semanaCompletaSin_(semana) {
   var out = Object.assign(base, extrasSemana_(lunes, base));
   try { out.clave = claveSemana_(lunes, base.plan); } catch (e) { out.clave = {}; }
   try { out.reest = reestActiva_(lunes); } catch (e) { out.reest = []; }
+  try { out.activacion = activacionSemana_(lunes); } catch (e) { out.activacion = {}; }   // v0.29
+  try { var hoyF = hoyIso_(); out.feedbackAyer = hoyF >= lunes && hoyF <= sumarDias(lunes, 7) ? feedbackAyer_(hoyF) : []; } catch (e) { out.feedbackAyer = []; }
   try { out.op = opPayload_(lunes); if (out.op && out.op.activo && out.fabrik) out.fabrik = opFabrik_(out.fabrik, opSemana_(lunes)); } catch (e) { out.op = null; }   // v0.27 · modo operación (Fabrik solo se filtra al enseñarlo)
   try { var pk = pesoKg_(); out.combustible = {}; for (var k = 0; k < 7; k++) { var dk = sumarDias(lunes, k); out.combustible[dk] = combustibleDia_(dk, pk); } } catch (e) { out.combustible = {}; }
   return out;
@@ -478,7 +483,7 @@ var CAMPOS_REGISTRO = ['FECHA', 'ID_PLAN', 'BLOQUE', 'HECHO', 'RPE', 'MIN_REAL',
 
 /** Crea o actualiza (misma FECHA + ID_PLAN + BLOQUE) lo que has hecho. */
 function guardarRegistro_(r) {
-  var o = permitidas_(r, CAMPOS_REGISTRO);
+  var o = permitidas_(r, CAMPOS_REGISTRO); if (o.RESULTADO || o.FEEDBACK) ['RESULTADO', 'FEEDBACK'].forEach(function (h) { asegurarColumna_(HOJAS.REGISTRO, h); });
   if (!o.FECHA || !(o.ID_PLAN || o.BLOQUE)) throw new Error('registro_incompleto');
   if (o.HECHO && ['Sí', 'Parcial', 'No'].indexOf(o.HECHO) < 0) throw new Error('hecho_no_valido');
   if (o.RPE && !(Number(o.RPE) >= 1 && Number(o.RPE) <= 10)) throw new Error('rpe_no_valido');
@@ -787,6 +792,7 @@ function guardarCarrera_(c) {
   var km = parseFloat(String(o['DISTANCIA (km)'] || '').replace(',', '.')), seg = segundos_(o.TIEMPO);
   if (!o['RITMO MEDIO (/km)'] && km > 0 && seg > 0) o['RITMO MEDIO (/km)'] = mmss_(seg / km);
   o.REGISTRADO = ahora_();
+  if (o['HUMEDAD (%)']) asegurarColumna_(HOJAS.CARRERA, 'HUMEDAD (%)');
   if (o.PIERNAS || o['RESPIRACIÓN'] || o.MARGEN) ['PIERNAS', 'RESPIRACIÓN', 'MARGEN'].forEach(function (h) { asegurarColumna_(HOJAS.CARRERA, h); });   // v0.26 · feedback de la sesión
   var idCliente = /^[\w-]{6,40}$/.test(String(c.ID || '')) ? String(c.ID) : '';   // creado en el móvil: reenvíos sin duplicar
   var id = bloqueo_(function () {
@@ -3261,7 +3267,9 @@ function ajusteCarrera_(lunesRef) {
   var z2 = car.filter(function (r) { return /^Z2/i.test(r.TIPO); }), fcObj = 149, z2fc = z2.filter(function (r) { return n(r['FC MEDIA']); });
   if (z2.length) {
     var partes = [], larga = z2.filter(function (r) { return /larga/i.test(r.TIPO) || segundos_(r.TIEMPO) >= 50 * 60; });
-    if (z2fc.length && z2fc.reduce(function (a, r) { return a + n(r['FC MEDIA']); }, 0) / z2fc.length > fcObj + 5) partes.push('la FC media salió alta: 10–15″/km más lento para quedarte en ~' + fcObj + ' ppm (en Z2 manda el pulso, no el ritmo).');
+    var calor = z2.some(function (r) { return n(r['TEMPERATURA (°C)']) >= 24 || n(r['HUMEDAD (%)']) >= 70; });
+    if (calor) partes.push('hizo calor o mucha humedad: la FC alta de la Z2 se explica por eso, no se toca el ritmo.');
+    if (!calor && z2fc.length && z2fc.reduce(function (a, r) { return a + n(r['FC MEDIA']); }, 0) / z2fc.length > fcObj + 5) partes.push('la FC media salió alta: 10–15″/km más lento para quedarte en ~' + fcObj + ' ppm (en Z2 manda el pulso, no el ritmo).');
     if (z2.some(function (r) { return n(r.RPE) >= 5 || /pas[eé]/i.test(r.MARGEN || '') || /Cargadas/i.test(r.PIERNAS || ''); })) { partes.push('la Z2 costó más de la cuenta (RPE ≥5, piernas cargadas o «me pasé»): mismos minutos, más suave, y la separo de la pierna pesada.'); aj.z2min = 0; }
     else if (larga.length && larga.every(function (r) { return n(r.RPE) && n(r.RPE) <= 3 && /^S[ií]/i.test(r.MARGEN || ''); }) && !partes.length) {
       if (racha(/^Z2/i) >= 2) partes.push('tres semanas subiendo la larga: esta se mantiene para consolidar.');
@@ -4373,9 +4381,12 @@ function intensificarViaje_(txt, mat, seccion) {
 /** slots: [{iso, turno, ok, cap, mat, correr:{libre,tempo,series}, tipo:'casa'|'viaje'}] */
 function colocar_(fila, slots, ocupado, durasPorIso, opts) {
   opts = opts || {};
+  var extraX = norm(fila.ORIGEN) !== 'FABRIK' && !esIntocable_(codigosDe_(fila['CÓDIGOS']));
   var dura = esDura_(fila), cand = slots.filter(function (s) {
     if (!s.ok || (opts.desde && horaDe_(s.iso, s.turno) < opts.desde)) return false;
     if ((ocupado[s.iso + s.turno] || 0) + fila._min > s.cap) return false;
+    if (extraX && (ocupado['#' + s.iso + s.turno] || 0) >= EXTRAS_MAX_.n && !opts.forzar) return false;   // v0.29 · Reorganizar no amontona extras
+    if (s.turno === 'PM' && materialVeto_(codigosDe_(fila['CÓDIGOS']), s.iso, 'PM') && !opts.forzar) return false;
     if (esCarreraFila_(fila)) { if (s.tipo === 'viaje' && !(s.correr && (s.correr.libre || s.correr.tempo || s.correr.series))) return false;
       if (/W04|R02|R03|V01/.test(fila['CÓDIGOS'] || '') && s.tipo === 'viaje' && !(s.correr.series || (/R02/.test(fila['CÓDIGOS']) && s.correr.tempo))) return false; }
     if (s.tipo === 'viaje' && tipoSeccion_(fila) === 'fuerza' && !s.mat.barra && !s.mat.box) return false;
@@ -4390,10 +4401,11 @@ function colocar_(fila, slots, ocupado, durasPorIso, opts) {
   });
   var s = cand[0]; if (!s) return null;
   ocupado[s.iso + s.turno] = (ocupado[s.iso + s.turno] || 0) + fila._min;
+  if (extraX) ocupado['#' + s.iso + s.turno] = (ocupado['#' + s.iso + s.turno] || 0) + 1;
   if (dura) durasPorIso[s.iso] = 1;
   return s;
 }
-function cargaBase_(filas) { var o = {}; filas.forEach(function (r) { o[r._iso + r._turno] = (o[r._iso + r._turno] || 0) + r._min; }); return o; }
+function cargaBase_(filas) { var o = {}; filas.forEach(function (r) { o[r._iso + r._turno] = (o[r._iso + r._turno] || 0) + r._min; if (norm(r.ORIGEN) !== 'FABRIK' && !esIntocable_(codigosDe_(r['CÓDIGOS']))) o['#' + r._iso + r._turno] = (o['#' + r._iso + r._turno] || 0) + 1; }); return o; }
 
 // ---------- 1 · VIAJE ----------
 /**
@@ -4886,7 +4898,7 @@ function mejorHuecoGrabar_(lunes, filas) {
 // ---------- proponer · aplicar · deshacer ----------
 function reestProponer_(modo, lunes, params) {
   lunes = lunesDe_((params && params.lunes) || lunes || hoyIso_());
-  var P = modo === 'Viaje' ? proponerViaje_(lunes, params) : modo === 'Competi' ? (params.v === 2 ? proponerCompeti2_(lunes, params) : proponerCompeti_(lunes, params)) : modo === 'Trabajo metcon' ? proponerMetconTrabajo_(lunes, params) : modo === 'Lesión' ? proponerLesion_(lunes, params) : modo === 'Incentivar' ? proponerIncentivo_(lunesDe_(params.lunes || lunes), params) : proponerReorg_(lunes, params);
+  var P = modo === 'Viaje' ? proponerViaje_(lunes, params) : modo === 'Competi' ? (params.v === 2 ? proponerCompeti2_(lunes, params) : proponerCompeti_(lunes, params)) : modo === 'Trabajo metcon' ? proponerMetconTrabajo_(lunes, params) : modo === 'Lesión' ? proponerLesionNivel_(lunes, params) : modo === 'Incentivar' ? proponerIncentivo_(lunesDe_(params.lunes || lunes), params) : proponerReorg_(lunes, params);
   var id = 'R' + nuevoId_().slice(0, 6), plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
   P.cambios.forEach(function (c, i) { c.k = i; var r = plan[c.id]; if (r) { c.titulo = r['TÍTULO'] || r.BLOQUE; c.desdeIso = celdaIso_(r.FECHA); c.desdeTurno = r.TURNO === 'AM' ? 'AM' : 'PM'; c.origen = r.ORIGEN; } else if (c.nuevo) c.titulo = c.nuevo['TÍTULO']; });
   var json = JSON.stringify(P);
@@ -4947,6 +4959,7 @@ function reestAplicar_(id, ajustes) {
       asegurarColumna_(HOJAS.EVENTOS, 'MUY EXIGENTE'); var idEv = guardarEvento_({ EVENTO: (pp.tipo === 'fisica' ? 'Competición' : 'Grabación online') + ' (Reestructurar)', TIPO: 'Competición', INICIO: isoAFecha(d0), FIN: isoAFecha(d1), BLOQUEA: pp.tipo === 'fisica' ? 'Día completo' : (pp.turno === 'PM' ? 'Tarde' : 'Mañana'), 'CÓMO PROCEDER': 'Reestructurado ' + id, ESTADO: 'Decidido', sinCalendario: true });
       var ev = listar_(HOJAS.EVENTOS).filter(function (e) { return e.ID === idEv; })[0]; if (ev) actualizarFila_(HOJAS.EVENTOS, ev._fila, { 'MUY EXIGENTE': 'Sí' }); } catch (e) { Logger.log('Evento competi: ' + e); } }
     if (P.incentivo && P.incentivo.deltas) guardarIncentivo_(id, P.incentivo.lunes, P.incentivo.deltas);
+    if (x.MODO === 'Lesión') { var prL = {}; try { prL = JSON.parse(x.PARAMS || '{}'); } catch (eL) {} lesionAplicada_(P, prL); }   // v0.29
     if (/Viaje|Reorganiz|Competi|Lesi/.test(x.MODO)) try { var noH = {}, pr0 = {}; try { pr0 = JSON.parse(x.PARAMS || '{}'); } catch (eP) {} (pr0.noHechos || []).forEach(function (k) { noH[k] = 1; }); darPorHecho_(lunesDe_(celdaIso_(x.LUNES) || hoyIso_()), id, noH); } catch (eH) { Logger.log('darPorHecho: ' + eH); }
     MEMO = null;
     return { id: id, nuevas: nuevas.length };
@@ -6921,6 +6934,7 @@ function aprendizajeSemanal(lunesRef) {
   procesarDeathnote_();
   fotoSemana_(lunes, 'FINAL');
   var r = analizarSemana_(lunes);
+  try { aprenderDeResultados_(lunes); } catch (eR) { Logger.log('Aprender de resultados: ' + eR); }   // v0.29
   if (r.error) return 'sin análisis (' + r.error + ')';
   var nia = 0; if (r.preguntas || r.reglas) { try { nia = aprendizajeIA_(lunes); } catch (e) {} }
   try { if (r.preguntas + nia > 0 && pushActivo_()) enviarPush_('Deathnote de la semana', (r.preguntas + nia) + ' preguntas sobre tus cambios (' + r.cambios + ' bloques). Contéstalas en Menú › Aprendizaje: cada respuesta afina la programación.'); } catch (e) {}
@@ -6932,7 +6946,7 @@ function datosAprendizaje_() {
   var dn = listar_(HOJAS.APR_DN);
   return { preguntas: dn.filter(function (r) { return r.ESTADO === 'PENDIENTE'; }).map(function (r) { return { id: r.ID, lunes: celdaIso_(r.LUNES), bloque: r.BLOQUE, tipo: r.TIPO, pregunta: r.PREGUNTA, opciones: String(r.OPCIONES || '').split(' | ').filter(Boolean) }; }),
     contestadas: dn.filter(function (r) { return r.ESTADO === 'APLICADA'; }).length,
-    reglas: reglasAprendidas_().slice().sort(function (a, b) { return Math.abs(b.peso) - Math.abs(a.peso); }).slice(0, 60).map(function (r) { return { texto: r.texto, peso: r.peso, n: r.n, origen: r.origen, firme: Math.abs(r.peso) >= UMBRAL_REGLA_ || r.tipo === 'NOTA' }; }),
+    reglas: listar_(HOJAS.APR_REG).map(function (r) { var pe = parseFloat(String(r.PESO).replace(',', '.')) || 0; return { clave: r.CLAVE, texto: r.TEXTO, peso: pe, n: +r.EVIDENCIAS || 0, origen: r.ORIGEN, activa: r.ACTIVA !== 'No', firme: r.ACTIVA !== 'No' && (Math.abs(pe) >= UMBRAL_REGLA_ || r.TIPO === 'NOTA') }; }).sort(function (a, b) { return Math.abs(b.peso) - Math.abs(a.peso); }).slice(0, 80),
     texto: reglasAprendidasTexto_(40) };
 }
 function responderDeathnote_(respuestas) {
@@ -7461,12 +7475,14 @@ function sesgoCiclo_(cods, ciclo) {
 function ajustarNuevos_(nuevos, lunes, log) {
   var ciclo = cicloExtras_(lunes), carga = { descarga: false }; try { carga = estadoCarga_(lunes); } catch (e) {}
   var op = null; try { op = opSemana_(lunes); } catch (e) {}
-  var postVuelta = op && op.enModo && op.post >= 3;   // en la vuelta manda la intensidad: no se descarga
+  var postVuelta = op && op.enModo && op.post >= 3, lesSem = lesionSemana_(lunes);   // en la vuelta manda la intensidad: no se descarga
   nuevos.forEach(function (o) {
     var cods = codigosDe_(o['CÓDIGOS']), iso = celdaIso_(o.FECHA); if (norm(o.ORIGEN) === 'OPERACION') return;
     materialTexto_(o, iso);
     if (esIntocable_(cods)) return;
     var pre = [ciclo.texto], min = parseFloat(o.MIN) || 10;
+    try { var prg = progresionDe_(cods, ciclo); if (prg) pre.push(prg); } catch (ePr) {}   // v0.29
+    if (lesSem && cargasZona_(lesSem.zona).some(function (c) { return cargasFila_(o).indexOf(c) >= 0; })) { min = Math.max(5, Math.round(min / 2)); pre.unshift('LESIÓN ' + lesSem.zona + ' · NIVEL 2 esta semana: la mitad de volumen e intensidad, sin dolor.'); }
     if (ciclo.k === 4 && !/Mínimo|DOSIS MENSUAL/.test(o.CONTENIDO || '')) { min = Math.max(5, Math.round(min * 0.6)); }
     if (carga.descarga && !postVuelta) { min = Math.max(5, Math.round(min * 0.5)); pre.unshift('DESCARGA AUTOMÁTICA (cansancio medio ' + carga.media + '/10 y sin día de descanso): la mitad de series, formato técnico, sin fallo.'); o.INTENSIDAD = '🟢 Técnico'; }
     var fm = factorMeta_({ 'CÓDIGOS': o['CÓDIGOS'] }, lunes, 'Semana'); if (fm.f > 1) { pre.unshift('×2 esta semana: ' + fm.por + '. Microdosis de calidad, no más volumen por sesión.'); min = Math.min(min, 12); }
@@ -7475,4 +7491,136 @@ function ajustarNuevos_(nuevos, lunes, log) {
   if (carga.descarga && !postVuelta && log) log.push('Descarga automática: cansancio medio ' + carga.media + '/10 y dos semanas sin día de descanso → extras a la mitad y en formato técnico');
   if (log) log.push('Ciclo de extras: ' + ciclo.modo.toLowerCase() + ' (semana ' + ciclo.k + '/4' + (ciclo.fabrik ? ' · Fabrik: ' + ciclo.fabrik : '') + ')');
   return nuevos;
+}
+
+// ===================== v0.29 · PROGRESIÓN, FEEDBACK DEL DÍA SIGUIENTE, ACTIVACIÓN, LESIÓN EN 3 NIVELES =====================
+CAMPOS_REGISTRO.push('RESULTADO', 'FEEDBACK');
+CAMPOS_CARRERA.push('HUMEDAD (%)');
+var RESULTADOS_ = ['Completado', 'A medias', 'No salió'];
+/** Lo último que hiciste de ese estímulo (registro + plan) y qué toca hoy: una sola variable cada vez. */
+function progresionDe_(cods, ciclo) {
+  if (!cods.length) return '';
+  var plan = {}; listar_(HOJAS.PLAN).forEach(function (r) { if (norm(r.ORIGEN) !== 'FABRIK') plan[r.ID] = r; });
+  var reg = listar_(HOJAS.REGISTRO).filter(function (r) { var p = plan[r.ID_PLAN]; return p && r.HECHO && r.HECHO !== 'No' && codigosDe_(p['CÓDIGOS']).some(function (c) { return cods.indexOf(c) >= 0; }); })
+    .sort(function (a, b) { return celdaIso_(a.FECHA) < celdaIso_(b.FECHA) ? 1 : -1; });
+  var u = reg[0]; if (!u) return 'PROGRESIÓN · primera vez en este ciclo: dosis de referencia y apunta series, reps, kg y RPE para que la próxima suba.';
+  var rpe = +u.RPE || 0, res = u.RESULTADO || (u.HECHO === 'Parcial' ? 'A medias' : ''), datos = [u.CARGAS, u['DATOS (parciales/vatios)'], u.MIN_REAL ? u.MIN_REAL + '′' : ''].filter(Boolean).join(' · ');
+  var ult = 'Última vez (' + isoAFecha(celdaIso_(u.FECHA)).slice(0, 5) + '): ' + (datos || 'sin datos de carga') + (rpe ? ' · RPE ' + rpe : '') + (res ? ' · ' + res : '') + (u.FEEDBACK ? ' · «' + String(u.FEEDBACK).slice(0, 80) + '»' : '');
+  var hoy = res === 'No salió' || rpe >= 9 ? 'repite la dosis anterior al 90 % y cuida la calidad (no salió o fue al límite).' :
+    res === 'A medias' || rpe === 8 ? 'repite la misma dosis hasta que salga entera con RPE ≤7.' :
+    ciclo && ciclo.modo === 'TÉCNICA' ? 'sube el control, no la carga: +1 rep por serie con tempo o más rango.' :
+    ciclo && ciclo.modo === 'INTENSIDAD' ? 'sube la intensidad: +2,5–5 kg o menos descanso, mismas reps.' : 'sube UNA variable: +1 rep por serie, +2,5 kg o +1 serie.';
+  return 'PROGRESIÓN · ' + ult + '\nHoy: ' + hoy;
+}
+/** Extras de ayer sin resultado: se preguntan al día siguiente (sobre todo las carencias). */
+function feedbackAyer_(hoy) {
+  var ayer = sumarDias(hoy, -1), conRes = {};
+  listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.ID_PLAN && r.RESULTADO) conRes[r.ID_PLAN] = 1; });
+  return listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === ayer && r.ESTADO === 'PROGRAMADO' && norm(r.ORIGEN) !== 'FABRIK' && !esCarreraFila_(r) && !conRes[r.ID] && codigosDe_(r['CÓDIGOS']).length; })
+    .slice(0, 5).map(function (r) { return { id: r.ID, fecha: ayer, titulo: r['TÍTULO'] || r.BLOQUE, codigos: r['CÓDIGOS'] || '' }; });
+}
+function feedbackExtra_(b) {
+  var res = RESULTADOS_.indexOf(b.resultado) >= 0 ? b.resultado : ''; if (!res && !b.feedback) throw new Error('faltan_datos');
+  var iso = celdaIso_(b.fecha) || sumarDias(hoyIso_(), -1), p = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(b.id || ''); })[0] || {};
+  ['RESULTADO', 'FEEDBACK'].forEach(function (h) { asegurarColumna_(HOJAS.REGISTRO, h); });
+  var ya = listar_(HOJAS.REGISTRO).filter(function (r) { return r.ID_PLAN === String(b.id) && celdaIso_(r.FECHA) === iso; })[0];
+  var o = { FECHA: isoAFecha(iso), ID_PLAN: String(b.id || ''), BLOQUE: p['TÍTULO'] || p.BLOQUE || '', HECHO: res === 'A medias' ? 'Parcial' : 'Sí', RESULTADO: res, FEEDBACK: String(b.feedback || '').slice(0, 600) };
+  if (b.rpe) o.RPE = String(b.rpe);
+  if (ya) { if (ya.HECHO === 'No') delete o.HECHO; Object.keys(o).forEach(function (k) { if (o[k] === '' && k !== 'RESULTADO') delete o[k]; }); actualizarFila_(HOJAS.REGISTRO, ya._fila, o); MEMO = null; return Object.assign({}, ya, o); }
+  return guardarRegistro_(o);
+}
+/** «Todo hecho como estaba»: todos los bloques del día sin registro pasan a hechos de una vez. */
+function registrarDia_(iso) {
+  iso = celdaIso_(iso) || hoyIso_(); if (iso > hoyIso_()) throw new Error('fecha_futura');
+  var reg = {}; listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.ID_PLAN && celdaIso_(r.FECHA) === iso) reg[r.ID_PLAN] = 1; });
+  var nuevas = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && r.ESTADO === 'PROGRAMADO' && !reg[r.ID]; })
+    .map(function (r) { return { FECHA: isoAFecha(iso), ID_PLAN: r.ID, BLOQUE: r['TÍTULO'] || r.BLOQUE || '', HECHO: 'Sí', NOTAS: 'Todo hecho (un toque)', REGISTRADO: ahora_() }; });
+  if (nuevas.length) { bloqueo_(function () { filasEnHoja_(HOJAS.REGISTRO, nuevas); }); MEMO = null; }
+  return nuevas.length;
+}
+/** Aprender del resultado (no solo de dónde mueves los bloques): lo que sale mal tras cierta carga crea reglas solas. */
+function aprenderDeResultados_(lunes) {
+  var k = 'apr_res_' + lunes; if (leerConfig_()[k]) return 0;
+  var fin = sumarDias(lunes, 6), plan = {}, fotos = {};
+  listar_(HOJAS.PLAN).forEach(function (r) { plan[r.ID] = r; });
+  try { listar_(HOJAS.APR_SEM).forEach(function (r) { if (celdaIso_(r.LUNES) === lunes && r.FOTO === 'FINAL') fotos[r.ID] = r; }); } catch (e) {}
+  var d = [];
+  listar_(HOJAS.REGISTRO).forEach(function (r) {
+    var f = celdaIso_(r.FECHA), p = plan[r.ID_PLAN]; if (!p || f < lunes || f > fin || !r.RESULTADO) return;
+    var s = sujetoApr_(p), ft = fotos[r.ID_PLAN] || {}, ant = String(ft['DÍA ANTES'] || '').split(/\s*,\s*/).filter(Boolean), con = String(ft['SESIÓN CON'] || '').split(' | ').filter(Boolean).map(function (x) { return x.split('~')[0]; });
+    if (r.RESULTADO === 'Completado' && (+r.RPE || 0) <= 7) { d.push(['TURNO', s, p.TURNO === 'AM' ? 'AM' : 'PM', 0.3]); return; }
+    var w = r.RESULTADO === 'No salió' ? 0.8 : 0.5;
+    ant.filter(function (c) { return /^(DURA|PIERNA|SNC|HOMBRO|AGARRE|IMPACTO)$/.test(c); }).forEach(function (c) { d.push(['TRAS', s, c, w]); });
+    con.slice(0, 2).forEach(function (c) { d.push(['SEPARAR', s, c, w * 0.6]); });
+    if (r.FEEDBACK) d.push(['NOTA', s, String(r.FEEDBACK).slice(0, 300), 1.5]);
+  });
+  sumarReglas_(d, lunes, 'resultado');
+  ponerConfig_(k, ahora_() + ' · ' + d.length + ' señales', 'Aprendizaje por resultados (feedback de los extras)');
+  return d.length;
+}
+/** Activación por sesión (6–8′): reconoce lo que trae Fabrik y la orienta a la sesión. */
+function activacionSemana_(lunes) {
+  var out = {}, fin = sumarDias(lunes, 6), apr = '';
+  try { apr = listar_(HOJAS.LESIONES).filter(function (r) { return r.ESTADO === 'APROBADA'; }).map(function (r) { return (String(r['IA · RECUPERACIÓN, PREVENCIÓN Y CALENTAMIENTO'] || '').match(/CALENTAMIENTO:\s*([^\n]{5,160})/i) || [])[1]; }).filter(Boolean)[0] || ''; } catch (e) {}
+  var ses = {};
+  listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA); if (d < lunes || d > fin || !/^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO)) return; var k = d + '|' + (r.TURNO === 'AM' ? 'AM' : 'PM'); (ses[k] = ses[k] || []).push(r); });
+  Object.keys(ses).forEach(function (k) {
+    var rs = ses[k], cg = [], txt = norm(rs.map(function (r) { return (r['TÍTULO'] || '') + ' ' + (r.CONTENIDO || ''); }).join(' ')), solo = rs.every(function (r) { return esCarreraFila_(r); });
+    rs.forEach(function (r) { cargasFila_(r).forEach(function (c) { if (cg.indexOf(c) < 0) cg.push(c); }); });
+    var L = [];
+    if (solo) { L.push('Tobillo-rodilla-cadera 3′: balanceos de pierna 10/lado, rodilla sobre pie 10/lado, skipping 2 × 15 m'); out[k] = L; return; }
+    L.push('Escapular y torácica 2′: band pull-apart 2 × 15 · wall slides 2 × 8 · rotación torácica en cuadrupedia 6/lado');
+    if (cg.indexOf('HOMBRO') >= 0 || /SNATCH|JERK|OVERHEAD|OHS|HSPU|HANDSTAND|PINO|PRESS|THRUSTER|WALL BALL/.test(txt)) {
+      L.push('Posición OH 2′: sots press 2 × 5 (PVC o barra vacía) · Lu raises 2 × 8 · hold OH con PVC 2 × 20″');
+      L.push('Pino 1′: 2 × 20″ hollow contra pared + 10 shoulder taps');
+    }
+    if (cg.indexOf('PIERNA') >= 0 || cg.indexOf('IMPACTO') >= 0 || /SQUAT|LUNGE|JUMP|RUN|SALTO|ZANCADA/.test(txt)) L.push('Tobillo-rodilla-cadera 2′: rodilla sobre pie 10/lado · 90/90 5/lado · cossack 5/lado');
+    if (cg.indexOf('SNC') >= 0 || /DEADLIFT|PESO MUERTO|CLEAN|RDL|SWING/.test(txt)) L.push('Bisagra 1′: good morning con PVC 2 × 8 · puente de glúteo 2 × 10');
+    L.push('Prevención 1′: chin tucks 10 · rotación externa con banda (hombro derecho) 12');
+    if (apr) L.push('De tu hoja de lesiones: ' + apr);
+    if (rs.some(function (r) { return norm(r.ORIGEN) === 'FABRIK' && /WARM|CALENTAMIENTO|ACTIVACION/.test(norm(r['TÍTULO'] || '')); })) L.unshift('Fabrik ya trae calentamiento: haz esto antes, en 6′, y entra a su calentamiento con todo activado.');
+    out[k] = L;
+  });
+  return out;
+}
+// ---------- lesión en 3 niveles ----------
+HOJAS.LES_HIST = 'LESIONES · HISTORIAL';
+ESQ_BD_[HOJAS.LES_HIST] = { cab: ['FECHA', 'ZONA', 'CAUSA', 'NIVEL', 'NOTAS', 'REGISTRADO'], anchos: [95, 120, 120, 60, 300, 130], fechas: ['FECHA'], color: '#dc2626', negrita: 'ZONA' };
+var NIVELES_LESION_ = { '1': 'Nivel 1 · leve: se entrena con normalidad (queda registrado)', '2': 'Nivel 2 · moderado: extras de la zona al 50 % y lo más tarde posible', '3': 'Nivel 3 · fuerte: esta semana nada de la zona; la siguiente, nivel 2' };
+/** Nivel 2 la semana que viene: lo lee el generador. */
+function lesionSemana_(lunes) { try { var v = JSON.parse(String(leerConfig_()['lesion_sem_' + lunes] || '')); return v && v.zona ? v : null; } catch (e) { return null; } }
+function cargasZona_(zona) { return (ZONAS_LESION_[zona] || {}).cargas || []; }
+function proponerLesionNivel_(lunes, p) {
+  var nivel = String(p.nivel || '3'), Z = ZONAS_LESION_[p.zona]; if (!Z) throw new Error('zona_no_valida');
+  var iso = isoOk_(p.iso) || hoyIso_(), dow = (new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7;
+  if (nivel === '1') return { cambios: [], avisos: ['Se entrena con normalidad. Queda en el historial de molestias; si se repite en la misma zona, sube de nivel.'], lesion: { nivel: 1 }, resumen: 'Lesión · ' + p.zona + ' · ' + NIVELES_LESION_['1'] };
+  if (nivel === '3') {
+    var P3 = proponerLesion_(lunes, p);
+    P3.lesion = { nivel: 3, siguiente: sumarDias(lunes, 7) }; P3.resumen = NIVELES_LESION_['3'] + ' · ' + P3.resumen;
+    P3.avisos.push('La semana que viene los extras de ' + p.zona.toLowerCase() + ' irán al 50 % y lo más tarde posible.');
+    return P3;
+  }
+  if (dow >= 4) return { cambios: [], avisos: ['Es viernes o más tarde: esta semana no se toca y el nivel 2 se aplica la semana que viene (extras de la zona al 50 % y al final de la semana).'], lesion: { nivel: 2, siguiente: sumarDias(lunes, 7) }, resumen: 'Lesión · ' + p.zona + ' · ' + NIVELES_LESION_['2'] + ' (desde la semana que viene)' };
+  var t0 = horaDe_(iso, p.turno === 'PM' ? 'PM' : 'AM'), cambios = [], tocar = function (r) { var cg = cargasFila_(r); return Z.cargas.some(function (c) { return cg.indexOf(c) >= 0; }); };
+  var filas = filasSemanaActivas_(lunes).filter(function (r) { return !r._hecho && horaDe_(r._iso, r._turno) >= t0; });
+  var ext = filas.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && !esIntocable_(codigosDe_(r['CÓDIGOS'])) && tocar(r); });
+  var libres = []; for (var k = 6; k >= dow; k--) { var d = sumarDias(lunes, k); ['PM', 'AM'].forEach(function (t) { libres.push({ iso: d, turno: t }); }); }
+  var ocup = cargaBase_(filas);
+  ext.forEach(function (r) {
+    var mi = Math.max(5, Math.round(r._min / 2)), dest = libres.filter(function (s) { return horaDe_(s.iso, s.turno) > horaDe_(r._iso, r._turno) && (ocup[s.iso + s.turno] || 0) + mi <= CAP_TURNO_[s.turno] && !materialVeto_(codigosDe_(r['CÓDIGOS']), s.iso, s.turno); })[0];
+    cambios.push({ id: r.ID, accion: 'adaptar', min: mi, iso: r._iso, turno: r._turno, contenido: 'LESIÓN ' + p.zona + ' · NIVEL 2: la mitad de volumen e intensidad, sin dolor.\n\n' + (r.CONTENIDO || ''), motivo: 'Nivel 2: ' + p.zona.toLowerCase() + ' al 50 %' });
+    if (dest) { ocup[dest.iso + dest.turno] = (ocup[dest.iso + dest.turno] || 0) + mi; cambios.push({ id: r.ID, accion: 'mover', iso: dest.iso, turno: dest.turno, motivo: 'Nivel 2: lo más tarde posible de la semana → ' + diaDe_(dest.iso).toLowerCase() + ' ' + dest.turno }); }
+  });
+  return { cambios: cambios, avisos: ext.length ? [] : ['Esta semana no quedan extras que carguen ' + p.zona.toLowerCase() + '. Fabrik no se toca en el nivel 2.'], lesion: { nivel: 2 }, resumen: 'Lesión · ' + p.zona + ' · ' + NIVELES_LESION_['2'] + ' · ' + ext.length + ' extras' };
+}
+function lesionAplicada_(P, params) {
+  var l = P.lesion || {}; params = params || {};
+  try { filasEnHoja_(HOJAS.LES_HIST, [{ FECHA: isoAFecha(isoOk_(params.iso) || hoyIso_()), ZONA: params.zona || '', CAUSA: params.causa || '', NIVEL: String(l.nivel || params.nivel || ''), NOTAS: P.resumen || '', REGISTRADO: ahora_() }]); } catch (e) { Logger.log('Historial lesión: ' + e); }
+  if (l.siguiente) ponerConfig_('lesion_sem_' + l.siguiente, JSON.stringify({ zona: params.zona, causa: params.causa || '', nivel: 2 }), 'Lesión: nivel 2 en la semana del ' + isoAFecha(l.siguiente));
+  MEMO = null;
+}
+// ---------- reglas: activar / desactivar ----------
+function reglaActiva_(clave, activa) {
+  var r = listar_(HOJAS.APR_REG).filter(function (x) { return x.CLAVE === String(clave || ''); })[0]; if (!r) throw new Error('no_encontrado');
+  actualizarFila_(HOJAS.APR_REG, r._fila, { ACTIVA: activa ? 'Sí' : 'No', ACTUALIZADO: ahora_() }); MEMO = null; reglasAprendidas_.c = null; return true;
 }

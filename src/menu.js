@@ -22,24 +22,24 @@
     var hechos = (d.registro || []).length;
     var html = cabeceraVista('Menú', 'Semana') +
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
-    html += '<button class="set-link reest-link" type="button" id="ir-reest"><span class="set-ico">🔀</span>Reestructurar · viaje, reorganizar, competi<span class="go">›</span></button>';
-    if (d.op) html += '<button class="set-link" type="button" id="ir-operacion"><span class="set-ico">🩺</span>Modo operación' + (d.op.activo ? ' · ' + esc(d.op.nombre || 'activo') : ' · apagado') + '<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-aprendizaje"><span class="set-ico">🧠</span>Aprendizaje · deathnote y lo aprendido<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-competis"><span class="set-ico">🏆</span>Competis · España y Europa · seguimiento<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-cobertura"><span class="set-ico">%</span>Estímulos semana y mes · carrera<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-hoja"><span class="set-ico">☰</span>Hoja de la semana · bloques<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-extras"><span class="set-ico">⊕</span>Extras semana en curso<span class="go">›</span></button>';
-    html += '<button class="set-link" type="button" id="ir-calendario"><span class="set-ico">▦</span>Calendario de eventos<span class="go">›</span></button>';
+    var L = function (id, ico, txt, cls) { return '<button class="set-link' + (cls ? ' ' + cls : '') + '" type="button" id="' + id + '"><span class="set-ico">' + ico + '</span>' + txt + '<span class="go">›</span></button>'; };
+    var grupo = function (t, cuerpo) { return '<details class="set-grupo" open><summary>' + esc(t) + '</summary><div class="set-grupo-b">' + cuerpo + '</div></details>'; };
+    html += grupo('Semana', L('ir-reest', '🔀', 'Reestructurar · viaje, reorganizar, competi', 'reest-link') + L('ir-hoja', '☰', 'Hoja de la semana · bloques') + L('ir-extras', '⊕', 'Extras semana en curso') +
+      L('ir-calendario', '▦', 'Calendario de eventos') + L('ir-cobertura', '%', 'Estímulos semana y mes · carrera'));
+    html += grupo('Rendimiento', L('ir-rendimiento', '📈', 'Rendimiento · indicadores, ritmos y Strava') + L('ir-resumen', '🗓', 'Resumen del lunes') + L('ir-aprendizaje', '🧠', 'Aprendizaje · deathnote y lo aprendido') +
+      (d.op ? L('ir-operacion', '🩺', 'Modo operación' + (d.op.activo ? ' · ' + esc(d.op.nombre || 'activo') : ' · apagado')) : ''));
+    html += grupo('Competición', L('ir-competis', '🏆', 'Competis · España y Europa · seguimiento'));
     var pend = (d.pendientes || []);
     html += seccion('s-pend', 'Pendientes', htmlPendientes(pend), pend.length ? String(pend.length) : '', '↺');
     html += seccion('s-avisos', 'Avisos de tests y competiciones', htmlAvisosEventos(d), '', '⏱');
     html += seccion('s-marcas', 'Mis marcas', htmlMarcas(d), '', '◆');
     html += seccion('s-wods', 'WODs de referencia y guardados', '<div id="wods-body"><div class="hint">Cargando…</div></div>', '', '★');
     html += seccion('s-semana', 'Esta semana', htmlResumenSemana(d), hechos ? hechos + ' registrados' : '', '✓');
+    html += seccion('s-salud', 'Salud de la app', '<div id="salud-body"><div class="hint">Cargando…</div></div>', '', '♥');
+    html += '<details class="set-mas" id="s-mas"><summary>Más</summary><div class="set-grupo-b">';
     html += seccion('s-desc', '% Descuentos', '<div id="desc-body"><div class="hint">Cargando…</div></div>', '', '%');
     html += seccion('s-webs', 'Mis webs', '<div id="webs-body"><div class="hint">Cargando…</div></div>', '', '↗');
     html += seccion('s-videos', 'Vídeos de ejercicios', '<input id="vid-q" class="inp" placeholder="Buscar ejercicio…" autocomplete="off"><div id="vid-body" class="pr-list"></div>', String((S.videos || []).length), '▶');
-    html += seccion('s-push', 'Avisos al móvil', htmlAvisos(d), '', '🔔');
     html += seccion('s-tema', 'Apariencia', '<div class="seg" role="group" aria-label="Tema">' + Object.keys(TEMAS).map(function (k) {
       return '<button type="button" data-tema="' + k + '" aria-pressed="' + (tema === k) + '">' + TEMAS[k] + '</button>'; }).join('') + '</div>' +
       '<div class="hint">Automático sigue el modo claro u oscuro de tu móvil u ordenador.</div>', '', '◐');
@@ -47,6 +47,8 @@
     html += seccion('s-unid', 'Unidades de carga', '<div class="seg" role="group" aria-label="Unidades"><button type="button" data-unidad="kg" aria-pressed="' + !lb + '">kg</button><button type="button" data-unidad="lb" aria-pressed="' + lb + '">lb</button></div>' +
       '<div class="hint">Para entrenar en un box que va en libras: los % y los discos por lado del timer salen en lb (barra 45 lb). Tus RM siguen guardados en kg.</div>', lb ? 'lb' : 'kg', '⚖');
     html += seccion('s-instalar', 'Instalar la app', htmlInstalar(), '', '↓');
+    html += '</div></details>';
+    html += seccion('s-push', 'Avisos al móvil', htmlAvisos(d), '', '🔔');
     if ((d.erratas || []).length) html += seccion('s-err', 'Avisos de Fabrik', '<ul class="hint">' + d.erratas.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>', String(d.erratas.length), '!');
     html += '<button class="btn" type="button" id="logout">Cerrar sesión</button><div class="hint" style="text-align:center">Road To Elite · ' + esc(WEB_VERSION) + '</div>';
     $app.innerHTML = html;
@@ -59,6 +61,9 @@
     if (document.getElementById('ir-operacion')) document.getElementById('ir-operacion').onclick = function () { S.vista = 'operacion'; S.opv = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-aprendizaje').onclick = function () { S.vista = 'aprendizaje'; S.apr = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-competis').onclick = function () { S.vista = 'competis'; S.competis = null; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-rendimiento').onclick = function () { S.vista = 'rendimiento'; S.rend = null; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('ir-resumen').onclick = function () { S.vista = 'resumen'; S.res = null; render(); window.scrollTo({ top: 0 }); };
+    document.getElementById('s-salud').addEventListener('toggle', function () { if (this.open) cargarSalud(); });
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
@@ -74,7 +79,10 @@
         .catch(function (e) { pb.disabled = false; toast(e && e.message ? e.message : 'No se pudo activar'); });
     };
     var ab = S._abrir; S._abrir = null;
-    if (ab && document.getElementById(ab)) { document.getElementById(ab).open = true; if (ab === 's-desc') cargarDescuentos(); if (ab === 's-webs') cargarWebs(); }
+    if (ab && document.getElementById(ab)) {
+      for (var po = document.getElementById(ab); po && po !== $app; po = po.parentElement) if (po.tagName === 'DETAILS') po.open = true;
+      if (ab === 's-desc') cargarDescuentos(); if (ab === 's-webs') cargarWebs(); if (ab === 's-salud') cargarSalud();
+    }
   }
 
   /** Resumen rápido de lo registrado en la semana que se está viendo. */
@@ -346,7 +354,10 @@
       (e['CÓMO PROCEDER'] ? '<p class="ev-desc">' + esc(e['CÓMO PROCEDER']) + '</p>' : '<p class="ev-desc err">Sin decidir cómo proceder</p>') +
       ((+e['ANTES (días bajar volumen)'] || +e['DESPUÉS (días recuperación)']) ? '<div class="hint">' + (+e['ANTES (días bajar volumen)'] ? e['ANTES (días bajar volumen)'] + ' día(s) antes bajando volumen · ' : '') +
         (+e['DESPUÉS (días recuperación)'] ? e['DESPUÉS (días recuperación)'] + ' día(s) de recuperación después' : '') + '</div>' : '') +
-      '<div class="evc-acc"><a class="btn-ghost sm" href="' + esc(urlGoogleCal(e)) + '" target="_blank" rel="noopener">📅 Google Calendar</a><button class="btn-ghost sm" type="button" data-evento="' + esc(e.ID) + '">Editar</button></div></div>';
+      (e.OBJETIVO ? '<div class="hint">🎯 Objetivo ' + esc(e.OBJETIVO) + (e.OBJETIVO === 'A' ? ' · con taper' : ' · preparación') + '</div>' : '') +
+      '<div class="evc-acc"><a class="btn-ghost sm" href="' + esc(urlGoogleCal(e)) + '" target="_blank" rel="noopener">📅 Google Calendar</a>' +
+      (/^(Competición|HYROX)$/.test(e.TIPO || '') ? '<button class="btn-ghost sm" type="button" data-plan-comp="' + esc(e.ID) + '">📋 Plan del día</button><button class="btn-ghost sm" type="button" data-ficha-comp="' + esc(e.ID) + '">📝 Ficha</button>' : '') +
+      '<button class="btn-ghost sm" type="button" data-evento="' + esc(e.ID) + '">Editar</button></div></div>';
   }
   function renderCalendario() {
     var d = S.data, hoy = d.hoy, mes = S.calMes || hoy.slice(0, 7), y = +mes.slice(0, 4), m = +mes.slice(5, 7);
@@ -371,6 +382,8 @@
       (evs.length ? '<button class="btn" type="button" id="ics">Descargar todos los eventos (.ics · iPhone, Outlook)</button>' : '');
     $app.innerHTML = html;
     var ic = document.getElementById('ics'); if (ic) ic.onclick = function () { descargarIcs(evs); };
+    $app.querySelectorAll('[data-plan-comp]').forEach(function (b) { b.onclick = function () { abrirPlanCompeti(b.dataset.planComp, b); }; });
+    $app.querySelectorAll('[data-ficha-comp]').forEach(function (b) { b.onclick = function () { abrirFichaCompeti(evs.filter(function (y) { return y.ID === b.dataset.fichaComp; })[0], b); }; });
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
   }
   /** Formulario de evento (nuevo o editar). Lo usan el calendario, el día y la confirmación de semana. */
@@ -388,6 +401,8 @@
       '<div><label for="ev-p">Días de recuperación después</label><select id="ev-p">' + sel(String(e['DESPUÉS (días recuperación)'] || '0'), ['0', '1', '2', '3']) + '</select></div></div>' +
       '<label for="ev-c">Cómo proceder (si lo dejas vacío, te lo preguntaré antes de programar)</label><textarea id="ev-c" rows="2">' + esc(e['CÓMO PROCEDER'] || '') + '</textarea>' +
       '<label for="ev-o">Notas</label><input id="ev-o" maxlength="300" value="' + esc(e.NOTAS || '') + '">' +
+      '<label for="ev-ob">Objetivo</label><select id="ev-ob">' + [['', '—'], ['A', 'A · objetivo con taper'], ['B', 'B · preparación']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (e.OBJETIVO || '') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
+      '<label for="ev-wd">WODs (si se conocen)</label><textarea id="ev-wd" rows="3" placeholder="Un WOD por bloque">' + esc(e.WODS || '') + '</textarea>' +
       '<div class="two-btn">' + (e.ID ? '<button class="btn" type="button" id="ev-del">Borrar</button>' : '') + '<button class="btn btn-primary" type="submit" id="ev-ok">Guardar</button></div></form>');
     var del = document.getElementById('ev-del');
     if (del) del.onclick = function () {
@@ -398,7 +413,7 @@
       ev.preventDefault();
       var b = document.getElementById('ev-ok'); b.disabled = true;
       var o = { ID: e.ID || '', EVENTO: val('ev-n'), TIPO: val('ev-t'), HORA: val('ev-h'), INICIO: aTxt(val('ev-i')), FIN: aTxt(val('ev-f') || val('ev-i')), LUGAR: val('ev-l'), BLOQUEA: val('ev-b'),
-        'ANTES (días bajar volumen)': val('ev-a'), 'DESPUÉS (días recuperación)': val('ev-p'), 'CÓMO PROCEDER': val('ev-c'), NOTAS: val('ev-o'),
+        'ANTES (días bajar volumen)': val('ev-a'), 'DESPUÉS (días recuperación)': val('ev-p'), 'CÓMO PROCEDER': val('ev-c'), NOTAS: val('ev-o'), OBJETIVO: val('ev-ob'), WODS: val('ev-wd'),
         ESTADO: val('ev-c') || val('ev-b') === 'No bloquea' ? 'Decidido' : 'Por decidir' };
       api({ action: 'evento', evento: o }).then(ok).then(function (r) { S.eventos = r.eventos; cerrarHoja(); toast('Evento guardado'); cargar(S.data.semana); if (S.vista === 'calendario') render(); }).catch(falloApi(b));
     };
@@ -701,6 +716,7 @@
   function enlazarChips(raiz) { (raiz || document).querySelectorAll('.zona[data-mk]').forEach(function (b) { b.onclick = function () { var on = !b.classList.contains('on'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }; }); }
   function diasRestantes() { var d = S.data; return d.dias.filter(function (x) { return x.iso >= d.hoy; }); }
   function etqDia(iso) { var x = S.data.dias.filter(function (y) { return y.iso === iso; })[0]; return (x ? NOMBRE_DIA[x.nombre].slice(0, 3) : '') + ' ' + diaMes(iso); }
+  var NIVEL_LESION = { '1': 'Leve: se entrena normal (solo queda registrado).', '2': 'Moderado: extras de esa zona al 50 % y lo más tarde posible (desde el viernes, pasa a la semana siguiente).', '3': 'Fuerte: esta semana nada de esa zona y la siguiente al 50 %.' };
   function segHtml(id, ops, val) { return '<div class="seg" role="group" id="' + id + '">' + ops.map(function (o) { return '<button type="button" data-sv="' + o[0] + '" aria-pressed="' + (o[0] === val) + '">' + esc(o[1]) + '</button>'; }).join('') + '</div>'; }
   function enlazarSeg(id, fn) { var g = document.getElementById(id); if (!g) return; g.querySelectorAll('[data-sv]').forEach(function (b) { b.onclick = function () { g.querySelectorAll('[data-sv]').forEach(function (y) { y.setAttribute('aria-pressed', y === b); }); if (fn) fn(b.dataset.sv); }; }); }
   function valSeg(id) { var b = document.querySelector('#' + id + ' [aria-pressed="true"]'); return b ? b.dataset.sv : ''; }
@@ -815,6 +831,7 @@
         '<label>¿De qué viene?</label><div id="ls-cw">' + segHtml('ls-c', ZL[zSel].map(function (c) { return [c, c]; }).concat([['', 'No lo sé']]), R.lcausa || ZL[zSel][0]) + '</div>' +
         '<div class="two"><div><label for="ls-d">Desde</label><select id="ls-d">' + d.dias.map(function (x) { return '<option value="' + x.iso + '"' + (x.iso === hoyL ? ' selected' : '') + '>' + etqDia(x.iso) + '</option>'; }).join('') + '</select></div>' +
         '<div><label>Turno</label>' + segHtml('ls-tu', [['AM', 'Mañana'], ['PM', 'Tarde']], 'AM') + '</div></div>' +
+        '<label>Nivel</label>' + segHtml('ls-n', [['1', '1 · Leve'], ['2', '2 · Moderado'], ['3', '3 · Fuerte']], R.lnivel || '2') + '<div class="hint" id="ls-nt">' + esc(NIVEL_LESION[R.lnivel || '2']) + '</div>' +
         '<label class="sh-b"><input type="checkbox" id="ls-desc"><span>Puedo usar el <b>día de descanso</b> para compensar</span></label>' +
         '<div class="hint">Lo que no quepa te lo propongo para pendientes de la semana que viene o para eliminarlo: decides tú en la propuesta.</div>' +
         '<button class="btn btn-primary" type="submit">Ver propuesta</button><button class="btn" type="button" id="rf-v">Cambiar de modo</button></form>';
@@ -915,10 +932,11 @@
       };
     } else if (R.modo === 'Lesión') {
       enlazarSeg('ls-c', function (v) { R.lcausa = v; }); enlazarSeg('ls-tu');
+      enlazarSeg('ls-n', function (v) { R.lnivel = v; document.getElementById('ls-nt').textContent = NIVEL_LESION[v]; });
       document.getElementById('ls-z').onchange = function () { R.lzona = this.value; R.lcausa = null; render(); };
       document.getElementById('rf').onsubmit = function (ev) {
         ev.preventDefault();
-        enviar({ zona: val('ls-z'), causa: valSeg('ls-c') || '', iso: val('ls-d'), turno: valSeg('ls-tu') || 'AM', usarDescanso: document.getElementById('ls-desc').checked });
+        enviar({ zona: val('ls-z'), causa: valSeg('ls-c') || '', nivel: valSeg('ls-n') || '2', iso: val('ls-d'), turno: valSeg('ls-tu') || 'AM', usarDescanso: document.getElementById('ls-desc').checked });
       };
     } else {
       enlazarSeg('rc-t', function (v) { R.ctipo = v; document.getElementById('rc-on').hidden = v === 'fisica'; document.getElementById('rc-fi').hidden = v !== 'fisica'; });
@@ -1562,8 +1580,9 @@
         '<input type="text" data-com placeholder="' + (q.opciones.length ? 'Comentario (opcional): el porqué con tus palabras' : 'Tu respuesta') + '" value="' + esc(r.comentario || '') + '">' +
         '<button class="btn-ghost" type="button" data-desc>No preguntar esto</button></section>'; }).join('');
     if (A.preguntas.length) html += '<button class="btn btn-primary" type="button" id="dn-ok">Guardar respuestas</button>';
-    html += '<h3 class="sec-t">Lo aprendido · ' + A.reglas.filter(function (x) { return x.firme; }).length + ' reglas firmes</h3><div class="hint">Peso positivo = lo prefieres; negativo = lo evitas. Las que aún no llegan a ±1,5 son observaciones sueltas y no mueven nada. Para desactivar una: «Road to Elite · Motor» › APRENDIZAJE · REGLAS › ACTIVA = No.</div>' +
-      (A.reglas.length ? A.reglas.map(function (x) { return '<div class="dn-r" style="opacity:' + (x.firme ? 1 : 0.55) + '"><b>' + (x.peso > 0 ? '+' : '') + esc(x.peso) + '</b><span>' + esc(x.texto) + (x.origen === 'respuesta' ? ' ✓' : '') + '</span></div>'; }).join('') : '<div class="hint">Todavía nada: hace falta al menos una semana comparada.</div>') +
+    html += '<h3 class="sec-t">Lo aprendido · ' + A.reglas.filter(function (x) { return x.firme; }).length + ' reglas firmes</h3><div class="hint">Peso positivo = lo prefieres; negativo = lo evitas. Las que aún no llegan a ±1,5 son observaciones sueltas y no mueven nada. Con el interruptor «activa» dejas de aplicar una regla sin borrarla.</div>' +
+      (A.reglas.length ? A.reglas.map(function (x) { return '<div class="dn-r" style="opacity:' + (x.activa === false ? 0.4 : x.firme ? 1 : 0.55) + '"><b>' + (x.peso > 0 ? '+' : '') + esc(x.peso) + '</b><span>' + esc(x.texto) + (x.origen === 'respuesta' ? ' ✓' : '') + '</span>' +
+        (x.clave ? '<label class="sw" title="Regla activa"><input type="checkbox" data-regla="' + esc(x.clave) + '"' + (x.activa === false ? '' : ' checked') + '><span>activa</span></label>' : '') + '</div>'; }).join('') : '<div class="hint">Todavía nada: hace falta al menos una semana comparada.</div>') +
       '<button class="btn" type="button" id="dn-an">Analizar ahora la semana en curso</button>';
     $app.innerHTML = html; document.getElementById('atras').onclick = function () { abrirAjustes(); };
     $app.querySelectorAll('.dn-q').forEach(function (sec) { var id = sec.dataset.q;
@@ -1571,6 +1590,10 @@
       sec.querySelector('[data-com]').oninput = function () { R[id] = R[id] || {}; R[id].comentario = this.value; };
       sec.querySelector('[data-desc]').onclick = function () { R[id] = { descartar: true }; sec.style.opacity = 0.35; };
     });
+    $app.querySelectorAll('[data-regla]').forEach(function (c) { c.onchange = function () {
+      c.disabled = true;
+      api({ action: 'regla_activa', clave: c.dataset.regla, activa: c.checked }).then(ok).then(function (r) { S.apr = r; render(); toast(c.checked ? 'Regla activada' : 'Regla desactivada'); }).catch(function (e) { c.checked = !c.checked; c.disabled = false; toast(mensajeError(e.message)); });
+    }; });
     var okb = document.getElementById('dn-ok');
     if (okb) okb.onclick = function () {
       var l = Object.keys(R).map(function (k) { return { id: k, respuesta: R[k].respuesta || '', comentario: R[k].comentario || '', descartar: !!R[k].descartar }; }).filter(function (x) { return x.respuesta || x.comentario || x.descartar; });
@@ -1678,6 +1701,7 @@
       '<div class="hint">Se combinan todos (Y). Dentro de cada grupo de botones vale cualquiera (O). Con fecha de inscripción, solo salen las que tienen fecha.</div>' +
       '<button class="btn-ghost sm" type="button" id="cf-x">Limpiar filtros</button></div></details>';
     var lnk = function (u, t) { u = urlSegura(u); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + t + '</a>' : ''; };
+    html += '<details class="set fichas" id="fichas-d"' + (S._fichasOpen ? ' open' : '') + '><summary>🗂 Mis fichas</summary><div class="set-body" id="fichas-body"><div class="hint">Cargando…</div></div></details>';
     html += '<section class="me" style="display:block"><div class="seg" id="cp-f">' + [['proximas', 'Próximas'], ['seguimiento', 'En seguimiento'], ['todas', 'Todas']].map(function (o) { return '<button type="button" data-cpf="' + o[0] + '" aria-pressed="' + (filtro === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
       '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa); aquí se copian para Road To Elite (lunes 15:00). ' + esc(S._compCopia || '') + '</div><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Actualizar desde la app de Gabi</button>' + panel + '</section>';
     html += L.length ? L.map(function (x) {
@@ -1695,6 +1719,8 @@
     }).join('') : '<div class="empty">No hay competis en esta vista.</div>';
     $app.innerHTML = html;
     document.getElementById('atras').onclick = function () { abrirAjustes(); };
+    document.getElementById('fichas-d').addEventListener('toggle', function () { S._fichasOpen = this.open; if (this.open) cargarFichas(); });
+    if (S._fichasOpen) cargarFichas();
     $app.querySelectorAll('[data-cpf]').forEach(function (b) { b.onclick = function () { S._compFiltro = b.dataset.cpf; render(); }; });
     var guardaF = function () { guardar('rte-comp-filtros', F); S._cfOpen = true; render(); };
     $app.querySelector('details.cf').addEventListener('toggle', function () { S._cfOpen = this.open; });
