@@ -1742,3 +1742,168 @@
         api({ action: 'competi_seguir', id: x.ID, seguir: true, inscripcion: val('cp-ins'), clasificatorio: val('cp-cla') }).then(ok).then(function (r) { S.competis = r.competis; S.data.competisPreguntas = r.preguntas; cerrarHoja(); render(); toast('En seguimiento · añadida a tu calendario'); }).catch(falloApi(bb)); };
     }; });
   }
+
+  // =====================================================================
+  //  v0.29 · MODO SESIÓN, RENDIMIENTO, RESUMEN DEL LUNES, FICHAS, SALUD, FEEDBACK DE AYER
+  // =====================================================================
+  /** Modo sesión: pantalla completa, un bloque cada vez, crono, lb↔kg discreto y valoración al final. */
+  function abrirSesion(i) {
+    var x = S.data.dias[i]; if (!x) return;
+    var lista = bloquesCompartibles(x); if (!lista.length) { toast('Este día no tiene bloques'); return; }
+    var st = { k: 0, t0: 0, acum: 0, corre: false, uni: leer('rte-uni') || 'kg', iv: null };
+    var conv = function (txt) {
+      return esc(txt).replace(/(\d+(?:[.,]\d+)?)(\s?)(kg|lb|lbs)\b/gi, function (m, n, sp, u) {
+        var v = parseFloat(n.replace(',', '.')), es = /kg/i.test(u) ? 'kg' : 'lb';
+        if (es === st.uni) return m;
+        var r = es === 'kg' ? v * 2.20462 : v / 2.20462; return '<b class="conv" title="' + m + '">' + (Math.round(r * 2) / 2) + sp + st.uni + '</b>';
+      });
+    };
+    var mmss = function (s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ':' + ('0' + s % 60).slice(-2); };
+    var t = function () { return st.acum + (st.corre ? (Date.now() - st.t0) / 1000 : 0); };
+    var el = document.createElement('div'); el.className = 'ses-full'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Modo sesión');
+    document.body.appendChild(el); document.body.classList.add('ses-on');
+    try { if (el.requestFullscreen) el.requestFullscreen().catch(function () {}); } catch (e) {}
+    var wake = null; try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {}); } catch (e) {}
+    var cerrar = function () { clearInterval(st.iv); try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {} try { if (wake) wake.release(); } catch (e) {} el.remove(); document.body.classList.remove('ses-on'); };
+    var pintar = function () {
+      var fin = st.k >= lista.length, b = lista[st.k] || {};
+      var cuerpo = fin ? '<h2>¿Cómo ha ido la sesión?</h2><div class="hint">Se guarda en cada bloque del día que no tenga registro.</div>' +
+          '<div class="seg" role="group" id="ses-res">' + ['Completado', 'A medias', 'No salió'].map(function (r, j) { return '<button type="button" data-sr="' + r + '" aria-pressed="' + (j === 0) + '">' + r + '</button>'; }).join('') + '</div>' +
+          '<label>RPE</label><div class="chips" id="ses-rpe">' + [5, 6, 7, 8, 9, 10].map(function (k) { return '<button type="button" class="rpe-chip" style="--c:' + rpeColor(String(k)) + '" data-srp="' + k + '">' + k + '</button>'; }).join('') + '</div>' +
+          '<textarea class="inp" id="ses-not" rows="3" placeholder="Cargas, parciales, sensaciones (opcional)"></textarea>' +
+          '<button class="btn btn-primary" type="button" id="ses-ok">Guardar y salir</button>'
+        : '<div class="ses-n">' + (st.k + 1) + ' / ' + lista.length + (b.turno === 'AM' ? ' · ☀️ mañana' : '') + '</div><h2>' + esc((b.n ? b.n + ' · ' : '') + b.titulo) + '</h2>' +
+          ejerciciosDe(b, true).map(function (p) { return (p.etiqueta ? '<h3>' + esc(p.etiqueta) + '</h3>' : '') + '<div class="ses-txt">' + p.lineas.map(conv).join('<br>') + '</div>'; }).join('');
+      el.innerHTML = '<div class="ses-top"><button class="btn-ghost" type="button" id="ses-x">✕ Salir</button><button class="ses-uni" type="button" id="ses-uni" aria-label="Cambiar unidades">' + (st.uni === 'kg' ? 'kg' : 'lb') + '</button></div>' +
+        '<div class="ses-body">' + cuerpo + '</div>' +
+        '<div class="ses-crono"><span id="ses-t">' + mmss(t()) + '</span><button class="btn sm" type="button" id="ses-go">' + (st.corre ? '⏸' : '▶') + '</button><button class="btn sm" type="button" id="ses-0">↺</button></div>' +
+        '<div class="ses-nav"><button class="btn" type="button" id="ses-a"' + (st.k ? '' : ' disabled') + '>‹ Anterior</button><button class="btn btn-primary" type="button" id="ses-s"' + (fin ? ' disabled' : '') + '>' + (st.k === lista.length - 1 ? 'Terminar ›' : 'Siguiente ›') + '</button></div>';
+      document.getElementById('ses-x').onclick = cerrar;
+      document.getElementById('ses-uni').onclick = function () { st.uni = st.uni === 'kg' ? 'lb' : 'kg'; guardar('rte-uni', st.uni); pintar(); };
+      document.getElementById('ses-go').onclick = function () { if (st.corre) { st.acum = t(); st.corre = false; } else { st.t0 = Date.now(); st.corre = true; } pintar(); };
+      document.getElementById('ses-0').onclick = function () { st.acum = 0; st.t0 = Date.now(); pintar(); };
+      document.getElementById('ses-a').onclick = function () { st.k = Math.max(0, st.k - 1); pintar(); };
+      document.getElementById('ses-s').onclick = function () { st.k++; pintar(); };
+      if (fin) {
+        el.querySelectorAll('[data-sr]').forEach(function (bb) { bb.onclick = function () { el.querySelectorAll('[data-sr]').forEach(function (y) { y.setAttribute('aria-pressed', String(y === bb)); }); }; });
+        el.querySelectorAll('[data-srp]').forEach(function (bb) { bb.onclick = function () { el.querySelectorAll('[data-srp]').forEach(function (y) { y.classList.toggle('on', y === bb); }); }; });
+        document.getElementById('ses-ok').onclick = function () {
+          var bt = this; bt.disabled = true; bt.textContent = 'Guardando…';
+          var res = (el.querySelector('[data-sr][aria-pressed="true"]') || {}).dataset || {}, rp = (el.querySelector('[data-srp].on') || {}).dataset || {}, nota = document.getElementById('ses-not').value.trim();
+          var hechos = {}; (S.data.registro || []).forEach(function (y) { if (y.FECHA === aTxt(x.iso)) hechos[y.ID_PLAN] = 1; });
+          var pend = lista.filter(function (b) { var id = b.idPlan || b.id; return id && !hechos[id]; });
+          var minutos = Math.round(t() / 60);
+          var cadena = pend.reduce(function (p, b) {
+            var reg = { FECHA: aTxt(x.iso), ID_PLAN: b.idPlan || b.id, BLOQUE: b.titulo, HECHO: res.sr === 'A medias' ? 'Parcial' : res.sr === 'No salió' ? 'Parcial' : 'Sí', RESULTADO: res.sr || 'Completado', RPE: rp.srp || '', FEEDBACK: nota, NOTAS: minutos ? 'Modo sesión · ' + minutos + '′' : 'Modo sesión' };
+            return p.then(function () { return apiGuardar({ action: 'registrar', registro: reg }).then(ok).then(function (r) { S.data.registro = (S.data.registro || []).concat([r.registro || reg]); }); });
+          }, Promise.resolve());
+          cadena.then(function () { cerrar(); render(); toast(pend.length ? 'Sesión guardada en ' + pend.length + ' bloques' : 'Todo estaba ya registrado'); }).catch(falloApi(bt));
+        };
+      }
+    };
+    st.iv = setInterval(function () { var s = document.getElementById('ses-t'); if (s && st.corre) s.textContent = mmss(t()); }, 500);
+    pintar();
+  }
+
+  function guardarFeedbackAyer(btn) {
+    var F = S.fbAy || {}, L = (S.data.feedbackAyer || []).filter(function (e) { return F[e.id] && (F[e.id].res || F[e.id].txt); });
+    if (!L.length) { toast('Marca al menos un resultado'); return; }
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    L.reduce(function (p, e) { var v = F[e.id]; return p.then(function () { return api({ action: 'feedback_extra', id: e.id, fecha: e.fecha, resultado: v.res || '', rpe: v.rpe || '', feedback: v.txt || '' }).then(ok); }); }, Promise.resolve())
+      .then(function () { var ids = L.map(function (e) { return e.id; }); S.data.feedbackAyer = S.data.feedbackAyer.filter(function (e) { return ids.indexOf(e.id) < 0; }); S.fbAy = {}; render(); toast('Gracias · la próxima dosis se ajusta con esto'); })
+      .catch(falloApi(btn));
+  }
+
+  function renderRendimiento() {
+    var R = S.rend, html = cabeceraVista('Rendimiento', 'Menú');
+    var vuelta = function () { document.getElementById('atras').onclick = function () { abrirAjustes(); }; };
+    if (!R) { $app.innerHTML = html + '<div class="hint">Cargando…</div>'; vuelta(); api({ action: 'rendimiento' }).then(ok).then(function (r) { S.rend = r; if (S.vista === 'rendimiento') render(); }).catch(function (e) { toast(mensajeError(e.message)); }); return; }
+    var fl = { mejora: '↑', empeora: '↓', igual: '=' };
+    html += '<section class="card"><h2>Indicadores</h2>' + (R.indicadores || []).map(function (i) {
+      return '<div class="rend-i"><div><b>' + esc(i.nombre) + '</b>' + (i.ultimo ? ' · ' + esc(i.ultimo.txt || i.ultimo.v) + ' <span class="hint">' + esc(i.ultimo.fecha ? diaMes(i.ultimo.fecha) : '') + '</span>' : ' <span class="hint">sin datos</span>') +
+        (i.tendencia ? ' <span class="tend ' + esc(i.tendencia) + '">' + (fl[i.tendencia] || '') + '</span>' : '') + (i.mejor ? ' <span class="hint">· mejor ' + esc(i.mejor.txt || i.mejor.v) + '</span>' : '') + '</div>' +
+        (i.alerta ? '<div class="warn">⚠ ' + esc(i.alerta) + '</div>' : '') +
+        '<div class="rend-f"><input class="inp" data-rv="' + esc(i.clave) + '" placeholder="Nuevo (' + esc(i.unidad || '') + ')"><button class="btn sm" type="button" data-rg="' + esc(i.clave) + '">Guardar</button></div></div>';
+    }).join('') + '</section>';
+    var rt = R.ritmos || {};
+    html += '<section class="card"><h2>Ritmos de carrera</h2><div>' + esc(rt.texto || 'Aún sin ritmos: haz el test de 2 km.') + '</div>' +
+      (rt.propuesta ? '<div class="warn">Propuesta nueva desde tu último test: Z2 ' + esc((rt.propuesta.z2 || []).join('–')) + ' · Z4 ' + esc(rt.propuesta.z4 || '') + ' · Z5 ' + esc(rt.propuesta.z5 || '') + ' /km</div><button class="btn btn-primary sm" type="button" id="rt-ok">Confirmar ritmos</button>' : '') + '</section>';
+    var mu = R.murph || {};
+    html += '<section class="card"><h2>Murph con chaleco</h2><label for="mu-f">Fecha del Murph</label><input type="date" id="mu-f" value="' + esc(mu.fecha || '') + '"><button class="btn sm" type="button" id="mu-ok">Guardar fecha</button>' +
+      (mu.sesiones && mu.sesiones.length ? '<ul>' + mu.sesiones.map(function (s) { return '<li>' + esc(s.fecha ? diaMes(s.fecha) : '') + ' · ' + esc(s.titulo || s.texto || '') + '</li>'; }).join('') + '</ul>' : '<div class="hint">Con la fecha, la app reparte 3 ensayos con chaleco separados por semanas.</div>') + '</section>';
+    html += '<section class="card"><h2>Metcons de referencia</h2>' + ((R.metconsRef || []).length ? (R.metconsRef || []).map(function (m, k) {
+      return '<div class="rend-i"><b>' + esc(m.titulo) + '</b> <span class="hint">' + esc(m.motivo || m.fuente || '') + '</span><div class="rend-f"><input type="date" class="inp" data-rfd="' + k + '"><button class="btn sm" type="button" data-rf="' + k + '">Programar</button></div></div>'; }).join('') : '<div class="hint">Aún no hay referencias.</div>') + '</section>';
+    if ((R.residuo || []).length) html += '<section class="card"><h2>Lo que más cansancio te deja al día siguiente</h2><ul>' + R.residuo.map(function (x) { return '<li>' + esc(x.nombre || x.codigo || '') + (x.delta != null ? ' · +' + esc(x.delta) : '') + '</li>'; }).join('') + '</ul></section>';
+    var sv = R.strava || {};
+    html += '<section class="card"><h2>Strava</h2>' + (sv.conectado ? '<div>Conectado' + (sv.ultima ? ' · última ' + esc(sv.ultima) : '') + '</div><button class="btn sm" type="button" id="sv-sync">Sincronizar ahora</button>' :
+      sv.url ? '<a class="btn btn-primary sm" target="_blank" rel="noopener" href="' + esc(sv.url) + '">Conectar Strava</a><div class="hint">Gratis. Se abre Strava, autorizas y vuelves.</div>' : '<div class="hint">' + esc(sv.motivo || 'Falta configurar la app de Strava (Client ID y secreto).') + '</div>') + '</section>';
+    $app.innerHTML = html; vuelta();
+    var re = function (p) { return p.then(ok).then(function (r) { if (r.indicadores) S.rend = r; else S.rend = null; render(); return r; }); };
+    $app.querySelectorAll('[data-rg]').forEach(function (b) { b.onclick = function () { var v = $app.querySelector('[data-rv="' + b.dataset.rg + '"]').value.trim(); if (!v) return; b.disabled = true; re(api({ action: 'rendimiento_guardar', clave: b.dataset.rg, valor: v, fecha: aTxt(S.data.hoy) })).then(function () { toast('Guardado'); }).catch(falloApi(b)); }; });
+    var q = function (id) { return document.getElementById(id); };
+    if (q('rt-ok')) q('rt-ok').onclick = function () { var b = this; b.disabled = true; api({ action: 'ritmos_confirmar' }).then(ok).then(function () { S.rend = null; render(); toast('Ritmos confirmados: irán en tus carreras'); }).catch(falloApi(b)); };
+    q('mu-ok').onclick = function () { var b = this; b.disabled = true; api({ action: 'murph_fecha', fecha: q('mu-f').value }).then(ok).then(function () { S.rend = null; render(); toast('Fecha del Murph guardada'); }).catch(falloApi(b)); };
+    $app.querySelectorAll('[data-rf]').forEach(function (b) { b.onclick = function () { var m = R.metconsRef[+b.dataset.rf], iso = $app.querySelector('[data-rfd="' + b.dataset.rf + '"]').value; if (!iso) { toast('Elige el día'); return; } b.disabled = true;
+      api({ action: 'referencia_programar', titulo: m.titulo, texto: m.texto || '', iso: iso, turno: 'PM' }).then(ok).then(function (r) { if (r.semana) aplicarSemana(r.semana); toast('En borrador para el ' + diaMes(iso) + ': apruébalo en Reorganizar/Extras'); }).catch(falloApi(b)); }; });
+    if (q('sv-sync')) q('sv-sync').onclick = function () { var b = this; b.disabled = true; api({ action: 'strava_sync' }).then(ok).then(function (r) { toast((r.nuevas || 0) + ' nuevas · ' + (r.actualizadas || 0) + ' actualizadas'); S.rend = null; render(); }).catch(falloApi(b)); };
+  }
+
+  function renderResumenLunes() {
+    var R = S.res, html = cabeceraVista('Resumen del lunes', 'Menú');
+    if (!R) { $app.innerHTML = html + '<div class="hint">Cargando…</div>'; document.getElementById('atras').onclick = function () { abrirAjustes(); }; api({ action: 'resumen_lunes', lunes: S.data.semana }).then(ok).then(function (r) { S.res = r.resumen || {}; if (S.vista === 'resumen') render(); }).catch(function (e) { toast(mensajeError(e.message)); }); return; }
+    var lis = function (l) { return (l || []).length ? '<ul>' + l.map(function (t) { return '<li>' + esc(typeof t === 'string' ? t : (t.nombre ? t.nombre + ' · ' + (t.txt || '') + (t.tendencia ? ' (' + t.tendencia + ')' : '') : JSON.stringify(t))) + '</li>'; }).join('') + '</ul>' : '<div class="hint">—</div>'; };
+    var c = R.cumplimiento || {};
+    html += '<section class="card"><h2>Semana pasada</h2>' + (c.pct != null ? '<div class="big">' + esc(c.pct) + ' %</div><div class="hint">' + esc((c.hechos || 0) + ' de ' + (c.total || 0) + ' bloques') + '</div>' : '') + '</section>' +
+      '<section class="card"><h2>Decisiones de esta semana</h2>' + lis(R.decisiones) + '</section>' +
+      '<section class="card"><h2>Rendimiento</h2>' + lis(R.rendimiento) + '</section>' +
+      ((R.reglas || []).length ? '<section class="card"><h2>Reglas a revisar este mes</h2>' + lis(R.reglas.map(function (r) { return r.texto || r; })) + '<div class="hint">Actívalas o desactívalas en Aprendizaje.</div></section>' : '') +
+      (R.informe ? '<section class="card"><h2>Informe mensual</h2><div class="pre">' + esc(R.informe.texto || R.informe) + '</div></section>' : '') +
+      ((R.listaPreguntas || []).length ? '<section class="card"><h2>Preguntas de la semana</h2>' + lis(R.listaPreguntas) + '</section>' : '');
+    $app.innerHTML = html; document.getElementById('atras').onclick = function () { abrirAjustes(); };
+  }
+
+  function cargarSalud() {
+    var el = document.getElementById('salud-body'); if (!el) return;
+    api({ action: 'salud' }).then(ok).then(function (r) {
+      var s = r.salud || {}, L = s.tareas || s.lista || [];
+      el.innerHTML = (L.length ? L.map(function (t) { return '<div class="salud-i">' + (t.ok === false || t.atrasada ? '🔴' : t.ok === true ? '🟢' : '⚪') + ' <b>' + esc(t.nombre || t.tarea) + '</b> <span class="hint">' + esc([t.ultima, t.atrasada ? 'atrasada' : '', t.msg].filter(Boolean).join(' · ')) + '</span></div>'; }).join('') : '<div class="hint">Sin datos de tareas aún.</div>') +
+        (s.backup && (s.backup.fecha || s.backup.msg) ? '<div class="salud-i">' + (s.backup.ok ? '🟢' : '🔴') + ' <b>Copia de seguridad</b> <span class="hint">' + esc([s.backup.fecha, s.backup.kb != null ? s.backup.kb + ' KB' : '', s.backup.msg].filter(Boolean).join(' · ')) + '</span></div>' : '');
+    }).catch(function () { el.innerHTML = '<div class="err">No se pudo cargar.</div>'; });
+  }
+
+  function cargarFichas() {
+    var el = document.getElementById('fichas-body'); if (!el) return;
+    api({ action: 'fichas' }).then(ok).then(function (r) { S.fichas = r.fichas || []; pintarFichas(); }).catch(function () { el.innerHTML = '<div class="err">No se pudieron cargar.</div>'; });
+  }
+  function pintarFichas() {
+    var el = document.getElementById('fichas-body'); if (!el) return;
+    el.innerHTML = '<button class="btn btn-primary sm" type="button" id="fi-nueva">+ Ficha de un WOD de competición</button>' + (S.fichas || []).map(function (f) {
+      return '<div class="ficha"><b>' + esc(f.EVENTO || '') + '</b> <span class="hint">' + esc(f.FECHA || '') + (f['VALORACIÓN'] ? ' · ' + esc(f['VALORACIÓN']) : '') + (f.REFERENCIA === 'Sí' ? ' · ★ referencia' : '') + '</span>' +
+        '<div class="pre">' + esc(String(f.WOD || '').slice(0, 300)) + '</div>' + (f.RESULTADO ? '<div>Resultado: ' + esc(f.RESULTADO) + (f.PUESTO ? ' · puesto ' + esc(f.PUESTO) : '') + '</div>' : '') +
+        (f['ESTÍMULO QUE SALE'] ? '<div class="hint">➜ ' + esc(f['ESTÍMULO QUE SALE']) + '</div>' : '') + '</div>';
+    }).join('');
+    document.getElementById('fi-nueva').onclick = function () { abrirFichaCompeti(null); };
+  }
+  function abrirFichaCompeti(ev) {
+    ev = ev || {};
+    {
+      abrirHoja('<div class="row"><h2>Ficha de competición</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><form id="fif" class="avf">' +
+        '<label for="fi-e">Competición</label><input id="fi-e" required value="' + esc(ev.EVENTO || '') + '"><label for="fi-f">Fecha</label><input type="date" id="fi-f" value="' + esc(aIso(ev.INICIO) || S.data.hoy) + '">' +
+        '<label for="fi-w">WOD</label><textarea id="fi-w" rows="4" required></textarea><label for="fi-r">Resultado</label><input id="fi-r"><label for="fi-p">Puesto</label><input id="fi-p" inputmode="numeric">' +
+        '<label>Valoración</label>' + segHtml('fi-v', [['Bien', 'Bien'], ['Regular', 'Regular'], ['Mal', 'Mal']], 'Regular') +
+        '<label>Qué falló</label>' + segHtml('fi-fa', [['Motor', 'Motor'], ['Skill', 'Skill'], ['Fuerza', 'Fuerza'], ['Estrategia', 'Estrategia'], ['Ninguno', 'Nada']], 'Ninguno') +
+        '<label for="fi-q">Detalle</label><textarea id="fi-q" rows="2" placeholder="Ej.: C2B se rompieron en la ronda 3"></textarea>' +
+        '<div class="hint">Si la valoras «Mal», pasa a ser WOD de referencia y la app programa el estímulo que sale.</div><button class="btn btn-primary" type="submit" id="fi-ok">Guardar ficha</button></form>');
+      enlazarSeg('fi-v'); enlazarSeg('fi-fa');
+      document.getElementById('fif').onsubmit = function (ev) { ev.preventDefault(); var b = document.getElementById('fi-ok'); b.disabled = true;
+        api({ action: 'ficha_guardar', ficha: { EVENTO: val('fi-e'), FECHA: aTxt(val('fi-f')), WOD: val('fi-w'), RESULTADO: val('fi-r'), PUESTO: val('fi-p'), 'VALORACIÓN': valSeg('fi-v'), FALLO: valSeg('fi-fa'), 'QUÉ FALLÓ': val('fi-q') } })
+          .then(ok).then(function (r) { S.fichas = r.fichas; cerrarHoja(); pintarFichas(); toast(r.ficha && r.ficha.REFERENCIA === 'Sí' ? 'Ficha guardada · pasa a WOD de referencia' : 'Ficha guardada'); }).catch(falloApi(b)); };
+    }
+  }
+  function abrirPlanCompeti(id, b) {
+    if (b) b.disabled = true;
+    api({ action: 'plan_competi', id: id }).then(ok).then(function (r) { if (b) b.disabled = false;
+      var p = r.plan || {}, txt = typeof p === 'string' ? p : (p.texto || JSON.stringify(p, null, 1));
+      abrirHoja('<div class="row"><h2>Plan del día</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div><div class="pre">' + esc(txt) + '</div><a class="btn sm wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(txt) + '">Enviar a WhatsApp</a>');
+    }).catch(falloApi(b));
+  }

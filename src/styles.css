@@ -1101,3 +1101,38 @@ details.cf summary{cursor:pointer}
 #opw textarea{width:100%;box-sizing:border-box}
 .zona[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
 .dn-q input[type=text],#opr input[type=text]{width:100%;box-sizing:border-box}
+/* v0.29 · modo sesión, rendimiento, feedback de ayer, activación, fichas, salud */
+body.ses-on{overflow:hidden}
+.ses-full{position:fixed;inset:0;z-index:90;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+.ses-top{display:flex;justify-content:space-between;align-items:center}
+.ses-uni{font:600 12px/1 inherit;color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:99px;padding:5px 9px;opacity:.75}
+.ses-body{flex:1;overflow:auto;padding:8px 0}
+.ses-body h2{font-size:24px;margin:6px 0 10px}
+.ses-body h3{font-size:14px;color:var(--muted);margin:14px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+.ses-txt{font-size:20px;line-height:1.45}
+.ses-txt .conv{color:var(--accent);font-weight:700}
+.ses-n{color:var(--muted);font-size:13px}
+.ses-crono{display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 0}
+.ses-crono span{font:700 40px/1 ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.ses-nav{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ses-body textarea{width:100%;margin:10px 0}
+.fb-ayer{border:1px solid var(--line);border-radius:14px;padding:12px;margin:12px 0;background:var(--surface)}
+.fb-ayer h3{margin:0 0 8px;font-size:15px}
+.fb-i{padding:8px 0;border-top:1px solid var(--line)}
+.fb-i:first-of-type{border-top:0}
+.fb-i .seg{margin:6px 0}
+.fb-i textarea{width:100%;margin-top:6px}
+.fb-rpe{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+details.activ{margin:6px 0 10px;border:1px dashed var(--line);border-radius:10px;padding:6px 10px}
+details.activ summary{cursor:pointer;font-weight:600}
+details.activ ul{margin:6px 0 2px;padding-left:18px}
+.rend-i{padding:8px 0;border-top:1px solid var(--line)}
+.rend-f{display:flex;gap:8px;margin-top:6px}
+.rend-f .inp{flex:1;min-width:0}
+.tend{font-weight:700}.tend.mejora{color:var(--verde,#16a34a)}.tend.empeora{color:var(--danger)}
+.salud-i{padding:4px 0}
+.ficha{padding:10px 0;border-top:1px solid var(--line)}
+.big{font-size:34px;font-weight:800}
+section.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 16px}
+section.card h2{font-size:16px;margin:0 0 8px}
+section.card .warn,.rend-i .warn{border-left:3px solid #e0a800;padding:4px 8px;margin:6px 0;background:color-mix(in srgb,#e0a800 12%,var(--surface));border-radius:6px}

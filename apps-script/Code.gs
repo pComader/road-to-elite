@@ -45,7 +45,8 @@ var HOJAS = {
 };
 
 // ===================== API WEB =====================
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter && e.parameter.state && (e.parameter.code || e.parameter.error)) return stravaCallback_(e);   // v0.29 · vuelta de Strava
   return json_({ ok: true, servicio: CONFIG.NOMBRE_APP, version: CONFIG.VERSION, hora: new Date().toISOString() });
 }
 
@@ -60,7 +61,7 @@ function doPost(e) {
     // Operaciones que pueden llegar desde la cola sin conexión: si ya se procesaron (mismo «op»), no se repiten.
     var op = /^[\w-]{8,60}$/.test(String(body.op || '')) ? 'op_' + body.op : '', cacheOp = CacheService.getScriptCache();
     if (op && cacheOp.get(op)) return json_({ ok: true, repetida: true });
-    var res = accion_(a, body, user);
+    var res; try { res = accion_(a, body, user); } finally { if (!esSoloLectura_(a)) try { invalidarSemana_(); } catch (eI) {} }
     if (op && res && res.ok) cacheOp.put(op, '1', 21600);
     var ms = Date.now() - t0;
     if (ms > 4000) Logger.log('LENTO · ' + a + ' · ' + ms + ' ms');
@@ -76,8 +77,8 @@ function accion_(a, body, user) {
   var json_ = function (o) { return o; };   // dentro de las acciones, «json_» solo devuelve el objeto
   {
     switch (a) {
-      case 'inicio':     return json_({ ok: true, email: user.email, config: leerConfig_(), semana: semanaCompleta_(body.semana) });
-      case 'semana':     return json_({ ok: true, semana: semanaCompleta_(body.semana) });
+      case 'inicio':     return json_({ ok: true, email: user.email, config: leerConfig_(), semana: semanaCacheada_(body.semana) });
+      case 'semana':     return json_({ ok: true, semana: semanaCacheada_(body.semana) });
       case 'registrar':  return json_({ ok: true, registro: guardarRegistro_(body.registro || {}) });
       case 'registro_borrar': borrarRegistro_(body.registro || {}); return json_({ ok: true });
       case 'marcas':     return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
@@ -152,6 +153,17 @@ function accion_(a, body, user) {
       case 'aprendizaje': return json_(Object.assign({ ok: true }, datosAprendizaje_()));
       case 'deathnote_responder': var nr = responderDeathnote_(body.respuestas); return json_(Object.assign({ ok: true, guardadas: nr }, datosAprendizaje_()));
       case 'aprendizaje_analizar': return json_(Object.assign({ ok: true, resultado: aprendizajeSemanal(body.lunes || '') }, datosAprendizaje_()));
+      case 'rendimiento': return json_(Object.assign({ ok: true }, rendimiento_()));
+      case 'rendimiento_guardar': guardarRendimiento_(body); return json_(Object.assign({ ok: true }, rendimiento_()));
+      case 'referencia_programar': return json_(programarReferencia_(body));
+      case 'murph_fecha': return json_(murphFecha_(body.fecha));
+      case 'ritmos_confirmar': return json_(ritmosConfirmar_());
+      case 'strava_sync': return json_(stravaSync_());
+      case 'fichas': return json_({ ok: true, fichas: fichas_() });
+      case 'ficha_guardar': var fg = guardarFicha_(body.ficha || {}); return json_({ ok: true, ficha: fg, fichas: fichas_() });
+      case 'plan_competi': return json_({ ok: true, plan: planCompeti_(body.id) });
+      case 'resumen_lunes': return json_({ ok: true, resumen: resumenLunesDatos_(body.lunes) });
+      case 'salud': return json_({ ok: true, salud: saludEstado_() });
       case 'feedback_extra': return json_({ ok: true, registro: feedbackExtra_(body) });
       case 'registrar_dia': var nRd = registrarDia_(body.iso); return json_({ ok: true, n: nRd, semana: semanaCompleta_(body.iso) });
       case 'regla_activa': reglaActiva_(body.clave, !!body.activa); return json_(Object.assign({ ok: true }, datosAprendizaje_()));
@@ -448,8 +460,9 @@ function migrarTestsAEventos_() {
 
 // ===================== v0.7 · DOMINGO EN CADENA: cierre → vídeos → backup =====================
 /** Un solo disparador hace las tres fases en orden y deja el resultado en APP · CONFIG (clave «ultimo_domingo»). */
-function domingoNoche() {
-  var fases = [['cierre', cierreSemanal], ['carrera', function () { ajusteCarrera_(); }], ['aprendizaje', function () { aprendizajeSemanal(); }], ['backup', backupSemanal]], estado = [];
+function domingoNoche() { return conSalud_('domingoNoche', domingoNoche_sin_); }
+function domingoNoche_sin_() {
+  var fases = [['cierre', cierreSemanal], ['carrera', function () { ajusteCarrera_(); }], ['aprendizaje', function () { aprendizajeSemanal(); }], ['backup', backupSemanal], ['archivo', archivarSiToca_]], estado = [];
   fases.forEach(function (f) {
     try { f[1](); estado.push(f[0] + ' OK ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'HH:mm')); }
     catch (e) { estado.push(f[0] + ' FALLO (' + String(e && e.message || e).slice(0, 120) + ')'); }
@@ -964,8 +977,11 @@ function enviarPush_(titulo, texto, enlace) {
   return ok;
 }
 /** Cada hora: avisa (una sola vez por cosa) de lo que necesita tu decisión. */
-function revisarAvisos() {
+function revisarAvisos() { return conSalud_('revisarAvisos', revisarAvisos_sin_); }
+function revisarAvisos_sin_() {
   var bkAlerta = ''; try { revisarBackup_(); bkAlerta = leerConfig_().backup_alerta || ''; } catch (e) { Logger.log('Backup: ' + e); }
+  try { revisarSalud_(); } catch (e) { Logger.log('Salud: ' + e); }
+  try { v29aCadaHora_(); } catch (e) { Logger.log('v29a hora: ' + e); }
   if (!pushActivo_()) return;
   var hecho = {}; try { hecho = JSON.parse(PROPS.getProperty('AVISOS_HECHOS') || '{}'); } catch (e) {}
   var avisar = function (clave, titulo, texto) { if (hecho[clave]) return; if (enviarPush_(titulo, texto)) hecho[clave] = hoyIso_(); };
@@ -1187,6 +1203,7 @@ function alAbrirHoja() {
 }
 /** Disparador instalable al editar el Sheet: cambios en la pestaña de la semana. */
 function alEditarHoja(e) {
+  try { invalidarSemana_(); } catch (x) {}
   try {
     var sh = e.range.getSheet(); if (sh.getName() === COMP_VISTA_) { editarCompetisSheet_(e); return; }
     if (sh.getName() === HOJAS.ESTBLOQUES) { editarEstimulosSheet_(e); return; }
@@ -1831,6 +1848,8 @@ function configurarSin_() {
   try { MEMO = null; logc_('OK · APP · ESTÍMULOS EN BLOQUES: ' + pintarHojaEstimulos_(lunesDe_(hoyIso_())) + ' filas (marca REDUCIBLE / INCENTIVAR)'); } catch (e) { logc_('AVISO · Estímulos en bloques: ' + e); }
   try { MEMO = null; logc_('OK · MODO OPERACIÓN: ' + opPrepararConfig_() + ' claves nuevas en APP · CONFIG · ' + opPrepararCatalogo_() + ' estímulos/metas del modo · fase de hoy: ' + opDiario_()); } catch (e) { logc_('AVISO · Modo operación: ' + e); }
   try { logc_('OK · APRENDIZAJE: pestañas listas en Road to Elite · Motor (' + [HOJAS.APR_SEM, HOJAS.APR_ANA, HOJAS.APR_DN, HOJAS.APR_REG].filter(function (h) { return !!hojaMia_(h); }).length + ' de 4)'); } catch (e) { logc_('AVISO · Aprendizaje: ' + e); }
+  try { MEMO = null; logc_('OK · v0.29 rendimiento: ' + prepararV29a_()); } catch (e) { logc_('AVISO · v0.29a: ' + e); }
+  try { MEMO = null; logc_('OK · v0.29 competición: ' + prepararV29b_()); } catch (e) { logc_('AVISO · v0.29b: ' + e); }
   try { logc_('OK · LESIONES · ADAPTACIONES: ' + prepararLesiones_() + ' propuestas nuevas (apruébalas en Road to Elite · Motor)'); } catch (e) { logc_('AVISO · Lesiones: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
@@ -2562,7 +2581,8 @@ function cargarFabrikSemana_(lunes) {
   return { ok: true, cargados: n, actualizados: act };
 }
 /** Tarea del domingo 23:15: carga la semana que empieza mañana. */
-function cargarFabrikDomingo() {
+function cargarFabrikDomingo() { return conSalud_('cargarFabrikDomingo', cargarFabrikDomingo_sin_); }
+function cargarFabrikDomingo_sin_() {
   var r = cargarFabrikSemana_(sumarDias(lunesDe_(hoyIso_()), 7));
   Logger.log('Fabrik → PLAN: ' + JSON.stringify(r));
   if (r.ok && pushActivo_()) enviarPush_('Fabrik cargado', r.cargados + ' bloques en tu plan. Ya puedes «Cargar extras».');
@@ -2979,6 +2999,14 @@ function generarExtras_(lunes, opts) {
   // 6.5 · el resto de la cola, por prioridad
   cola.forEach(function (x) { if (anadir(x.o, candDe(x.o)) && x.al) x.al(); });
   try { ajustarNuevos_(nuevos, lunes, log); } catch (eAj) { Logger.log('ajustarNuevos: ' + eAj); }   // v0.28
+  try {   // v0.29 · ensayo de Murph con chaleco y test de WODs del taper
+    var yaV29 = {}; listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA); if (d >= lunes && d <= sumarDias(lunes, 6) && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && /(^|\|)(MU1|CT1)(\||$)/.test(r['CÓDIGOS'] || '')) yaV29[codigosDe_(r['CÓDIGOS'])[0]] = 1; });
+    murphBloquesSemana_(lunes).concat(taperBloques_(lunes)).forEach(function (b) {
+      var c = codigosDe_(b['CÓDIGOS'])[0]; if (yaV29[c]) return; var iso = celdaIso_(b.FECHA);
+      nuevos.push(Object.assign({ ID: nuevoId_(), 'DÍA': diaDe_(iso), ORDEN: 8, BLOQUE: b['TÍTULO'], INTENSIDAD: '🔴 Intenso', ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() }, b, { 'DÍA': diaDe_(iso) }));
+      log.push(c === 'MU1' ? 'Ensayo de Murph con chaleco' : 'Taper: test de WODs + estrategia');
+    });
+  } catch (eV29) { Logger.log('Murph/taper: ' + eV29); }
   if (OP) try { nuevos = nuevos.concat(opBloques_(lunes, OP, sello, permitidos)); } catch (eOp3) { Logger.log('Modo operación · bloques: ' + eOp3); }
   // 6.6 · escribir (o devolver la simulación)
   var mensualesSemana = enSemana + nuevos.filter(function (o) { return o.ESTADO !== 'SIN HUECO' && codigosDe_(o['CÓDIGOS']).some(mensDe); }).length;
@@ -3443,7 +3471,8 @@ function eventoACal_(id) {
 }
 function borrarDeCal_(x) { try { if (x.GCAL_ID && x['ORIGEN CAL'] !== 'Google') { var ev = calendario_().getEventById(x.GCAL_ID); if (ev) ev.deleteEvent(); } } catch (e) {} }
 /** Cada hora: lo que pongas en tu Google Calendar con INSTAGRAM o CROSSFIT en el título entra en la app («Por decidir»). */
-function sincronizarCalendario() {
+function sincronizarCalendario() { return conSalud_('sincronizarCalendario', sincronizarCalendario_sin_); }
+function sincronizarCalendario_sin_() {
   var hoy = hoyIso_(), desde = new Date(sumarDias(hoy, -7) + 'T00:00:00Z'), hasta = new Date(sumarDias(hoy, 120) + 'T00:00:00Z');
   var evs = calendario_().getEvents(desde, hasta).filter(function (e) { return /INSTAGRAM|CROSSFIT/i.test(e.getTitle()) && String(e.getDescription() || '').indexOf(MARCA_CAL) < 0; });
   var filas = listar_(HOJAS.EVENTOS), porG = {}; filas.forEach(function (r) { if (r.GCAL_ID) porG[r.GCAL_ID] = r; });
@@ -4006,7 +4035,7 @@ function refrescarResumen_() { MEMO = null; try { pintarResumen_(); } catch (e) 
 
 // ===================== v0.11 · UNIFICAR PESTAÑAS =====================
 var LEGADO_ = ['Dashboard', 'Semana', 'Mes', 'Guía e histórico', 'APP · ANÁLISIS CARRERA'];
-var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · ESTÍMULOS EN BLOQUES', 'APP · COMPETIS', 'APP · PLAN', 'APP · METAS', 'APP · ESTÍMULOS', 'APP · BIBLIOTECA', 'APP · REGISTRO', 'APP · CARRERA', 'carrera', 'APP · EVENTOS', 'APP · MARCAS'];
+var VISIBLES_ = ['APP · RESUMEN', 'APP · SEMANA EN BLOQUES', 'APP · ESTÍMULOS EN BLOQUES', 'APP · METAS', 'APP · COMPETIS'];   // v0.29 · Sheet limpio: el resto se oculta (sigue funcionando y se ve con «Mostrar hojas»)
 /** Una sola vez: copia completa del Sheet en Backups y fuera las pestañas antiguas (Dashboard, Semana, Mes, Guía e histórico, Análisis carrera). */
 function unificar_() {
   var cf = leerConfig_();
@@ -5318,8 +5347,10 @@ function geminiExplicar_(max) {
   return n;
 }
 /** Cada madrugada: metcons nuevos de Fabrik, filas pegadas a mano y explicación de Gemini. */
-function motorDiario() {
+function motorDiario() { return conSalud_('motorDiario', motorDiario_sin_); }
+function motorDiario_sin_() {
   var est = [];
+  try { v29aDiario_(); } catch (e) { est.push('v29a FALLO ' + e); }
   try { est.push('nuevos ' + alimentarMotor_(2)); } catch (e) { est.push('alimentar FALLO ' + e); }
   try { est.push('reanalizados ' + reanalizarMotor_()); } catch (e) { est.push('reanalizar FALLO ' + e); }
   try { est.push('Gemini ' + geminiExplicar_(8)); } catch (e) { est.push('Gemini FALLO ' + String(e).slice(0, 120)); }
@@ -5587,7 +5618,8 @@ function estructuraMd_(fecha) {
     '4. Secretos (FCM_CUENTA, GEMINI_KEY, AGENTE_TOKEN): no están en el backup a propósito; vuelve a crearlos en Propiedades del script.');
   return L.join('\n');
 }
-function backupJueves() {
+function backupJueves() { return conSalud_('backupJueves', backupJueves_sin_); }
+function backupJueves_sin_() {
   var f = carpetaJueves_(), fecha = hoyIso_(), blobs = [], notas = [];
   var xl = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
   if (xl.getResponseCode() !== 200) throw new Error('exportar el Sheet: HTTP ' + xl.getResponseCode());
@@ -5939,7 +5971,8 @@ function revisarVideos_(soloNuevos) {
  *  - comprueba los enlaces nuevos (SIN COMPROBAR) y, si tocan (7 o 14 días), todos;
  *  - sube CONFIG › videos_version: la app ve el cambio y vuelve a pedir la lista (si no, usa la que tiene guardada).
  */
-function videosMartes() {
+function videosMartes() { return conSalud_('videosMartes', videosMartes_sin_); }
+function videosMartes_sin_() {
   VID_LIBRO_ = null; MEMO = null;
   var cf = leerConfig_(), cada = parseInt(cf.videos_revision_dias, 10) || 7, ult = String(cf.videos_ultima_revision || '').slice(0, 10);
   var toca = !ult || sumarDias(ult, cada) <= hoyIso_(), nuevos = listar_(HOJAS.VIDEOS).filter(function (r) { return r['VÍDEO'] && (!r.ESTADO || r.ESTADO === 'SIN COMPROBAR'); }).length;
@@ -6280,7 +6313,8 @@ function editarCompetisSheet_(e) {
   MEMO = null; pintarCompetisSheet_();
 }
 function menuCompetis() { var n = copiarCompetis_(); MEMO = null; var k = pintarCompetisSheet_(); var sh = miLibro_().getSheetByName(COMP_VISTA_); if (sh) miLibro_().setActiveSheet(sh); SpreadsheetApp.getUi().alert('Competis copiadas de la app de Gabi: ' + n + ' nuevas.\n' + (leerConfig_().competis_copia || '') + '\n\nEn «' + COMP_VISTA_ + '» se ven ' + k + ' con los filtros actuales.'); }
-function competisLunes() { try { copiarCompetis_(); } catch (e) { Logger.log('Competis: ' + e); } }
+function competisLunes() { return conSalud_('competisLunes', competisLunes_sin_); }
+function competisLunes_sin_() { try { copiarCompetis_(); } catch (e) { Logger.log('Competis: ' + e); } }
 function listaCompetis_() {
   var hoy = hoyIso_();
   return listar_(HOJAS.COMPETIS).filter(function (r) { return r.NOMBRE; }).map(function (r) {
@@ -7397,7 +7431,7 @@ function opPrepararConfig_() {
  */
 CAP_TURNO_.AM = 60;
 var EXTRAS_MAX_ = { n: 2, min: 30 };   // por sesión, sin contar carrera ni P1–P4
-function esIntocable_(cods) { return cods.some(function (c) { return /^(W01|W02|W03|W04|R01|R02|R03|R04|V01|OP1|OP2|OP3)$/.test(c); }); }
+function esIntocable_(cods) { return cods.some(function (c) { return /^(W01|W02|W03|W04|R01|R02|R03|R04|V01|OP1|OP2|OP3|CT1|MU1)$/.test(c); }); }
 // ---------- material ----------
 var MATERIAL_ = { anillasCuerda: /^(W13|M30|M49|M02|M36|M37)$/, z2: /^(W01|W02)$/ };
 function materialLimitado_(iso) { var h = celdaIso_(leerConfig_().material_limite_hasta) || '2026-12-20'; return iso <= h; }
@@ -7479,6 +7513,7 @@ function ajustarNuevos_(nuevos, lunes, log) {
   nuevos.forEach(function (o) {
     var cods = codigosDe_(o['CÓDIGOS']), iso = celdaIso_(o.FECHA); if (norm(o.ORIGEN) === 'OPERACION') return;
     materialTexto_(o, iso);
+    if (esCarreraFila_(o)) { try { var rt = ritmosTexto_(); if (rt && !/Ritmos vigentes/.test(o.CONTENIDO || '')) o.CONTENIDO = (o.CONTENIDO || '') + '\n\n' + rt; } catch (eRt) {} }   // v0.29 · ritmos confirmados
     if (esIntocable_(cods)) return;
     var pre = [ciclo.texto], min = parseFloat(o.MIN) || 10;
     try { var prg = progresionDe_(cods, ciclo); if (prg) pre.push(prg); } catch (ePr) {}   // v0.29
@@ -7623,4 +7658,1009 @@ function lesionAplicada_(P, params) {
 function reglaActiva_(clave, activa) {
   var r = listar_(HOJAS.APR_REG).filter(function (x) { return x.CLAVE === String(clave || ''); })[0]; if (!r) throw new Error('no_encontrado');
   actualizarFila_(HOJAS.APR_REG, r._fila, { ACTIVA: activa ? 'Sí' : 'No', ACTUALIZADO: ahora_() }); MEMO = null; reglasAprendidas_.c = null; return true;
+}
+
+// ===================== v29a · RENDIMIENTO · GABI · MURPH · RITMOS · STRAVA =====================
+/*
+ * Se añade tal cual al final de Code.gs. ES5 (var, function). Todo lo de aquí usa funciones globales de Code.gs.
+ *  · APP · RENDIMIENTO: indicadores de progreso (test 2 km, eficiencia Z2, remo 6′, 1RM, RMU, HSPU, metcon de referencia).
+ *  · Importa de la app de Gabi (SOLO LECTURA): marcas y resultados del atleta.
+ *  · Murph con chaleco en 3 lunes (−6, −4, −2 semanas), «Carrera comprometida» (RC1) y metcon de referencia (RF1).
+ *  · Ritmos por zona desde el test de 2 km (propuesta → el atleta confirma).
+ *  · Strava (gratis): el secreto vive solo en PROPS 'STRAVA_SECRET', el token en PROPS 'STRAVA_TOKEN'.
+ */
+HOJAS.RENDIMIENTO = 'APP · RENDIMIENTO';
+ESQUEMA['APP · RENDIMIENTO'] = {
+  cab: ['FECHA', 'INDICADOR', 'VALOR', 'UNIDAD', 'FUENTE', 'NOTAS', 'REGISTRADO'],
+  anchos: [95, 100, 110, 90, 170, 340, 120], fechas: ['FECHA']
+};
+if (typeof VISIBLES_ !== 'undefined' && VISIBLES_.indexOf(HOJAS.RENDIMIENTO) < 0) VISIBLES_.push(HOJAS.RENDIMIENTO);
+
+var INDICADORES_ = [
+  { clave: '2km', nombre: 'Test 2 km', unidad: 'min:seg', mejorEs: 'menor', tipo: 'tiempo', codigos: ['W04', 'R02', 'R03'] },
+  { clave: 'z2', nombre: 'Eficiencia Z2', unidad: 'm/min por ppm', mejorEs: 'mayor', tipo: 'num', codigos: ['W01', 'W02'] },
+  { clave: 'remo6', nombre: 'EMOM RowErg 6′', unidad: 'kcal', mejorEs: 'mayor', tipo: 'num', codigos: ['R01', 'W03'] },
+  { clave: 'snatch', nombre: 'Snatch 1RM', unidad: 'kg', mejorEs: 'mayor', tipo: 'num', codigos: ['W20', 'M05', 'M10', 'M50'] },
+  { clave: 'cj', nombre: 'Clean & jerk 1RM', unidad: 'kg', mejorEs: 'mayor', tipo: 'num', codigos: ['W23', 'W24', 'W34', 'M17', 'M07', 'M51'] },
+  { clave: 'rmu', nombre: 'RMU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W13', 'M30', 'M49'] },
+  { clave: 'hspu', nombre: 'HSPU máx. unbroken', unidad: 'reps', mejorEs: 'mayor', tipo: 'num', codigos: ['W15', 'W16', 'W17', 'W31', 'OP1'] },
+  { clave: 'metcon', nombre: 'Metcon de referencia', unidad: '', mejorEs: 'menor', tipo: 'texto', codigos: ['R01', 'R04'] }   // tendencia solo si el valor es un tiempo
+];
+
+// ---------- utilidades ----------
+function v29Ind_(clave) {
+  clave = String(clave || '').toLowerCase().trim();
+  var r = INDICADORES_.filter(function (i) { return i.clave === clave; })[0];
+  if (!r && clave === 'ref') r = { clave: 'ref', nombre: 'Referencia', unidad: '', mejorEs: '', tipo: 'texto', codigos: [] };
+  return r || null;
+}
+function v29Num_(t) {
+  var m = String(t == null ? '' : t).replace(/ /g, ' ').match(/-?\d+(?:[.,]\d+)?/);
+  return m ? parseFloat(m[0].replace(',', '.')) : null;
+}
+function v29Seguro_(hoja) { try { return listar_(hoja); } catch (e) { return []; } }
+function v29Linea_(t, n) { return String(t || '').split('\n')[0].trim().slice(0, n || 80); }
+function v29Media_(a) { return a.reduce(function (s, x) { return s + x; }, 0) / (a.length || 1); }
+function v29Redondea_(x, d) { var f = Math.pow(10, d); return Math.round(x * f) / f; }
+/** Valor de una clave de APP · CONFIG que guarda una fecha (con o sin «'» delante) → 'yyyy-mm-dd' o ''. */
+function v29CfgIso_(clave) { var v = String(leerConfig_()[clave] || '').replace(/^'/, '').trim(); return v ? (celdaIso_(v) || '') : ''; }
+function v29CfgJson_(clave) {
+  try { var v = String(leerConfig_()[clave] || '').replace(/^'/, '').trim(); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+/** Número comparable de un valor según el tipo del indicador (null si no se puede comparar). */
+function valorIndicador_(ind, txt) {
+  var s = String(txt == null ? '' : txt).trim().replace(/^'/, '');
+  if (!s) return null;
+  if (ind.tipo === 'tiempo') { if (!/\d/.test(s)) return null; var sg = segundos_(s); return sg > 0 ? sg : null; }
+  if (ind.tipo === 'num') return v29Num_(s);
+  if (/^\d{1,3}:\d{2}(:\d{2})?$/.test(s)) { var sg2 = segundos_(s); return sg2 > 0 ? sg2 : null; }   // texto libre: solo si es un tiempo
+  return null;
+}
+function v29Txt_(ind, v, crudo) {
+  if (v == null) return String(crudo == null ? '' : crudo).trim();
+  if (ind.tipo === 'tiempo' || (ind.tipo === 'texto' && /^\d{1,3}:\d{2}/.test(String(crudo).trim()))) return mmss_(v);
+  return String(v29Redondea_(v, 3)).replace('.', ',');
+}
+function v29Mejor_(ind, vals) {
+  return vals.reduce(function (m, x) { return m == null ? x : (ind.mejorEs === 'menor' ? Math.min(m, x) : Math.max(m, x)); }, null);
+}
+function v29Supera_(ind, a, b) { return ind.mejorEs === 'menor' ? a < b : a > b; }   // ¿a es mejor que b?
+
+// ---------- fuentes automáticas ----------
+/** Tests de 2 km de APP · CARRERA: [{fecha, seg}] por fecha. */
+function tests2kCarrera_() {
+  var out = [];
+  v29Seguro_(HOJAS.CARRERA).forEach(function (r) {
+    var t = norm(r.TIPO), km = v29Num_(r['DISTANCIA (km)']), seg = segundos_(r.TIEMPO), f = celdaIso_(r.FECHA);
+    if (!f || !(seg > 0)) return;
+    var es = (t.indexOf('TEST') >= 0 && km != null && km >= 1.9 && km <= 2.1) || /(^|[^0-9])2 ?KM/.test(t);
+    if (es) out.push({ fecha: f, seg: seg });
+  });
+  return out.sort(function (a, b) { return a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0; });
+}
+/** Eficiencia aeróbica semanal: media de (m/min)/FC de las carreras Z2 de la semana. [{fecha:lunes, v}] */
+function eficienciaZ2Semanal_() {
+  var por = {};
+  v29Seguro_(HOJAS.CARRERA).forEach(function (r) {
+    if (norm(r.TIPO).trim().indexOf('Z2') !== 0) return;
+    var km = v29Num_(r['DISTANCIA (km)']), seg = segundos_(r.TIEMPO), fc = v29Num_(r['FC MEDIA']), f = celdaIso_(r.FECHA);
+    if (!f || !(km > 0 && seg > 0 && fc > 0)) return;
+    var l = lunesDe_(f); (por[l] = por[l] || []).push((km * 1000 / (seg / 60)) / fc);
+  });
+  return Object.keys(por).sort().map(function (l) { return { fecha: l, v: v29Redondea_(v29Media_(por[l]), 3) }; });
+}
+/** Serie de un indicador: [{fecha, v (número comparable o null), txt}] ordenada por fecha. */
+function serieIndicador_(clave) {
+  var ind = v29Ind_(clave); if (!ind) return [];
+  clave = ind.clave;
+  var out = [];
+  v29Seguro_(HOJAS.RENDIMIENTO).forEach(function (r) {
+    if (String(r.INDICADOR || '').trim().toLowerCase() !== clave) return;
+    var f = celdaIso_(r.FECHA); if (!f) return;
+    var v = valorIndicador_(ind, r.VALOR);
+    out.push({ fecha: f, v: v, txt: v29Txt_(ind, v, r.VALOR) });
+  });
+  var N = function (v) { return String(v29Redondea_(v, 3)).replace('.', ','); };
+  if (clave === 'snatch' || clave === 'cj') {
+    v29Seguro_(HOJAS.MARCAS).forEach(function (m) {
+      var mov = norm(m.MOVIMIENTO).trim(), tipo = norm(m.TIPO).replace(/\s/g, '');
+      var esMov = clave === 'snatch' ? mov === 'SNATCH' : (mov === 'CLEAN & JERK' || mov === 'CLEAN AND JERK' || mov === 'C&J');
+      if (!esMov || tipo.indexOf('1RM') < 0) return;
+      var f = celdaIso_(m.FECHA), v = v29Num_(m.VALOR); if (!f || v == null) return;
+      out.push({ fecha: f, v: v, txt: N(v) });
+    });
+  } else if (clave === '2km') {
+    tests2kCarrera_().forEach(function (t) { out.push({ fecha: t.fecha, v: t.seg, txt: mmss_(t.seg) }); });
+  } else if (clave === 'z2') {
+    eficienciaZ2Semanal_().forEach(function (w) { out.push({ fecha: w.fecha, v: w.v, txt: N(w.v) }); });
+  } else if (clave === 'remo6') {
+    v29Seguro_(HOJAS.OPERACION).forEach(function (o) {
+      if (!/ROWERG|\bREMO\b/.test(norm(o.REFERENCIA))) return;
+      var f = celdaIso_(o.FECHA), v = v29Num_(o.VALOR); if (!f || v == null) return;
+      out.push({ fecha: f, v: v, txt: N(v) });
+    });
+  }
+  var vistos = {};
+  out = out.filter(function (s) { var k = s.fecha + '|' + s.v + '|' + s.txt; if (vistos[k]) return false; vistos[k] = 1; return true; });
+  return out.map(function (s, i) { s._i = i; return s; })
+    .sort(function (a, b) { return a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a._i - b._i; })
+    .map(function (s) { return { fecha: s.fecha, v: s.v, txt: s.txt }; });
+}
+
+// ---------- exposiciones, alertas y panel ----------
+/** {clave: n}: sesiones hechas (REGISTRO «Sí») en las últimas 8 semanas con algún código del indicador. */
+function exposiciones8_() {
+  var desde = sumarDias(hoyIso_(), -56), plan = {}, vistos = {}, cuenta = {};
+  v29Seguro_(HOJAS.PLAN).forEach(function (p) { if (p.ID) plan[p.ID] = p; });
+  v29Seguro_(HOJAS.REGISTRO).forEach(function (r) {
+    if (norm(r.HECHO).trim() !== 'SI') return;
+    var p = plan[r.ID_PLAN]; if (!p) return;
+    var f = celdaIso_(r.FECHA) || celdaIso_(p.FECHA); if (!f || f < desde) return;
+    var k = r.ID_PLAN + '|' + f; if (vistos[k]) return; vistos[k] = 1;
+    var cods = codigosDe_(p['CÓDIGOS']);
+    INDICADORES_.forEach(function (ind) {
+      if (ind.codigos.some(function (c) { return cods.indexOf(c) >= 0; })) cuenta[ind.clave] = (cuenta[ind.clave] || 0) + 1;
+    });
+  });
+  return cuenta;
+}
+function alertaIndicador_(ind, serie, exp) {
+  var msgs = [];
+  if (exp >= 6) {
+    var corte = sumarDias(hoyIso_(), -56), rec = [], ant = [];
+    serie.forEach(function (s) { if (s.v == null) return; (s.fecha >= corte ? rec : ant).push(s.v); });
+    if (ant.length) {
+      var mAnt = v29Mejor_(ind, ant), mRec = rec.length ? v29Mejor_(ind, rec) : null;
+      if (mRec == null || !v29Supera_(ind, mRec, mAnt)) msgs.push('Ocho semanas sin mejora con ' + exp + ' exposiciones: propongo cambiar la dosis o el ejercicio.');
+    }
+  }
+  if (ind.clave === 'z2') {
+    var p = serie.filter(function (s) { return s.v != null; }).slice(-3);
+    if (p.length === 3 && p[2].v < p[1].v && p[1].v < p[0].v) msgs.push('La eficiencia aeróbica baja dos semanas seguidas: revisa carga y sueño.');
+  }
+  return msgs.join(' ');
+}
+function rendimiento_() {
+  var exp = {}, out = { indicadores: [], metconsRef: [], murph: null, residuo: [], ritmos: null, strava: null };
+  try { exp = exposiciones8_(); } catch (e) { Logger.log('Rendimiento · exposiciones: ' + e); }
+  INDICADORES_.forEach(function (ind) {
+    var serie = [], mejor = null, ultimo = null, anterior = null, tend = '', alerta = '';
+    try {
+      serie = serieIndicador_(ind.clave);
+      ultimo = serie.length ? serie[serie.length - 1] : null;
+      anterior = serie.length > 1 ? serie[serie.length - 2] : null;
+      var con = serie.filter(function (s) { return s.v != null; });
+      if (con.length) { var mv = v29Mejor_(ind, con.map(function (s) { return s.v; })); mejor = con.filter(function (s) { return s.v === mv; })[0]; }
+      if (ultimo && anterior && ultimo.v != null && anterior.v != null)
+        tend = ultimo.v === anterior.v ? 'igual' : (v29Supera_(ind, ultimo.v, anterior.v) ? 'mejora' : 'empeora');
+      alerta = alertaIndicador_(ind, serie, exp[ind.clave] || 0);
+    } catch (e) { Logger.log('Rendimiento · ' + ind.clave + ': ' + e); }
+    out.indicadores.push({ clave: ind.clave, nombre: ind.nombre, unidad: ind.unidad, mejorEs: ind.mejorEs, ultimo: ultimo, anterior: anterior, mejor: mejor,
+      tendencia: tend, serie: serie.slice(-40), exp8: exp[ind.clave] || 0, alerta: alerta });
+  });
+  try { out.metconsRef = metconsReferencia_(); } catch (e) { Logger.log('Rendimiento · metcons: ' + e); }
+  try { out.murph = murphInfo_(); } catch (e) { Logger.log('Rendimiento · murph: ' + e); }
+  try { out.residuo = residuo_(); } catch (e) { Logger.log('Rendimiento · residuo: ' + e); }
+  try { out.ritmos = { vigentes: v29CfgJson_('ritmos_zonas'), propuesta: v29CfgJson_('ritmos_propuesta'), texto: ritmosTexto_() }; } catch (e) { Logger.log('Rendimiento · ritmos: ' + e); }
+  try { out.strava = stravaEstado_(); } catch (e) { Logger.log('Rendimiento · strava: ' + e); }
+  return out;
+}
+/** Guarda un valor a mano en APP · RENDIMIENTO. b = {clave, valor, fecha, notas}. */
+function guardarRendimiento_(b) {
+  var ind = v29Ind_(b && b.clave); if (!ind) throw new Error('indicador_no_valido');
+  var valor = String(b.valor == null ? '' : b.valor).trim().slice(0, 500); if (!valor) throw new Error('falta_valor');
+  if (ind.tipo !== 'texto' && valorIndicador_(ind, valor) == null) throw new Error('valor_no_valido');
+  var iso = (b.fecha && celdaIso_(b.fecha)) || hoyIso_();
+  anadirFila_(HOJAS.RENDIMIENTO, { FECHA: isoAFecha(iso), INDICADOR: ind.clave, VALOR: valor, UNIDAD: ind.unidad, FUENTE: 'App Road To Elite', NOTAS: String(b.notas || '').slice(0, 400), REGISTRADO: ahora_() });
+  MEMO = null;
+  return ind.clave;
+}
+
+// ---------- importar de la app de Gabi (SOLO LECTURA) ----------
+/** Lee una pestaña de la app de Gabi: cabecera = primera fila (de las 8 primeras) con «ATLETA». → {cab:{NOMBRE:col}, filas:[[...]]} o null. */
+function v29TablaGabi_(libro, nombre) {
+  var sh = libro.getSheetByName(nombre);
+  if (!sh) libro.getSheets().forEach(function (s) { if (!sh && norm(s.getName()).trim() === norm(nombre)) sh = s; });
+  if (!sh || !sh.getLastRow()) return null;
+  var v = sh.getDataRange().getDisplayValues(), h = -1, i;
+  for (i = 0; i < Math.min(v.length, 8) && h < 0; i++) if (v[i].some(function (c) { return norm(c).trim() === 'ATLETA'; })) h = i;
+  if (h < 0) return null;
+  var cab = {}; v[h].forEach(function (c, j) { var k = norm(c).trim(); if (k && cab[k] === undefined) cab[k] = j; });
+  var filas = v.slice(h + 1).filter(function (r) {
+    var p = ''; r.some(function (c) { if (String(c).trim()) { p = String(c).trim(); return true; } return false; });
+    return p && p.charAt(0) !== '▸';
+  });
+  return { cab: cab, filas: filas };
+}
+function v29EsMia_(T, r, email) {
+  var g = function (k) { return T.cab[k] === undefined ? '' : String(r[T.cab[k]] || '').trim(); };
+  return (email && g('EMAIL').toLowerCase() === email) || norm(g('ATLETA')).indexOf('PABLO SERRANO') >= 0;
+}
+function importarGabi_() {
+  var res = { marcas: 0, resultados: 0 }, email = '';
+  try { email = String(leerConfig_().email_permitido || CONFIG.EMAIL_PERMITIDO || '').toLowerCase().trim(); } catch (e) { email = String(CONFIG.EMAIL_PERMITIDO || '').toLowerCase(); }
+  var libro = null;
+  try { libro = programApp_(); } catch (e) { Logger.log('Gabi · no se abre la app: ' + e); return res; }
+  try {
+    var T = v29TablaGabi_(libro, 'MARCAS');
+    if (T && T.cab.MARCA !== undefined && T.cab.VALOR !== undefined) {
+      var ya = {}, nuevas = [];
+      v29Seguro_(HOJAS.MARCAS).forEach(function (m) { ya[norm(m.MOVIMIENTO).trim() + '|' + String(m.VALOR).trim() + '|' + celdaIso_(m.FECHA)] = 1; });
+      T.filas.forEach(function (r) {
+        if (!v29EsMia_(T, r, email)) return;
+        var g = function (k) { return T.cab[k] === undefined ? '' : String(r[T.cab[k]] || '').trim(); };
+        var mov = g('MARCA').toUpperCase(), val = g('VALOR'); if (!mov || !val) return;
+        var iso = celdaIso_(g('FECHA')) || '', k = norm(mov).trim() + '|' + val + '|' + iso;
+        if (ya[k]) return; ya[k] = 1;
+        nuevas.push({ FECHA: iso ? isoAFecha(iso) : g('FECHA'), MOVIMIENTO: mov, TIPO: g('TIPO'), VALOR: val, UNIDAD: '', EVENTO: g('EVENTO'), NOTAS: g('NOTAS'), FUENTE: 'App Gabi' });
+      });
+      res.marcas = filasEnHoja_(HOJAS.MARCAS, nuevas);
+    }
+  } catch (e) { Logger.log('Gabi · marcas: ' + e); }
+  try {
+    var R = v29TablaGabi_(libro, 'RESULTADOS');
+    if (R && R.cab.RESULTADO !== undefined && R.cab.FECHA !== undefined) {
+      var ya2 = {}, nuevas2 = [];
+      v29Seguro_(HOJAS.RENDIMIENTO).forEach(function (x) { if (String(x.INDICADOR).trim().toLowerCase() === 'wod') ya2[celdaIso_(x.FECHA) + '|' + norm(x.NOTAS).trim()] = 1; });
+      R.filas.forEach(function (r) {
+        if (!v29EsMia_(R, r, email)) return;
+        var g = function (k) { return R.cab[k] === undefined ? '' : String(r[R.cab[k]] || '').trim(); };
+        var res1 = g('RESULTADO'), iso = celdaIso_(g('FECHA')), wod = (g('WOD') || g('METCON')).slice(0, 400);
+        if (!res1 || !iso) return;
+        var k = iso + '|' + norm(wod).trim(); if (ya2[k]) return; ya2[k] = 1;
+        nuevas2.push({ FECHA: isoAFecha(iso), INDICADOR: 'wod', VALOR: res1, UNIDAD: g('TIPO'), FUENTE: 'App Gabi · RESULTADOS', NOTAS: wod, REGISTRADO: ahora_() });
+      });
+      res.resultados = filasEnHoja_(HOJAS.RENDIMIENTO, nuevas2);
+    }
+  } catch (e) { Logger.log('Gabi · resultados: ' + e); }
+  MEMO = null;
+  return res;
+}
+
+// ---------- metcons de referencia (hasta 3) ----------
+var METCONS_CLASICOS_ = [
+  ['Fran', '21-15-9 · Thrusters (43/30 kg) + pull-ups. Por tiempo.'],
+  ['Grace', '30 clean & jerk (61/43 kg). Por tiempo.'],
+  ['Isabel', '30 snatch (61/43 kg). Por tiempo.'],
+  ['Diane', '21-15-9 · Peso muerto (102/70 kg) + HSPU. Por tiempo.'],
+  ['Helen', '3 rondas: 400 m carrera + 21 KB swing (24/16 kg) + 12 pull-ups. Por tiempo.'],
+  ['Cindy', 'AMRAP 20′: 5 pull-ups + 10 push-ups + 15 air squats.'],
+  ['DT', '5 rondas: 12 peso muerto + 9 hang power clean + 6 push jerk (70/47,5 kg). Por tiempo.'],
+  ['Murph con chaleco', '1 milla carrera + 100 pull-ups + 200 push-ups + 300 air squats + 1 milla carrera, con chaleco (9/6 kg). Por tiempo; partición libre (p. ej. 5-10-15).']
+];
+function metconsReferencia_() {
+  var out = [], vistos = {};
+  var add = function (titulo, texto, motivo, fuente) {
+    titulo = String(titulo || '').trim(); var k = norm(titulo); if (!titulo || vistos[k] || out.length >= 3) return;
+    vistos[k] = 1; out.push({ titulo: titulo.slice(0, 80), texto: String(texto || '').trim(), motivo: motivo, fuente: fuente });
+  };
+  var filas = v29Seguro_(HOJAS.RENDIMIENTO);
+  // (a) guardados como referencia: más reciente primero
+  filas.filter(function (r) { return /^(metcon|ref)$/.test(String(r.INDICADOR || '').trim().toLowerCase()); })
+    .sort(function (a, b) { var x = celdaIso_(a.FECHA), y = celdaIso_(b.FECHA); return x < y ? 1 : x > y ? -1 : b._fila - a._fila; })
+    .forEach(function (r) {
+      var t = v29Linea_(r.NOTAS) || v29Linea_(r.VALOR, 60);
+      if (/^\d{1,3}:\d{2}/.test(t)) t = 'Metcon de referencia · ' + t;   // un tiempo suelto no es un título
+      add(t, r.VALOR, 'Lo marcaste como referencia', 'Rendimiento');
+    });
+  v29Seguro_('APP · FICHAS').forEach(function (f) {
+    if (norm(f.REFERENCIA).trim() !== 'SI') return;
+    var w = f.WOD || f.CONTENIDO || f.TEXTO || ''; add(f['TÍTULO'] || f.NOMBRE || ((f.EVENTO ? f.EVENTO + ' · ' : '') + (v29Linea_(w, 50) || 'WOD de competición')), w, f['QUÉ FALLÓ'] ? 'Ficha de competición: ' + String(f['QUÉ FALLÓ']).slice(0, 120) : 'Lo marcaste como referencia', 'Fichas');
+  });
+  // (b) peor resultado del último ciclo de 6 semanas (sin ranking: el más lento en tiempo / el que menos reps en AMRAP)
+  if (out.length < 3) {
+    var desde = sumarDias(hoyIso_(), -42), tiempos = [], amraps = [];
+    filas.forEach(function (r) {
+      if (String(r.INDICADOR || '').trim().toLowerCase() !== 'wod') return;
+      var f = celdaIso_(r.FECHA); if (!f || f < desde) return;
+      var u = norm(r.UNIDAD), val = String(r.VALOR || '').trim();
+      var esT = /TIEMPO|TIME/.test(u) || (/^\d{1,3}:\d{2}/.test(val) && !/AMRAP|REPS|RONDAS/.test(u));
+      var o = { r: r, fecha: f };
+      if (esT) { o.k = segundos_(val); if (o.k > 0) tiempos.push(o); }
+      else { o.k = v29Num_(val); if (o.k != null) amraps.push(o); }
+    });
+    tiempos.sort(function (a, b) { return b.k - a.k; }); amraps.sort(function (a, b) { return a.k - b.k; });
+    var cola = [], i;
+    for (i = 0; i < Math.max(tiempos.length, amraps.length); i++) { if (tiempos[i]) cola.push(tiempos[i]); if (amraps[i]) cola.push(amraps[i]); }
+    cola.forEach(function (o) {
+      add(v29Linea_(o.r.NOTAS, 60), String(o.r.NOTAS || '') + '\nTu resultado: ' + o.r.VALOR + ' (' + isoAFecha(o.fecha).slice(0, 5) + ')', 'Tu peor resultado del ciclo', 'App Gabi');
+    });
+  }
+  // (c) benchmarks clásicos, rotando cada semana
+  if (out.length < 3) {
+    var sem = Math.floor(new Date(hoyIso_() + 'T12:00:00Z').getTime() / 86400000 / 7), n = METCONS_CLASICOS_.length, j;
+    for (j = 0; j < n && out.length < 3; j++) { var c = METCONS_CLASICOS_[(sem + j) % n]; add(c[0], c[1], 'Benchmark clásico', 'Clásico'); }
+  }
+  return out;
+}
+/** Crea un BORRADOR de metcon de referencia (RF1) en APP · PLAN y devuelve la semana. b = {titulo, texto, iso, turno}. */
+function programarReferencia_(b) {
+  var iso = isoOk_(b && b.iso) || celdaIso_(b && b.iso); if (!iso) throw new Error('fecha_no_valida');
+  var turno = String(b.turno || 'PM').toUpperCase() === 'AM' ? 'AM' : 'PM', id = nuevoId_(), titulo = String(b.titulo || 'Metcon de referencia').slice(0, 120);
+  anadirFila_(HOJAS.PLAN, { ID: id, FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: turno, ORDEN: turno === 'AM' ? 6 : 85, ORIGEN: 'EXTRA', BLOQUE: titulo, 'TÍTULO': titulo,
+    CONTENIDO: String(b.texto || '').slice(0, 4000), MIN: 25, 'CÓDIGOS': 'RF1', 'POR QUÉ (cursiva)': 'Metcon de referencia: se repite cada cierto tiempo para medir tu progreso en las mismas condiciones.',
+    ESTADO: 'BORRADOR', GENERADO: 'manual ' + ahora_() + ' (candado)', ACTUALIZADO: ahora_() });
+  MEMO = null;
+  var semana = null; try { semana = semanaCompleta_(lunesDe_(iso)); } catch (e) { Logger.log('Referencia · semana no legible: ' + e); }   // la fila ya está creada: no se reintenta
+  return { ok: true, id: id, semana: semana };
+}
+
+// ---------- Murph con chaleco ----------
+var MURPH_PLAN_ = [
+  { sem: -6, rondas: 10, carrera: '800 m', titulo: 'Murph con chaleco · ½ (5-10-15)', min: 40, pq: 'Primer ensayo: la mitad del volumen con el chaleco puesto; el objetivo es aprender el reparto, no el tiempo.' },
+  { sem: -4, rondas: 15, carrera: '1,2 km', titulo: 'Murph con chaleco · ¾ (5-10-15)', min: 50, pq: 'Segundo ensayo: sube a ¾ y la carrera a 1,2 km. Mismo chaleco y mismo reparto: la fatiga acumulada de pull-ups y squats es lo que se entrena.' },
+  { sem: -2, rondas: 20, carrera: '1 milla (1,6 km)', titulo: 'Murph con chaleco · completo (5-10-15)', min: 65, pq: 'Ensayo general a dos semanas: Murph completo particionado, con chaleco, a RPE 7–8 para llegar con reserva y con el ritmo ya probado.' }
+];
+function murphSesiones_(fecha) {
+  var f = celdaIso_(String(fecha || '').replace(/^'/, '')); if (!f) return [];
+  var l = lunesDe_(f), hoy = hoyIso_();
+  return MURPH_PLAN_.map(function (p, i) {
+    var iso = sumarDias(l, p.sem * 7), pu = p.rondas * 5, pp = p.rondas * 10, sq = p.rondas * 15;
+    var cont = (i === 0 ? '½' : i === 1 ? '¾' : 'COMPLETO') + ' MURPH CON CHALECO · RPE 7–8\n' + p.carrera + ' carrera\n' + p.rondas + ' rondas × (5 pull-ups + 10 push-ups + 15 squats) = ' + pu + ' / ' + pp + ' / ' + sq + '\n' + p.carrera + ' carrera\n\n' +
+      'Todo con el chaleco puesto, de principio a fin (el mismo del Murph). Reparto 5-10-15: nunca a fallo, respira entre rondas.\n' +
+      (i === 2 ? 'Es el ensayo general: mismo orden, mismo ritmo de carrera y misma nutrición que el día D. Anota el tiempo cada 5 rondas.' : 'Anota el tiempo total, el de cada carrera y el de cada 5 rondas. Si la técnica del pull-up se rompe, baja a 4-8-12.');
+    return { fecha: iso, semana: p.sem, titulo: p.titulo, contenido: cont, min: p.min, pq: p.pq, pasada: iso < hoy };
+  });
+}
+function murphInfo_() {
+  var f = v29CfgIso_('murph_fecha'); if (!f) return null;
+  return { fecha: f, dias: Math.round((new Date(f + 'T12:00:00Z').getTime() - new Date(hoyIso_() + 'T12:00:00Z').getTime()) / 86400000), sesiones: murphSesiones_(f) };
+}
+/** Guarda (o borra, si va vacía) la fecha del Murph. */
+function murphFecha_(fecha) {
+  var f = String(fecha || '').trim() ? celdaIso_(String(fecha).trim()) : '';
+  if (String(fecha || '').trim() && !f) throw new Error('fecha_no_valida');
+  ponerConfig_('murph_fecha', f ? "'" + f : '', 'Fecha del Murph (los lunes −6, −4 y −2 semanas llevan ensayo con chaleco)');
+  MEMO = null;
+  return { ok: true, murph: murphInfo_() };
+}
+/** Bloques de ensayo de Murph que tocan en la semana de ese lunes (para que el generador los añada). */
+function murphBloquesSemana_(lunes) {
+  var l = lunesDe_(lunes), f = v29CfgIso_('murph_fecha'); if (!f) return [];
+  var s = murphSesiones_(f).filter(function (x) { return x.fecha === l; })[0]; if (!s) return [];
+  return [{ FECHA: isoAFecha(l), 'DÍA': 'Lunes', TURNO: 'AM', ORIGEN: 'EXTRA', 'TÍTULO': s.titulo, CONTENIDO: s.contenido, MIN: s.min, 'CÓDIGOS': 'MU1', INTENSIDAD: '🟠 Calidad', 'POR QUÉ (cursiva)': s.pq }];
+}
+
+// ---------- siembra: carrera comprometida (RC1), metcon de referencia (RF1), Murph (MU1) ----------
+var V29_EST_ = [
+  { 'CÓDIGO': 'RC1', NOMBRE: 'Test de carrera comprometida', ORIGEN: 'EXTRA', TURNO: 'PM', MIN: 35, INTENSIDAD: '🟠 Calidad',
+    CONTENIDO: '3 rondas: 60–90″ de estación (ronda 1: 15 wall balls · ronda 2: 12 cal remo · ronda 3: 20 m zancada con KB) + 400 m con reloj.\n3′ de pausa entre rondas.\nRegistra el parcial de los primeros 200 m y el de los 400 m de cada ronda.',
+    'POR QUÉ (cursiva)': 'Correr con las piernas y la respiración ya comprometidas es lo que pasa en un HYROX o en un metcon con carrera: aquí se mide cuánto ritmo conservas.',
+    'CIENCIA (técnica · fisiología · biología)': 'Técnica: zancada corta y cadencia alta desde el primer paso. Fisiología: tolerancia al lactato y economía de carrera con fatiga previa. Biología: la caída del segundo 200 m frente al primero mide el coste de la estación.',
+    INTERFERENCIAS: '≥48 h de otra sesión de pierna pesada o de Z6–Z8.', CARGA: 'IMPACTO GLUC PIERNA', 'DATOS A REGISTRAR': 'Parcial 200 m y 400 m de cada ronda, estación, FC y RPE' },
+  { 'CÓDIGO': 'RF1', NOMBRE: 'Metcon de referencia', ORIGEN: 'EXTRA', TURNO: 'PM', MIN: 25, INTENSIDAD: '🟠 Calidad',
+    CONTENIDO: 'El contenido real lo pone el generador (un metcon de referencia que se repite para comparar).',
+    'POR QUÉ (cursiva)': 'Repetir el mismo metcon cada cierto tiempo es la forma más limpia de medir si el motor mejora.',
+    'CIENCIA (técnica · fisiología · biología)': 'Técnica: mismas cargas y mismos movimientos. Fisiología: respuesta glucolítica comparable entre fechas. Biología: tiempo y reps solo valen si el descanso y la hora son parecidos.',
+    INTERFERENCIAS: '≥48 h de otra sesión intensa.', CARGA: 'GLUC', 'DATOS A REGISTRAR': 'Tiempo o reps, cargas y RPE' },
+  { 'CÓDIGO': 'MU1', NOMBRE: 'Murph con chaleco · ensayo', ORIGEN: 'EXTRA', TURNO: 'AM', MIN: 50, INTENSIDAD: '🟠 Calidad',
+    CONTENIDO: 'Lo pone el calendario del Murph (½ → ¾ → completo, partición 5-10-15, con chaleco).',
+    'POR QUÉ (cursiva)': 'Ensayo progresivo del Murph con chaleco en las semanas −6, −4 y −2.',
+    'CIENCIA (técnica · fisiología · biología)': 'Técnica: reparto 5-10-15 sin ir a fallo. Fisiología: resistencia muscular de tirón, empuje y pierna con carrera. Biología: el chaleco sube el coste de cada repetición.',
+    INTERFERENCIAS: 'Sin pierna pesada ni Z6–Z8 las 48 h previas.', CARGA: 'PIERNA AGARRE IMPACTO GLUC', 'DATOS A REGISTRAR': 'Tiempo total, tiempos de carrera y de cada 5 rondas' }
+];
+var V29_METAS_ = [
+  { ID: 'v29rc001', 'ÁMBITO': 'Mes', PRIORIDAD: 'P3 · Carrera comprometida', 'ESTÍMULO': 'TEST DE CARRERA COMPROMETIDA', META: '1', TIPO: 'COUNT', UNIDAD: 'tests/mes', 'CÓDIGOS': 'RC1', ACTIVA: 'Sí',
+    NOTAS: 'v29a · 3 × (estación 60–90″ + 400 m) con parciales de 200 y 400 m.' },
+  { ID: 'v29rf001', 'ÁMBITO': 'Mes', PRIORIDAD: 'P3 · Metcon de referencia', 'ESTÍMULO': 'METCON DE REFERENCIA', META: '1', TIPO: 'COUNT', UNIDAD: 'sesiones/mes', 'CÓDIGOS': 'RF1', ACTIVA: 'Sí',
+    NOTAS: 'v29a · el generador pone el metcon (de APP · RENDIMIENTO o benchmark clásico).' }
+];
+/** Siembra RC1, RF1 y MU1 + sus metas sin duplicar (patrón de opPrepararCatalogo_). Devuelve un texto de log. */
+function prepararV29a_() {
+  var cat = {}; listar_(HOJAS.ESTIMULOS).forEach(function (r) { cat[String(r['CÓDIGO']).trim().toUpperCase()] = 1; });
+  var nuevas = V29_EST_.filter(function (e) { return !cat[e['CÓDIGO']]; }).map(function (e) { var o = Object.assign({}, e); o.ACTIVO = 'Sí'; return o; });
+  filasEnHoja_(HOJAS.ESTIMULOS, nuevas);
+  var metas = {}; listar_(HOJAS.METAS).forEach(function (m) { metas[m.ID] = 1; });
+  var nm = V29_METAS_.filter(function (m) { return !metas[m.ID]; });
+  filasEnHoja_(HOJAS.METAS, nm); MEMO = null;
+  return nuevas.length + ' estímulos y ' + nm.length + ' metas nuevas (RC1, RF1, MU1) · hoja de rendimiento: ' + (function () { try { hojaMia_(HOJAS.RENDIMIENTO); return 'lista'; } catch (e) { return 'se crea al preparar las hojas'; } })();
+}
+
+// ---------- residuo: qué estímulos dejan más cansancio al día siguiente ----------
+function residuo_() {
+  var desde = sumarDias(hoyIso_(), -56), plan = {}, cans = {}, todos = [], cat = {}, porCod = {}, vistos = {};
+  try { cat = catalogo_(); } catch (e) {}
+  v29Seguro_(HOJAS.PLAN).forEach(function (p) { if (p.ID) plan[p.ID] = p; });
+  v29Seguro_(HOJAS.CHEQUEO).forEach(function (c) {
+    var f = celdaIso_(c.FECHA), v = v29Num_(c['CANSANCIO (1-10)']); if (!f || v == null || f < desde) return;
+    cans[f] = v; todos.push(v);
+  });
+  if (!todos.length) return [];
+  var global = v29Media_(todos);
+  v29Seguro_(HOJAS.REGISTRO).forEach(function (r) {
+    if (norm(r.HECHO).trim() !== 'SI') return;
+    var p = plan[r.ID_PLAN]; if (!p) return;
+    var f = celdaIso_(r.FECHA) || celdaIso_(p.FECHA); if (!f || f < desde) return;
+    var sig = cans[sumarDias(f, 1)]; if (sig === undefined) return;
+    codigosDe_(p['CÓDIGOS']).forEach(function (c) {
+      var k = c + '|' + f; if (vistos[k]) return; vistos[k] = 1;
+      (porCod[c] = porCod[c] || []).push(sig);
+    });
+  });
+  return Object.keys(porCod).filter(function (c) { return porCod[c].length >= 2; }).map(function (c) {
+    var e = cat[c] || {};
+    return { codigo: c, nombre: e.NOMBRE || c, delta: v29Redondea_(v29Media_(porCod[c]) - global, 2), n: porCod[c].length };
+  }).filter(function (x) { return x.delta > 0; }).sort(function (a, b) { return b.delta - a.delta; }).slice(0, 6);
+}
+
+// ---------- ritmos por zona desde el test de 2 km ----------
+function ritmosDesde2k_(seg) {
+  var p2 = seg / 2;
+  return { z5: mmss_(p2 + 3), z4: mmss_(p2 * 1.10), z2: [mmss_(p2 * 1.40), mmss_(p2 * 1.50)] };
+}
+/** Si hay un test de 2 km más nuevo que los ritmos vigentes, guarda la PROPUESTA (no la aplica). Devuelve la propuesta o null. */
+function revisarRitmos_() {
+  var tests = tests2kCarrera_(); if (!tests.length) return null;
+  var t = tests[tests.length - 1], vig = v29CfgJson_('ritmos_zonas'), pro = v29CfgJson_('ritmos_propuesta');
+  if (vig && vig.de && vig.de >= t.fecha) return null;
+  if (pro && pro.de === t.fecha) return pro;
+  var r = ritmosDesde2k_(t.seg), prop = { de: t.fecha, t2k: mmss_(t.seg), z2: r.z2, z4: r.z4, z5: r.z5 };
+  ponerConfig_('ritmos_propuesta', JSON.stringify(prop), 'Ritmos propuestos tras el test de 2 km: confírmalos en la app');
+  MEMO = null;
+  try { enviarPush_('Ritmos nuevos propuestos', 'Tras tu test de 2 km (' + prop.t2k + ') propongo Z2 ' + prop.z2[0] + '–' + prop.z2[1] + ' · Z4 ' + prop.z4 + ' · Z5 ' + prop.z5 + ' /km. Confírmalos en Rendimiento.'); } catch (e) { /* sin avisos */ }
+  return prop;
+}
+function ritmosConfirmar_() {
+  var pro = v29CfgJson_('ritmos_propuesta'); if (!pro || !pro.de) return { ok: false, error: 'sin_propuesta' };
+  ponerConfig_('ritmos_zonas', JSON.stringify(pro), 'Ritmos vigentes por zona (de ' + pro.de + ')');
+  ponerConfig_('ritmos_propuesta', '', 'Ritmos propuestos tras el test de 2 km: confírmalos en la app');
+  MEMO = null;
+  return { ok: true, ritmos: pro, texto: ritmosTexto_() };
+}
+function ritmosTexto_() {
+  var v = v29CfgJson_('ritmos_zonas'); if (!v || !v.z2 || !v.z4 || !v.z5) return '';
+  return 'Ritmos vigentes · Z2 ' + v.z2[0] + '–' + v.z2[1] + '/km · Z4 ' + v.z4 + '/km · Z5 ' + v.z5 + '/km';
+}
+
+// ---------- Strava ----------
+function stravaUrl_() {
+  var id = String(leerConfig_().strava_client_id || '').replace(/^'/, '').trim(); if (!id) return '';
+  var st = Utilities.getUuid().replace(/-/g, '') + Math.random().toString(36).slice(2);
+  CacheService.getScriptCache().put('strava_estado_' + st, '1', 600);
+  return 'https://www.strava.com/oauth/authorize?client_id=' + encodeURIComponent(id) + '&response_type=code&redirect_uri=' + encodeURIComponent(ScriptApp.getService().getUrl()) +
+    '&scope=activity:read_all&approval_prompt=auto&state=' + encodeURIComponent(st);
+}
+function v29Html_(titulo, texto) {
+  return HtmlService.createHtmlOutput('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:system-ui,sans-serif;padding:2em;max-width:30em;margin:auto"><h2>' + titulo + '</h2><p>' + texto + '</p></body>');
+}
+/** doGet(e) la llama cuando llegan e.parameter.code y e.parameter.state. */
+function stravaCallback_(e) {
+  try {
+    var p = (e && e.parameter) || {}, cache = CacheService.getScriptCache(), k = 'strava_estado_' + String(p.state || '');
+    if (!p.state || !cache.get(k)) return v29Html_('Enlace caducado', 'El enlace de conexión con Strava ha caducado o no es válido. Vuelve a la app y pulsa «Conectar Strava».');
+    try { cache.remove(k); } catch (e2) { /* el estado caduca solo a los 10 min */ }
+    if (p.error || !p.code) return v29Html_('Strava no conectado', 'No has autorizado el acceso a Strava. Puedes cerrar esta pestaña y volver a intentarlo desde la app.');
+    var id = String(leerConfig_().strava_client_id || '').replace(/^'/, '').trim(), secreto = PROPS.getProperty('STRAVA_SECRET');
+    if (!id || !secreto) return v29Html_('Falta configurar Strava', 'Falta el Client ID (APP · CONFIG › strava_client_id) o el secreto (propiedad STRAVA_SECRET del script).');
+    var r = UrlFetchApp.fetch('https://www.strava.com/oauth/token', { method: 'post', muteHttpExceptions: true,
+      payload: { client_id: id, client_secret: secreto, code: p.code, grant_type: 'authorization_code' } });
+    var d = JSON.parse(r.getContentText() || '{}');
+    if (r.getResponseCode() !== 200 || !d.access_token) return v29Html_('No se pudo conectar', 'Strava no ha aceptado la conexión. Revisa el Client ID y el secreto.');
+    PROPS.setProperty('STRAVA_TOKEN', JSON.stringify({ access_token: d.access_token, refresh_token: d.refresh_token, expires_at: d.expires_at }));
+    return v29Html_('Strava conectado', 'Strava conectado, ya puedes cerrar esta pestaña.');
+  } catch (err) { return v29Html_('Error', 'No se pudo completar la conexión con Strava.'); }
+}
+/** Token válido (refresca si caduca en menos de 2 min). '' si no hay conexión. */
+function stravaToken_() {
+  var raw = PROPS.getProperty('STRAVA_TOKEN'); if (!raw) return '';
+  var t; try { t = JSON.parse(raw); } catch (e) { return ''; }
+  if (!t || !t.access_token) return '';
+  if (t.expires_at && t.expires_at - 120 > Math.floor(Date.now() / 1000)) return t.access_token;
+  var id = String(leerConfig_().strava_client_id || '').replace(/^'/, '').trim(), secreto = PROPS.getProperty('STRAVA_SECRET');
+  if (!id || !secreto || !t.refresh_token) return '';
+  var r = UrlFetchApp.fetch('https://www.strava.com/oauth/token', { method: 'post', muteHttpExceptions: true,
+    payload: { client_id: id, client_secret: secreto, grant_type: 'refresh_token', refresh_token: t.refresh_token } });
+  var d = JSON.parse(r.getContentText() || '{}');
+  if (r.getResponseCode() !== 200 || !d.access_token) return '';
+  PROPS.setProperty('STRAVA_TOKEN', JSON.stringify({ access_token: d.access_token, refresh_token: d.refresh_token || t.refresh_token, expires_at: d.expires_at }));
+  return d.access_token;
+}
+function v29TipoCarrera_(p) {
+  var cods = codigosDe_(p && p['CÓDIGOS']), txt = norm((p && p['TÍTULO']) + ' ' + (p && p.CONTENIDO));
+  if (/TEST/.test(txt) && /(^|[^0-9])2 ?KM/.test(txt)) return 'Test 2 km';
+  if (cods.indexOf('R03') >= 0) return 'Z5 VO2max';
+  if (cods.indexOf('W04') >= 0 || cods.indexOf('R02') >= 0) return 'Z4 umbral';
+  if (cods.indexOf('W01') >= 0) return 'Z2 larga';
+  return 'Z2';
+}
+function v29EsPlanCarrera_(p) {
+  var e = norm(p.ESTADO); if (/CANCEL|SUSTITU|NO HACER/.test(e)) return false;
+  if (norm(p.ORIGEN).trim() === 'CARRERA') return true;
+  return codigosDe_(p['CÓDIGOS']).some(function (c) { return /^(W01|W02|W04|R02|R03|V01)$/.test(c); });
+}
+function stravaSync_() {
+  try {
+    var tok = stravaToken_(); if (!tok) return { ok: false, motivo: 'sin_conectar' };
+    var cfg = leerConfig_(), ahora = Math.floor(Date.now() / 1000), desde = parseInt(String(cfg.strava_ultima || '').replace(/^'/, ''), 10) || (ahora - 3 * 86400);
+    var acts = [], pg;
+    for (pg = 1; pg <= 4; pg++) {
+      var r = UrlFetchApp.fetch('https://www.strava.com/api/v3/athlete/activities?after=' + desde + '&per_page=50&page=' + pg, { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+      if (r.getResponseCode() === 401) return { ok: false, motivo: 'token' };
+      if (r.getResponseCode() !== 200) return { ok: false, motivo: 'strava_' + r.getResponseCode() };
+      var lote = JSON.parse(r.getContentText() || '[]'); acts = acts.concat(lote);
+      if (lote.length < 50) break;
+    }
+    var plan = v29Seguro_(HOJAS.PLAN), carr = v29Seguro_(HOJAS.CARRERA), nuevas = 0, actualizadas = 0, maxEpoch = desde;
+    acts.forEach(function (a) {
+      var inicio = a.start_date ? Math.floor(new Date(a.start_date).getTime() / 1000) : 0; if (inicio > maxEpoch) maxEpoch = inicio;
+      var tipoS = String(a.sport_type || a.type || ''); if (tipoS !== 'Run' && tipoS !== 'TrailRun' && String(a.type || '') !== 'Run') return;
+      var iso = Utilities.formatDate(new Date(a.start_date), CONFIG.ZONA, 'yyyy-MM-dd'), nota = 'Strava · ' + String(a.name || '').slice(0, 120);
+      var km = (a.distance || 0) / 1000, seg = a.moving_time || 0; if (!(seg > 0)) return;
+      var cands = plan.filter(function (p) { return celdaIso_(p.FECHA) === iso && v29EsPlanCarrera_(p); });
+      var existe = function (idp) { return carr.filter(function (c) { return celdaIso_(c.FECHA) === iso && String(c.ID_PLAN || '') === String(idp || ''); })[0]; };
+      var p = cands.filter(function (x) { return !existe(x.ID); })[0] || cands.filter(function (x) { var e = existe(x.ID); return e && String(e.NOTAS || '').indexOf(nota) >= 0; })[0] || cands[0] || null;
+      var idPlan = p ? p.ID : '', ex = existe(idPlan);
+      if (!idPlan) {   // sin plan: la misma actividad (misma nota) o, si no, la única carrera manual de ese día con distancia parecida (±5 %); si no, fila nueva
+        var delDia = carr.filter(function (c) { return celdaIso_(c.FECHA) === iso && !String(c.ID_PLAN || '').trim(); });
+        ex = delDia.filter(function (c) { return String(c.NOTAS || '').indexOf(nota) >= 0; })[0] || null;
+        if (!ex) {
+          var manuales = delDia.filter(function (c) { var kc = v29Num_(c['DISTANCIA (km)']); return !/^Strava/.test(String(c.NOTAS || '')) && kc > 0 && km > 0 && Math.abs(kc - km) / km <= 0.05; });
+          if (manuales.length === 1) ex = manuales[0];
+        }
+      }
+      var n = { FECHA: isoAFecha(iso), ID_PLAN: idPlan, TIPO: p ? v29TipoCarrera_(p) : 'Z2', 'DISTANCIA (km)': km.toFixed(2).replace('.', ','),
+        TIEMPO: seg >= 3600 ? Math.floor(seg / 3600) + ':' + ('0' + Math.floor((seg % 3600) / 60)).slice(-2) + ':' + ('0' + (seg % 60)).slice(-2) : mmss_(seg),
+        NOTAS: nota };
+      if (km > 0) n['RITMO MEDIO (/km)'] = mmss_(seg / km);
+      if (a.average_heartrate) n['FC MEDIA'] = Math.round(a.average_heartrate);
+      if (a.max_heartrate) n['FC MÁX'] = Math.round(a.max_heartrate);
+      if (a.total_elevation_gain != null) n['DESNIVEL (m)'] = Math.round(a.total_elevation_gain);
+      if (a.average_cadence) n.CADENCIA = Math.round(a.average_cadence * 2);
+      if (a.average_temp != null) n['TEMPERATURA (°C)'] = a.average_temp;
+      if (ex) {
+        var vacios = {}, hay = false;
+        Object.keys(n).forEach(function (h) { if (!String(ex[h] == null ? '' : ex[h]).trim() && String(n[h]) !== '') { vacios[h] = n[h]; hay = true; } });
+        if (hay) { actualizarFila_(HOJAS.CARRERA, ex._fila, vacios); actualizadas++; Object.keys(vacios).forEach(function (h) { ex[h] = vacios[h]; }); }
+      } else {
+        n.ID = nuevoId_(); n.REGISTRADO = ahora_();
+        anadirFila_(HOJAS.CARRERA, n); nuevas++;
+        carr.push({ FECHA: n.FECHA, ID_PLAN: idPlan, NOTAS: nota, _fila: 0 });
+      }
+    });
+    if (acts.length) ponerConfig_('strava_ultima', String(maxEpoch + 1), 'Strava · última actividad sincronizada (epoch)');
+    MEMO = null;
+    if (nuevas + actualizadas) { try { analizarCarrera_(); } catch (e) { /* no frena la sincronización */ } }
+    return { ok: true, nuevas: nuevas, actualizadas: actualizadas, vistas: acts.length };
+  } catch (err) { return { ok: false, motivo: 'error', detalle: String(err && err.message || err) }; }
+}
+function stravaEstado_() {
+  var cfg = leerConfig_(), cfgd = !!String(cfg.strava_client_id || '').replace(/^'/, '').trim(), con = !!PROPS.getProperty('STRAVA_TOKEN'), url = '', ult = '';
+  if (cfgd && !con) { try { url = stravaUrl_(); } catch (e) { url = ''; } }
+  var ep = parseInt(String(cfg.strava_ultima || '').replace(/^'/, ''), 10);
+  if (ep > 0) ult = Utilities.formatDate(new Date(ep * 1000), CONFIG.ZONA, 'dd/MM/yyyy HH:mm');
+  return { configurado: cfgd, conectado: con, url: url, ultima: ult };
+}
+
+// ---------- disparadores ----------
+/** Una vez al día (colgar de motorDiario o similar). */
+function v29aDiario_() {
+  var r = {};
+  try { r.gabi = importarGabi_(); } catch (e) { Logger.log('v29a · Gabi: ' + e); }
+  try { r.ritmos = revisarRitmos_(); } catch (e) { Logger.log('v29a · ritmos: ' + e); }
+  return r;
+}
+/** Cada hora (colgar de revisarAvisos): sincroniza Strava solo si está conectado. */
+function v29aCadaHora_() {
+  try { if (PROPS.getProperty('STRAVA_TOKEN')) return stravaSync_(); } catch (e) { Logger.log('v29a · Strava: ' + e); }
+  return null;
+}
+
+// =====================================================================================================
+// v0.29b · COMPETICIÓN (fichas, taper, plan del día) · RESUMEN DEL LUNES · SALUD DE TAREAS · ARCHIVO · CACHÉ · LOTES
+// Se añade tal cual al final de Code.gs (usa sus funciones globales). ES5: var, function, sin flechas ni template literals.
+// El router y los disparadores existentes se cambian según _v29b_patches.md.
+// =====================================================================================================
+
+// ---------- pestañas ----------
+HOJAS.FICHAS = 'APP · FICHAS';
+HOJAS.INFORMES = 'INFORMES';
+ESQUEMA['APP · FICHAS'] = {
+  cab: ['ID', 'FECHA', 'EVENTO', 'WOD', 'RESULTADO', 'PUESTO', 'VALORACIÓN', 'FALLO', 'QUÉ FALLÓ', 'ESTÍMULO QUE SALE', 'REFERENCIA', 'REGISTRADO'],
+  anchos: [70, 95, 180, 300, 110, 70, 100, 100, 280, 280, 90, 120], fechas: ['FECHA'], negrita: 'WOD', congelarCol: 2,
+  listas: { 'VALORACIÓN': ['Bien', 'Regular', 'Mal'], FALLO: ['Motor', 'Skill', 'Fuerza', 'Estrategia', 'Ninguno'], REFERENCIA: ['Sí', 'No'] },
+  colores: [['VALORACIÓN', 'Mal', '#ffd6d6'], ['REFERENCIA', 'Sí', '#fff2e6']]
+};
+ESQ_BD_[HOJAS.INFORMES] = { cab: ['FECHA', 'MES', 'TEXTO', 'MODELO'], anchos: [95, 80, 700, 130], fechas: ['FECHA'], color: '#16a34a' };
+// eventos: objetivo de la competición (A/B) y sus WODs
+CAMPOS_EVENTO.push('OBJETIVO', 'WODS');
+ESQUEMA['APP · EVENTOS'].cab.push('OBJETIVO', 'WODS'); ESQUEMA['APP · EVENTOS'].anchos.push(80, 320);
+ESQUEMA['APP · EVENTOS'].listas.OBJETIVO = ['A', 'B'];
+
+/** Ejecutar desde configurar (después de prepararHojas y prepararBd_). Devuelve un texto de estado. */
+function prepararV29b_() {
+  var r = [];
+  try { prepararEsquema_(miLibro_(), { 'APP · FICHAS': ESQUEMA['APP · FICHAS'] }); r.push('FICHAS'); } catch (e) { r.push('FICHAS fallo: ' + e); }
+  try { ['OBJETIVO', 'WODS'].forEach(function (c) { asegurarColumna_(HOJAS.EVENTOS, c); }); r.push('EVENTOS+OBJETIVO/WODS'); } catch (e) { r.push('EVENTOS fallo: ' + e); }
+  try { prepararEsquema_(motorLibro_(), (function () { var o = {}; o[HOJAS.INFORMES] = ESQ_BD_[HOJAS.INFORMES]; return o; })()); r.push('INFORMES'); } catch (e) { r.push('INFORMES fallo: ' + e); }
+  try { instalarDisparadorLunes_(); r.push('disparador lunes 7:00'); } catch (e) { r.push('disparador fallo: ' + e); }
+  return r.join(' · ');
+}
+
+// ===================== 1 · COMPETICIÓN =====================
+function canonLista_(v, lista) {
+  var n = norm(v).trim(); if (!n) return '';
+  for (var i = 0; i < lista.length; i++) if (norm(lista[i]) === n) return lista[i];
+  return '';
+}
+/** Primer movimiento gimnástico (tirón o empuje gimnástico) que la guía detecta en el texto del WOD; '' si ninguno. */
+function primerGimnastico_(txt) {
+  try {
+    var det = detectarMovs_(String(txt || ''), guiaMotor_());
+    for (var i = 0; i < det.length; i++) { var m = det[i].m; if (m.patron === 'TIRON' || m.patron === 'EMPUJE_G' || m.k === 'T2B') return m.n; }
+  } catch (e) { Logger.log('primerGimnastico_: ' + e); }
+  return '';
+}
+function estimuloDeFallo_(fallo, wod) {
+  var f = norm(fallo);
+  if (f === 'MOTOR') return 'P4 modelado de metcon + calidad de carrera';
+  if (f === 'SKILL') return (primerGimnastico_(wod) || 'skill del WOD') + ' en fatiga';
+  if (f === 'FUERZA') return 'fuerza en fatiga del movimiento más pesado';
+  if (f === 'ESTRATEGIA') return 'simulación del WOD con la estrategia escrita';
+  return '';
+}
+function asegurarFichas_() {
+  try { hojaMia_(HOJAS.FICHAS); } catch (e) { olvidarCabeceras_(); prepararEsquema_(miLibro_(), { 'APP · FICHAS': ESQUEMA['APP · FICHAS'] }); }
+}
+/** Guarda (o edita, si trae ID) la ficha de un WOD de competición. «Mal» pasa solo a referencia. */
+function guardarFicha_(f) {
+  f = f || {};
+  var o = permitidas_(f, ['FECHA', 'EVENTO', 'WOD', 'RESULTADO', 'PUESTO', 'VALORACIÓN', 'FALLO', 'QUÉ FALLÓ', 'ESTÍMULO QUE SALE', 'REFERENCIA']);
+  if (!String(o.WOD || '').trim() && !String(o.EVENTO || '').trim()) throw new Error('ficha_incompleta');
+  asegurarFichas_();
+  o.FECHA = isoAFecha(celdaIso_(o.FECHA) || hoyIso_());
+  o['VALORACIÓN'] = canonLista_(o['VALORACIÓN'], ['Bien', 'Regular', 'Mal']);
+  o.FALLO = canonLista_(o.FALLO, ['Motor', 'Skill', 'Fuerza', 'Estrategia', 'Ninguno']);
+  o.REFERENCIA = o['VALORACIÓN'] === 'Mal' ? 'Sí' : (canonLista_(o.REFERENCIA, ['Sí', 'No']) || 'No');
+  if (!String(o['ESTÍMULO QUE SALE'] || '').trim()) o['ESTÍMULO QUE SALE'] = estimuloDeFallo_(o.FALLO, o.WOD);
+  var id = String(f.ID || ''), x = id ? listar_(HOJAS.FICHAS).filter(function (r) { return r.ID === id; })[0] : null;
+  if (x) { bloqueo_(function () { actualizarFila_(HOJAS.FICHAS, x._fila, o); }); o.ID = id; }
+  else { o.ID = nuevoId_(); o.REGISTRADO = ahora_(); anadirFila_(HOJAS.FICHAS, o); }
+  MEMO = null;
+  return o;
+}
+/** Fichas ordenadas por fecha, la más reciente primero. */
+function fichas_() {
+  var l; try { l = listar_(HOJAS.FICHAS); } catch (e) { return []; }
+  return l.map(function (r) { r._iso = celdaIso_(r.FECHA) || ''; return r; })
+    .sort(function (a, b) { return a._iso < b._iso ? 1 : a._iso > b._iso ? -1 : b._fila - a._fila; });
+}
+
+/** Competición/HYROX de objetivo A que empieza entre el lunes y el lunes+10 → { evento, id, inicio, wods, dias (desde el lunes hasta el inicio) }; si no, null. */
+function tapersSemana_(lunes) {
+  lunes = lunesDe_(lunes); var tope = sumarDias(lunes, 10), mejor = null;
+  listar_(HOJAS.EVENTOS).forEach(function (r) {
+    var t = norm(r.TIPO), ini = celdaIso_(r.INICIO);
+    if (!(t.indexOf('COMPETICION') >= 0 || t.indexOf('HYROX') >= 0)) return;
+    if (String(r.OBJETIVO || '').trim().toUpperCase() !== 'A' || norm(r.ESTADO) === 'IGNORADO') return;
+    if (!ini || ini < lunes || ini > tope) return;
+    if (!mejor || ini < mejor.inicio) mejor = { evento: r.EVENTO, id: r.ID, inicio: ini, wods: String(r.WODS || ''), dias: Math.round((Date.parse(ini) - Date.parse(lunes)) / 864e5) };
+  });
+  return mejor;
+}
+/** Bloque «test de WODs» 4–6 días antes de la competición (dentro de la semana, por la tarde). [] si no procede. */
+function taperBloques_(lunes) {
+  lunes = lunesDe_(lunes);
+  var t = tapersSemana_(lunes); if (!t || !String(t.wods).trim()) return [];
+  var fin = sumarDias(lunes, 6), iso = null;
+  [5, 4, 6].forEach(function (k) { var d = sumarDias(t.inicio, -k); if (!iso && d >= lunes && d <= fin) iso = d; });
+  if (!iso) return [];
+  return [{ FECHA: isoAFecha(iso), TURNO: 'PM', 'TÍTULO': 'Test de WODs de la competi + estrategia',
+    CONTENIDO: String(t.wods).trim() + '\n\nNo hace falta hacerlos enteros: adapta para sentir el estímulo y comprobar la estrategia (ritmos, particiones, transiciones). Intensidad de competición, volumen −50 %.',
+    MIN: 40, 'CÓDIGOS': 'CT1', ORIGEN: 'EXTRA' }];
+}
+
+function formatoWod_(txt) {
+  var n = norm(txt);
+  if (/AMRAP/.test(n)) return 'AMRAP';
+  if (/EMOM|E\d+MOM|\bEVERY\b/.test(n)) return 'EMOM';
+  if (/FOR TIME|\bFT\b|CHIPPER|TIME ?CAP|\bCAP\b/.test(n)) return 'FOR TIME';
+  return 'GENERAL';
+}
+function estrategiaFormato_(fmt, txt) {
+  var e = fmt === 'AMRAP' ? 'Ritmo sostenible al ~85 % las primeras rondas; tandas fijas y sin parar de más en las transiciones; lo que sobre, al final.' :
+    fmt === 'FOR TIME' ? 'Salida controlada (no te vayas en el primer tercio) y aprieta el último tercio; rompe las series antes del fallo.' :
+    fmt === 'EMOM' ? 'Termina cada minuto con 10–15″ de margen; si pasas de 50″ de trabajo, baja reps antes de que se caiga la técnica.' :
+    'Calcula antes de empezar dónde vas a parar y dónde vas a apretar; ritmo repetible de principio a fin.';
+  if (/\d+\s*(KG|LB)|\b\d{2,3}\s*\/\s*\d{2,3}\b|@\s*\d+|%/.test(norm(txt))) e += ' Con carga: decide las particiones antes (p. ej. 12 = 6+6, 9 = 5+4) y no las cambies a mitad.';
+  return e;
+}
+/** Plan del día de una competición (texto plano): calentamiento, estrategia por WOD, comida e hidratación; + estrategia de Gemini si responde. */
+function planCompeti_(idEvento) {
+  var ev = listar_(HOJAS.EVENTOS).filter(function (r) { return r.ID === String(idEvento); })[0];
+  if (!ev) throw new Error('no_encontrado');
+  var wods = String(ev.WODS || '').split(/\r?\n[ \t]*\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  var peso = parseFloat(String(leerConfig_().peso_kg || '').replace(',', '.')) || 90, hMin = Math.round(peso), hMax = Math.round(peso * 1.5);
+  var G = null; try { G = guiaMotor_(); } catch (e) {}
+  var L = ['PLAN DEL DÍA · ' + ev.EVENTO + (ev.INICIO ? ' · ' + ev.INICIO : '')];
+  if (!wods.length) L.push('', 'No hay WODs escritos en el evento (campo WODS): añádelos, separados por una línea en blanco, para tener estrategia por WOD.');
+  wods.forEach(function (w, i) {
+    var fmt = formatoWod_(w), movs = [];
+    try { if (G) detectarMovs_(w, G).forEach(function (x) { if (movs.indexOf(x.m.n) < 0) movs.push(x.m.n); }); } catch (e) {}
+    L.push('', 'WOD ' + (i + 1) + ' · ' + fmt, w, '',
+      'Calentamiento general 8′: 3′ remo o bici suave, movilidad de cadera y hombro, 2 rondas de 5 sentadillas, 5 dominadas escapulares y 5 flexiones, 2 progresivos de 20″.',
+      'Calentamiento específico: ' + (movs.length ? '2–3 series progresivas de ' + movs.slice(0, 5).join(', ') + ' (primero ligero, luego a ritmo de WOD).' : 'series cortas de los movimientos del WOD, de ligero a ritmo de competición.'),
+      'Estrategia: ' + estrategiaFormato_(fmt, w));
+  });
+  L.push('', 'COMIDA E HIDRATACIÓN',
+    '3 h antes: 1–1,5 g/kg de hidratos (≈ ' + hMin + '–' + hMax + ' g para ' + peso + ' kg) + 20–30 g de proteína; grasa y fibra bajas.',
+    wods.length > 1 ? 'Entre WODs: 30–60 g de hidratos por hora y 500 ml de agua con sales.' : 'Si hay espera: 30–60 g de hidratos por hora y 500 ml de agua con sales.');
+  var texto = L.join('\n');
+  try {
+    if (wods.length) {
+      var g = geminiLlamar_('Eres entrenador de CrossFit de competición. Atleta RX de ' + peso + ' kg. Evento: ' + ev.EVENTO + '. Para cada WOD da una estrategia concreta en español: ritmo, particiones, transiciones, ' +
+        'dónde apretar y qué evitar. Texto plano, sin markdown, sin símbolos de lista, máximo 10 líneas por WOD.\n\nWODs:\n' + wods.join('\n\n---\n\n'), 900, 0.4);
+      if (g && g.ok && String(g.texto || '').trim()) texto += '\n\nEstrategia (IA)\n' + String(g.texto).replace(/[*#`]/g, '').trim();
+    }
+  } catch (e) { Logger.log('planCompeti_ IA: ' + e); }
+  return texto;
+}
+
+// ===================== 2 · RESUMEN DEL LUNES 7:00 =====================
+var PREGUNTAS_SEMANALES_ = ['¿Qué bloque te sobró o te dejó peor la semana pasada?', '¿Qué estímulo notaste que mejoraba?', '¿Algún día llegaste reventado? ¿Por qué crees?',
+  '¿Algo de la app te hizo perder tiempo?', '¿Qué cambiarías de la semana que empieza?'];
+/** Crea las 5 preguntas semanales del lunes (sin duplicar). Devuelve cuántas ha creado. */
+function preguntasSemanales_(lunes) {
+  lunes = lunesDe_(lunes);
+  var ya = {}; listar_(HOJAS.APR_DN).forEach(function (r) { if (r.TIPO === 'semanal' && celdaIso_(r.LUNES) === lunes) ya[r.PREGUNTA] = 1; });
+  var nuevas = PREGUNTAS_SEMANALES_.filter(function (p) { return !ya[p]; }).map(function (p) {
+    return { ID: 'DN' + nuevoId_(), LUNES: isoAFecha(lunes), BLOQUE_ID: '', BLOQUE: 'Semana pasada', TIPO: 'semanal', PREGUNTA: p, OPCIONES: '', RESPUESTA: '', COMENTARIO: '', ESTADO: 'PENDIENTE', CONTEXTO: '{}', CREADO: ahora_() };
+  });
+  filasEnHoja_(HOJAS.APR_DN, nuevas); MEMO = null;
+  return nuevas.length;
+}
+function ultimoInforme_() {
+  try {
+    var l = listar_(HOJAS.INFORMES).filter(function (r) { return String(r.TEXTO || '').trim(); }); if (!l.length) return null;
+    l.sort(function (a, b) { var x = celdaIso_(a.FECHA) || '', y = celdaIso_(b.FECHA) || ''; return x < y ? -1 : x > y ? 1 : a._fila - b._fila; });
+    var u = l[l.length - 1]; return { fecha: celdaIso_(u.FECHA) || '', texto: u.TEXTO };
+  } catch (e) { return null; }
+}
+/** Datos del resumen. lunes = lunes de la semana que EMPIEZA; se analiza la anterior. No escribe nada. */
+function resumenLunesDatos_(lunes) {
+  lunes = lunesDe_(lunes || hoyIso_());
+  var ant = sumarDias(lunes, -7), antFin = sumarDias(ant, 6), o = { lunes: lunes };
+  // cumplimiento
+  var hecho = {}; listar_(HOJAS.REGISTRO).forEach(function (r) { if (r.ID_PLAN && r.HECHO === 'Sí') hecho[r.ID_PLAN] = 1; });
+  var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= ant && d <= antFin && r.ESTADO === 'PROGRAMADO'; });
+  var hs = plan.filter(function (r) { return hecho[r.ID]; }).length;
+  o.cumplimiento = { pct: plan.length ? Math.round(hs * 100 / plan.length) : 0, hechos: hs, total: plan.length };
+  // metas de la semana anterior: las 5 más bajas
+  o.metas = [];
+  try {
+    o.metas = avanceMetas_('Semana', periodoSemana_(ant), cacheMetas_()).filter(function (m) { return m.meta > 0; })
+      .map(function (m) { return { estimulo: m.estimulo, pct: Math.round(m.pReal * 100) }; })
+      .sort(function (a, b) { return a.pct - b.pct; }).slice(0, 5);
+  } catch (e) { Logger.log('resumenLunes metas: ' + e); }
+  // rendimiento (otro módulo): indicadores con valor nuevo la semana pasada (si no traen fecha se incluyen todos)
+  o.rendimiento = [];
+  if (typeof rendimiento_ === 'function') {
+    try {
+      var R = rendimiento_(), lista = Object.prototype.toString.call(R) === '[object Array]' ? R : (R && (R.indicadores || R.lista)) || [];
+      lista.forEach(function (i) {
+        if (i.ultimo && i.ultimo.fecha) { if (i.ultimo.fecha < ant || i.ultimo.fecha > antFin) return; i = { nombre: i.nombre, txt: i.ultimo.txt, tendencia: i.tendencia === 'mejora' ? 'sube' : i.tendencia === 'empeora' ? 'baja' : i.tendencia, fecha: i.ultimo.fecha }; }
+        var f = celdaIso_(i.fecha || i.FECHA || ''); if (f && (f < ant || f > antFin)) return;
+        o.rendimiento.push({ nombre: i.nombre || i.n || '', txt: i.txt || i.texto || String(i.valor == null ? '' : i.valor), tendencia: i.tendencia || '' });
+      });
+    } catch (e) { Logger.log('resumenLunes rendimiento: ' + e); }
+  }
+  // carga
+  try { o.carga = estadoCarga_(lunes); } catch (e) { o.carga = { media: 0, n: 0, sinDescanso: false, descarga: false }; }
+  // decisiones (máx. 3)
+  var dec = [];
+  try { var tp = tapersSemana_(lunes); if (tp) dec.push('Taper para ' + tp.evento + ' (' + isoAFecha(tp.inicio).slice(0, 5) + '): sin P1–P4 ni extras pesados, intensidad alta y volumen bajo.'); } catch (e) {}
+  if (o.carga.descarga) dec.push('Semana de descarga automática: extras a la mitad y técnicos.');
+  try {
+    var men = avanceMetas_('Mes', periodoMes_(lunes), cacheMetas_()).filter(function (m) { return m.meta > 0 && !m.cubierta; }).sort(function (a, b) { return a.pProg - b.pProg; });
+    if (men.length) dec.push('Prioridad mensual: ' + men[0].estimulo + ' (' + Math.round(men[0].pProg * 100) + ' %)');
+  } catch (e) {}
+  try { var np = pendientesAbiertos_().length; if (np) dec.push(np + ' pendientes de la semana pasada: entran esta semana o caducan.'); } catch (e) {}
+  o.decisiones = dec.length ? dec.slice(0, 3) : ['Semana normal: sigue el plan.'];
+  // preguntas, informe, reglas
+  o.preguntas = listar_(HOJAS.APR_DN).filter(function (r) { return r.TIPO === 'semanal' && celdaIso_(r.LUNES) === lunes; }).length;
+  o.informe = ultimoInforme_();
+  o.reglas = [];
+  if (+lunes.slice(8, 10) <= 7) {
+    try { o.reglas = reglasAprendidas_().filter(function (r) { return Math.abs(r.peso) >= UMBRAL_REGLA_; }).sort(function (a, b) { return Math.abs(b.peso) - Math.abs(a.peso); }).slice(0, 12).map(function (r) { return r.texto; }); } catch (e) {}
+  }
+  return o;
+}
+function resumenLunesHtml_(d) {
+  var th = 'style="text-align:left;padding:6px 8px;background:#222;color:#fff;font-size:12px"', td = 'style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px"';
+  var h = '<div style="font-family:Arial,sans-serif;max-width:760px;color:#111"><h2 style="margin:0 0 4px">Road To Elite · tu semana ' + esc_(isoAFecha(d.lunes).slice(0, 5)) + '</h2>' +
+    '<p style="margin:0 0 14px;color:#555">' + esc_(ahora_()) + '</p>' +
+    '<table style="border-collapse:collapse;margin-bottom:14px"><tr><td style="padding:10px 14px;background:#fff3e6;border-radius:8px"><b style="font-size:20px">' + d.cumplimiento.pct + ' %</b><br>cumplimiento semana pasada (' + d.cumplimiento.hechos + '/' + d.cumplimiento.total + ' bloques)</td><td width="10"></td>' +
+    '<td style="padding:10px 14px;background:#fff3e6;border-radius:8px"><b style="font-size:20px">' + esc_(d.carga.media || 0) + '/10</b><br>cansancio medio' + (d.carga.descarga ? ' · DESCARGA' : '') + '</td></tr></table>' +
+    '<h3>Decisiones para esta semana</h3><ul>' + d.decisiones.map(function (x) { return '<li>' + esc_(x) + '</li>'; }).join('') + '</ul>';
+  if (d.metas.length) h += '<h3>Estímulos más flojos de la semana pasada</h3><table style="border-collapse:collapse;width:100%"><tr><th ' + th + '>Estímulo</th><th ' + th + '>Hecho</th></tr>' +
+    d.metas.map(function (m) { return '<tr><td ' + td + '>' + esc_(m.estimulo) + '</td><td ' + td + '>' + m.pct + ' %</td></tr>'; }).join('') + '</table>';
+  if (d.rendimiento.length) h += '<h3>Rendimiento</h3><ul>' + d.rendimiento.map(function (r) { return '<li><b>' + esc_(r.nombre) + '</b> · ' + esc_(r.txt) + (r.tendencia ? ' (' + esc_(r.tendencia) + ')' : '') + '</li>'; }).join('') + '</ul>';
+  if (d.preguntas) h += '<h3>Preguntas de la semana</h3><p>' + d.preguntas + ' preguntas nuevas en la app › Menú › Aprendizaje. Contéstalas: afinan la programación.</p>';
+  if (d.informe) h += '<h3>Informe mensual · ' + esc_(isoAFecha(d.informe.fecha)) + '</h3><p style="font-size:13px">' + esc_(d.informe.texto).replace(/\n/g, '<br>') + '</p>';
+  if (d.reglas.length) h += '<h3>Lo que he aprendido de ti</h3><ul>' + d.reglas.map(function (r) { return '<li>' + esc_(r) + '</li>'; }).join('') + '</ul>';
+  return h + '<p style="color:#888;font-size:12px">Road To Elite · resumen automático del lunes.</p></div>';
+}
+/** Disparador (lunes 7:00). Con forzar === true se repite aunque ya se haya enviado esta semana. */
+function resumenLunes(forzar) { return conSalud_('resumenLunes', function () { return resumenLunesSin_(forzar === true); }); }
+function resumenLunesSin_(forzar) {
+  var lunes = lunesDe_(hoyIso_()), cf = leerConfig_();
+  if (cf['resumen_lunes_' + lunes] && !forzar) return { ya: true, lunes: lunes };
+  var nPreg = 0; try { nPreg = preguntasSemanales_(lunes); } catch (e) { Logger.log('Preguntas semanales: ' + e); }
+  var informe = null;
+  if (+lunes.slice(8, 10) <= 7) { try { informe = informeMensual_(); } catch (e) { Logger.log('Informe mensual: ' + e); } }
+  var d = resumenLunesDatos_(lunes);
+  MailApp.sendEmail({ to: cf.email_permitido || CONFIG.EMAIL_PERMITIDO, subject: 'Road To Elite · tu semana', htmlBody: resumenLunesHtml_(d), name: 'Road To Elite' });
+  try { enviarPush_('Road To Elite · tu semana', 'Cumplimiento ' + d.cumplimiento.pct + ' % · ' + d.decisiones[0]); } catch (e) { Logger.log('Push lunes: ' + e); }
+  ponerConfig_('resumen_lunes_' + lunes, ahora_() + ' · ' + nPreg + ' preguntas' + (informe ? ' · informe mensual' : ''), 'Resumen del lunes 7:00 enviado');
+  return d;
+}
+function instalarDisparadorLunes_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'resumenLunes') borrarDisp_(t); });
+  return reintentar_(function () { return ScriptApp.newTrigger('resumenLunes').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).nearMinute(0).inTimezone(CONFIG.ZONA).create(); }, 'disparador resumenLunes');
+}
+/** Informe mensual con Gemini (gratis): qué mejoró, qué se estancó y 3 ajustes. Lo guarda en Motor › INFORMES. */
+function informeMensual_() {
+  var hoy = hoyIso_(), partes = [];
+  if (typeof rendimiento_ === 'function') { try { partes.push('RENDIMIENTO (indicadores):\n' + JSON.stringify(rendimiento_()).slice(0, 3500)); } catch (e) {} }
+  if (typeof residuo_ === 'function') { try { partes.push('RESIDUO (lo que no se cubre):\n' + JSON.stringify(residuo_()).slice(0, 2500)); } catch (e) {} }
+  var cargas = [], l0 = lunesDe_(hoy);
+  for (var k = 0; k < 4; k++) { var li = sumarDias(l0, -7 * k); try { var c = estadoCarga_(li); cargas.push('semana ' + isoAFecha(li).slice(0, 5) + ': cansancio medio ' + c.media + '/10' + (c.descarga ? ', descarga' : '') + (c.sinDescanso ? ', sin día de descanso' : '')); } catch (e) {} }
+  partes.push('CARGA (últimas 4 semanas):\n' + cargas.join('\n'));
+  var reglas = ''; try { reglas = reglasAprendidasTexto_(20); } catch (e) {}
+  if (reglas) partes.push(reglas);
+  var datos = partes.join('\n\n'), texto = '', modelo = 'sin IA', g = null;
+  try {
+    g = geminiLlamar_('Eres entrenador de CrossFit y HYROX de élite y analizas el último mes de un atleta RX de 90 kg. Con los datos de abajo, responde en español, texto plano sin markdown ni símbolos de lista, ' +
+      'en menos de 250 palabras: 1) qué mejoró, 2) qué se estancó, 3) tres ajustes concretos para el mes que empieza. No inventes datos que no estén abajo.\n\n' + datos, 1200, 0.4);
+  } catch (e) { g = { ok: false, error: String(e && e.message || e) }; }
+  if (g && g.ok && String(g.texto || '').trim()) { texto = String(g.texto).replace(/[*#`]/g, '').trim(); modelo = g.modelo || 'Gemini'; }
+  else texto = 'Informe sin IA (Gemini no ha respondido' + (g && g.error ? ': ' + String(g.error).slice(0, 120) : '') + '). Datos en bruto del mes:\n\n' + datos;
+  anadirFila_(HOJAS.INFORMES, { FECHA: isoAFecha(hoy), MES: hoy.slice(0, 7), TEXTO: texto.slice(0, 40000), MODELO: modelo });
+  MEMO = null;
+  return { fecha: hoy, texto: texto };
+}
+
+// ===================== 3 · SALUD DE LAS TAREAS AUTOMÁTICAS =====================
+var SALUD_PERIODOS_ = { revisarAvisos: 1, sincronizarCalendario: 1, motorDiario: 24, resumenLunes: 168, domingoNoche: 168, cargarFabrikDomingo: 168, competisLunes: 168, videosMartes: 168, backupJueves: 168 };   // horas
+function saludLeer_() { var o = {}; try { o = JSON.parse(String(leerConfig_().salud || '{}')) || {}; } catch (e) { o = {}; } return o; }
+function saludRegistrar_(nombre, ok, msg) {
+  bloqueo_(function () {
+    var s = saludLeer_(); s[nombre] = { t: ahora_(), ok: !!ok, msg: String(msg || '').slice(0, 200) };
+    ponerConfig_('salud', JSON.stringify(s), 'Salud de las tareas automáticas (última ejecución de cada una; la app y el aviso diario lo leen)');
+  });
+}
+/** Ejecuta fn y anota en config «salud» cómo salió; relanza el error si falla. Después invalida la caché de la semana. */
+function conSalud_(nombre, fn) {
+  var res, err = null;
+  try { res = fn(); } catch (e) { err = e; }
+  try { saludRegistrar_(nombre, !err, err ? (err && err.message || err) : ''); } catch (e2) { Logger.log('salud: ' + e2); }
+  try { invalidarSemana_(); } catch (e3) { Logger.log('invalidar: ' + e3); }
+  if (err) throw err;
+  return res;
+}
+function horasDeTxt_(t) {   // «dd/MM/yyyy HH:mm» → horas (misma zona en ambos lados)
+  var m = String(t || '').match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/); if (!m) return null;
+  return Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]) / 36e5;
+}
+function saludEstado_() {
+  var S = saludLeer_(), ahoraH = horasDeTxt_(ahora_());
+  var tareas = Object.keys(SALUD_PERIODOS_).map(function (n) {
+    var x = S[n], h = x ? horasDeTxt_(x.t) : null;
+    if (!x) return { nombre: n, ultima: '', ok: null, msg: 'aún sin registro', atrasada: false };   // sin dato no se da por atrasada (acaba de instalarse)
+    return { nombre: n, ultima: x.t, ok: x.ok !== false, msg: x.msg || '', atrasada: h != null && ahoraH != null && (ahoraH - h) > 1.5 * SALUD_PERIODOS_[n] };
+  });
+  var bk = { ok: false, fecha: '', kb: 0 };
+  try {
+    var p = String(leerConfig_().backup_jueves || '').split(' · ');
+    bk.fecha = p[0] || '';
+    if (p[1]) { var tam = DriveApp.getFileById(p[1]).getSize(); bk.kb = Math.round(tam / 1024); bk.ok = tam > 0; }
+  } catch (e) { bk.ok = false; bk.msg = String(e && e.message || e).slice(0, 100); }
+  return { tareas: tareas, backup: bk };
+}
+/** Un aviso al día como mucho si hay tareas atrasadas o con fallo (o un backup que no existe / pesa 0). */
+function revisarSalud_() {
+  var e = saludEstado_(), mal = e.tareas.filter(function (t) { return t.atrasada || t.ok === false; }).map(function (t) { return t.nombre + (t.atrasada ? ' (atrasada)' : ' (falló)'); });
+  if (e.backup.fecha && !e.backup.ok) mal.push('backup (no se encuentra o pesa 0)');
+  var hoy = hoyIso_(); if (!mal.length || leerConfig_().salud_aviso === hoy) return mal.length;
+  try { enviarPush_('Road To Elite · tareas automáticas', 'Revisa: ' + mal.join(', ')); } catch (x) { Logger.log('Aviso salud: ' + x); }
+  ponerConfig_('salud_aviso', hoy, 'Último día en que se avisó de tareas automáticas con problemas');
+  return mal.length;
+}
+
+// ===================== 4 · TÉCNICO =====================
+// ---- a · archivo ----
+function destinoArchivo_(nombre, cab) {
+  var ss = motorLibro_(), sh = ss.getSheetByName(nombre);
+  if (!sh) { sh = ss.insertSheet(nombre); sh.getRange(1, 1, 1, cab.length).setValues([cab]).setFontWeight('bold'); return { sh: sh, cab: cab.slice() }; }
+  var tiene = sh.getLastColumn() ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim(); }) : [];
+  var extra = cab.filter(function (h) { return tiene.indexOf(h) < 0; });
+  if (!tiene.length || extra.length) { tiene = tiene.concat(extra); sh.getRange(1, 1, 1, tiene.length).setValues([tiene]).setFontWeight('bold'); }
+  return { sh: sh, cab: tiene };
+}
+function moverAArchivo_(hoja, destino, corte) {
+  return bloqueo_(function () {
+    var sh = hojaMia_(hoja), all = sh.getDataRange().getValues();
+    if (all.length < 2) return 0;
+    var cab = all[0].map(function (h) { return String(h).trim(); }), iF = cab.indexOf('FECHA'); if (iF < 0) return 0;
+    var mover = [], quedan = [];
+    all.slice(1).forEach(function (r) { var iso = celdaIso_(r[iF]); (iso && iso < corte ? mover : quedan).push(r); });
+    if (!mover.length) return 0;
+    var d = destinoArchivo_(destino, cab), antes = d.sh.getLastRow();
+    var m = mover.map(function (r) { return d.cab.map(function (h) { var j = cab.indexOf(h); var v = j >= 0 ? r[j] : ''; return typeof v === 'string' ? celdaSegura_(v) : v; }); });
+    d.sh.getRange(antes + 1, 1, m.length, d.cab.length).setValues(m);
+    if (d.sh.getLastRow() < antes + m.length) throw new Error('archivo: no se han escrito todas las filas en ' + destino);   // no se borra nada del origen
+    var nF = all.length - 1, nC = cab.length;
+    sh.getRange(2, 1, nF, nC).clearContent();
+    if (quedan.length) sh.getRange(2, 1, quedan.length, nC).setValues(quedan.map(function (r) { return r.slice(0, nC).map(function (v) { return typeof v === 'string' ? celdaSegura_(v) : v; }); }));
+    MEMO = null;
+    return mover.length;
+  });
+}
+/** Mueve a Motor › ARCHIVO · PLAN / ARCHIVO · REGISTRO lo anterior al ciclo actual de Fabrik (y a 6 semanas como mínimo). Solo con backup de ≤ 8 días. */
+function archivarAntiguo_() {
+  var hoy = hoyIso_(), bk = String(leerConfig_().backup_jueves || '').split(' · ')[0];
+  if (!isoOk_(bk) || (Date.parse(hoy) - Date.parse(bk)) / 864e5 > 8) return { plan: 0, registro: 0, motivo: 'sin backup reciente' };
+  var limite = sumarDias(lunesDe_(hoy), -42), corte = limite;
+  try {
+    var ini = estructura_(fabrik_()).ciclo.fases.map(function (f) { return f.inicio; }).filter(Boolean).sort()[0];
+    if (ini && ini < corte) corte = ini;
+  } catch (e) { Logger.log('archivarAntiguo_: ciclo de Fabrik no legible, corte a 6 semanas: ' + e); }
+  var p = moverAArchivo_(HOJAS.PLAN, 'ARCHIVO · PLAN', corte), r = moverAArchivo_(HOJAS.REGISTRO, 'ARCHIVO · REGISTRO', corte);
+  return { plan: p, registro: r, corte: corte };
+}
+/** Para domingoNoche: solo el primer domingo de cada mes. */
+function archivarSiToca_() {
+  var hoy = hoyIso_();
+  if (new Date(hoy + 'T12:00:00Z').getUTCDay() !== 0 || +hoy.slice(8, 10) > 7) return null;
+  var r = archivarAntiguo_(); Logger.log('Archivo: ' + JSON.stringify(r)); return r;
+}
+
+// ---- b · caché de la semana ----
+function invalidarSemana_() { PROPS.setProperty('rev_datos', String((parseInt(PROPS.getProperty('rev_datos') || '0', 10) || 0) + 1)); }
+function semanaCacheada_(semana) {
+  if (semana && !isoOk_(semana)) return semanaCompleta_(semana);
+  var lunes = lunesDe_(semana || hoyIso_()), c = CacheService.getScriptCache(), rev = PROPS.getProperty('rev_datos') || '0', base = 'sem|' + lunes + '|' + hoyIso_() + '|' + rev;
+  try {
+    var n = parseInt(c.get(base + '|n'), 10);
+    if (n > 0) {
+      var claves = []; for (var i = 0; i < n; i++) claves.push(base + '|' + i);
+      var got = c.getAll(claves), txt = '', ok = true;
+      for (var j = 0; j < n; j++) { if (got[claves[j]] == null) { ok = false; break; } txt += got[claves[j]]; }
+      if (ok) return JSON.parse(txt);
+    }
+  } catch (e) { Logger.log('semanaCacheada_ lectura: ' + e); }
+  var res = semanaCompleta_(semana), json = JSON.stringify(res);
+  [90000, 30000].some(function (tam) {
+    try {
+      var put = {}, k = 0; for (var p = 0; p < json.length; p += tam) put[base + '|' + (k++)] = json.slice(p, p + tam);
+      put[base + '|n'] = String(k); c.putAll(put, 900); return true;
+    } catch (e) { return false; }
+  });
+  return res;
+}
+var SOLO_LECTURA_ = ['inicio', 'semana', 'rendimiento', 'aprendizaje', 'op_estado', 'competis', 'fichas', 'salud', 'resumen_lunes', 'chequeos', 'estimulos_lista', 'incentivo_datos', 'lesion_zonas', 'plan_competi',
+  'marcas', 'descuentos', 'webs', 'videos', 'cobertura', 'eventos', 'metas', 'carrera_lista', 'plantillas', 'extras_previa', 'posicion', 'motor_wods', 'extras_curso', 'biblioteca', 'wods', 'push_prueba'];
+function esSoloLectura_(accion) { return SOLO_LECTURA_.indexOf(String(accion)) >= 0; }
+
+// ---- c · escrituras por lotes ----
+/** cambios = [{ fila, obj }]. Lee la hoja una vez y escribe un setValues por columna tocada (de su primera a su última fila tocada). Devuelve las filas cambiadas. */
+function actualizarEnLote_(hoja, cambios) {
+  if (!cambios || !cambios.length) return 0;
+  var sh = hojaMia_(hoja), vals = sh.getDataRange().getValues();
+  if (!vals.length) return 0;
+  var cab = vals[0].map(function (h) { return String(h).trim(); }), col = {}, filas = {};
+  cambios.forEach(function (c) {
+    var f = Number(c.fila); if (!(f >= 2) || f > vals.length) return;
+    Object.keys(c.obj || {}).forEach(function (h) {
+      var j = cab.indexOf(h); if (j < 0) return;
+      vals[f - 1][j] = celdaSegura_(c.obj[h]);
+      var x = col[j] = col[j] || { min: f, max: f }; if (f < x.min) x.min = f; if (f > x.max) x.max = f;
+      filas[f] = 1;
+    });
+  });
+  Object.keys(col).forEach(function (js) {
+    var j = +js, x = col[js], out = [];
+    for (var f = x.min; f <= x.max; f++) { var v = vals[f - 1][j]; out.push([typeof v === 'string' ? celdaSegura_(v) : v]); }
+    sh.getRange(x.min, j + 1, out.length, 1).setValues(out);
+  });
+  return Object.keys(filas).length;
 }
