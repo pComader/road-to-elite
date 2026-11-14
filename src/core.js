@@ -1099,6 +1099,9 @@
   // =====================================================================
   function avisosArriba(d) {
     var h = '';
+    // v0.29 · pendiente: competiciones futuras sin objetivo A/B (se marca en Calendario › Editar)
+    if (!S._evObj && navigator.onLine) { S._evObj = 'cargando'; api({ action: 'eventos' }).then(ok).then(function (r) { S._evObj = (r.eventos || []).filter(function (e) { return /^(Competición|HYROX)$/.test(e.TIPO || '') && !e.OBJETIVO && aIso(e.INICIO) >= d.hoy && !/Ignorado|Pendiente de aprobar/.test(e.ESTADO || ''); }); if (document.getElementById('day')) render(); }).catch(function () { S._evObj = null; }); }
+    if (Array.isArray(S._evObj) && S._evObj.length) h += '<div class="draft-banner"><span>🎯 Pendiente: ' + S._evObj.length + (S._evObj.length === 1 ? ' competición' : ' competiciones') + ' sin objetivo A/B (' + esc(S._evObj.slice(0, 3).map(function (e) { return e.EVENTO; }).join(', ')) + (S._evObj.length > 3 ? '…' : '') + '). Con A, la app marca el taper.</span><button class="btn btn-primary sm" type="button" data-ir-cal>Marcar</button></div>';
     Object.keys(d.propuestas || {}).forEach(function (cid) {
       var c = (d.cambios || []).filter(function (x) { return x.ID === cid; })[0];
       h += '<button class="prop-banner" type="button" data-ver-prop="' + esc(cid) + '"><b>Propuesta de cambios lista</b><span>' + esc(c ? c.EVENTO : '') + ' · ' + d.propuestas[cid].length + ' cambios · toca para revisar y aprobar</span></button>';
@@ -1895,7 +1898,7 @@
     pintarWebs = perezoso('menu', 'pintarWebs'), abrirFase = perezoso('menu', 'abrirFase'), abrirTimerLibre = perezoso('timer', 'abrirTimerLibre'),
     abrirChequeo = perezoso('menu', 'abrirChequeo'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirNuevoBloque = perezoso('menu', 'abrirNuevoBloque'), abrirEditarPendiente = perezoso('menu', 'abrirEditarPendiente'), guardarComoPlantilla = perezoso('menu', 'guardarComoPlantilla'),
     renderHoja = perezoso('menu', 'renderHoja'), renderExtras = perezoso('menu', 'renderExtras'), renderReest = perezoso('menu', 'renderReest'), renderCompetis = perezoso('menu', 'renderCompetis'), renderAprendizaje = perezoso('menu', 'renderAprendizaje'), renderOperacion = perezoso('menu', 'renderOperacion'), abrirMaterialNuevo = perezoso('menu', 'abrirMaterialNuevo'), abrirCompartir = perezoso('menu', 'abrirCompartir'), abrirPreviaExtras = perezoso('menu', 'abrirPreviaExtras'), abrirEditarBloque = perezoso('menu', 'abrirEditarBloque'), abrirGuardarWod = perezoso('menu', 'abrirGuardarWod'), guardarRendimiento = perezoso('menu', 'guardarRendimiento'),
-    renderRendimiento = perezoso('menu', 'renderRendimiento'), renderResumenLunes = perezoso('menu', 'renderResumenLunes'), abrirSesion = perezoso('menu', 'abrirSesion'), guardarFeedbackAyer = perezoso('menu', 'guardarFeedbackAyer');
+    renderRendimiento = perezoso('menu', 'renderRendimiento'), renderResumenLunes = perezoso('menu', 'renderResumenLunes'), abrirSesion = perezoso('menu', 'abrirSesion'), abrirCalendario = perezoso('menu', 'abrirCalendario'), guardarFeedbackAyer = perezoso('menu', 'guardarFeedbackAyer');
   // El botón ▶ de cada parte: si el timer aún no se ha descargado, se descarga y se abre su editor.
   document.addEventListener('click', function (e) {
     if (window.tmAbrirEditor) return;
@@ -1943,6 +1946,7 @@
     }
     if ((b = t.closest('[data-chequeo]'))) { abrirChequeo(b.dataset.chequeo); return; }
     if ((b = t.closest('[data-compartir]'))) { abrirCompartir(+b.dataset.compartir); return; }
+    if ((b = t.closest('[data-ir-cal]'))) { S._evObj = null; abrirCalendario(); return; }
     if ((b = t.closest('[data-sesion]'))) { abrirSesion(+b.dataset.sesion); return; }
     if ((b = t.closest('[data-todo-hecho]'))) {
       if (!confirmar(b, '¿Todo hecho? Toca otra vez')) return;
