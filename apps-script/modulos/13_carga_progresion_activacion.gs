@@ -332,3 +332,50 @@ function molestiaVeta_(mo, cand, iso) {
   if (!mo || mo.dias.indexOf(iso) < 0) return false;
   return (cand.carga || []).some(function (c) { return mo.cargas.indexOf(c) >= 0; });
 }
+
+// ===================== v0.30 · BLOQUES COMBINADOS (regla de Pablo 16/11) =====================
+// Los estímulos cortos o técnicos de una misma familia se juntan en un bloque dedicado de 2 a 4 estímulos,
+// con menos volumen de cada uno, para que el mes se complete al 100 % sin llenar cada sesión de extras sueltos.
+var FAMILIAS_ = {
+  'Estabilidad OH': ['M44', 'M58', 'M13', 'M14', 'M50', 'M51', 'M56'],
+  'Core': ['M08', 'M60', 'M62', 'M46'],
+  'Unilateral': ['M45', 'M61', 'M19', 'M20'],
+  'Cadena posterior': ['M47', 'M28'],
+  'Comba': ['M33', 'M35', 'M32'],
+  'Haltero técnico': ['M10', 'M11']
+};
+function familiaDe_(o) {
+  var cs = codigosDe_(o['CÓDIGOS']);
+  for (var k in FAMILIAS_) if (cs.some(function (c) { return FAMILIAS_[k].indexOf(c) >= 0; })) return k;
+  return null;
+}
+function agruparCola_(cola, log) {
+  var grupos = {};
+  cola.forEach(function (x) {
+    var o = x.o; if (!o || norm(o.ORIGEN) === 'CARRERA' || o._prio === 'pendiente' || esIntocable_(codigosDe_(o['CÓDIGOS']))) return;
+    if ((parseFloat(o.MIN) || 10) > 15) return;
+    var f = familiaDe_(o); if (f) (grupos[f] = grupos[f] || []).push(x);
+  });
+  var quitar = [];
+  Object.keys(grupos).forEach(function (f) {
+    var L = grupos[f];
+    while (L.length >= 2) {
+      var base = L.shift(), g = [base], cods = codigosDe_(base.o['CÓDIGOS']);
+      for (var i = 0; i < L.length && g.length < 4; i++) {
+        var cs = codigosDe_(L[i].o['CÓDIGOS']); if (cs.some(function (c) { return cods.indexOf(c) >= 0; })) continue;   // nunca dos veces el mismo estímulo: cada uno cuenta una vez
+        g.push(L[i]); cods = cods.concat(cs); L.splice(i, 1); i--;
+      }
+      if (g.length < 2) continue;
+      var letras = 'ABCD', mins = g.reduce(function (a, x) { return a + (parseFloat(x.o.MIN) || 10); }, 0);
+      base.o.CONTENIDO = 'BLOQUE COMBINADO · ' + f.toUpperCase() + ' · ' + g.length + ' estímulos, menos volumen de cada uno (sin fallo).\n\n' +
+        g.map(function (x, k) { return letras[k] + ') ' + (x.o['TÍTULO'] || '') + '\n' + String(x.o.CONTENIDO || '').replace(/\n\nRegistra:[\s\S]*$/, ''); }).join('\n\n') + '\n\nRegistra: kg, reps y qué parte costó más';
+      base.o['TÍTULO'] = 'Bloque ' + f.toLowerCase() + ' · ' + g.map(function (x) { return x.o['TÍTULO']; }).join(' + ');
+      base.o['CÓDIGOS'] = cods.join('|');
+      base.o.MIN = Math.min(25, Math.round(mins * 0.75));
+      base.o['POR QUÉ (cursiva)'] = [base.o['POR QUÉ (cursiva)'], 'Bloque combinado (regla 16/11): ' + g.length + ' estímulos cortos de ' + f.toLowerCase() + ' en una sola sesión dedicada.'].filter(Boolean).join(' ');
+      g.slice(1).forEach(function (x) { quitar.push(x); });
+      if (log) log.push('Bloque combinado · ' + f + ': ' + g.length + ' estímulos');
+    }
+  });
+  for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
+}

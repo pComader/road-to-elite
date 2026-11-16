@@ -1526,6 +1526,7 @@
         if (r.semana) { aplicarSemana(r.semana); conf = (lunes === S.data.semana ? S.data.conf : S.data.confSiguiente) || conf; render(); }
         resultado(r.previa);
       }).catch(function (er) {
+        if (/semana_programada/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana ya está programada</b><span>Para cambiarla usa las opciones de cada bloque (mover, cancelar, cambiar…) o Menú › Reprogramar.</span></div>'); return; }
         if (/semana_sin_confirmar/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana no está confirmada</b><span>Confirma mañanas, descansos y eventos y vuelve aquí.</span></div><button class="btn btn-primary" type="button" data-confirmar="' + lunes + '">Cargar y confirmar semana</button>'); return; }
         abrirHoja(titulo + '<div class="pos-act warn"><b>No se pudo calcular</b><span>' + esc(mensajeError(er.message)) + '</span></div><button class="btn" type="button" id="pg-vol">✎ Volver a las opciones</button>');
         document.getElementById('pg-vol').onclick = pintar;

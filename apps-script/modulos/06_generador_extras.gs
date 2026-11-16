@@ -418,6 +418,12 @@ function generarExtras_(lunes, opts) {
   lunes = lunesDe_(lunes);
   var conf = filaSemana_(lunes);
   if (!conf || !/Confirmada|Programada/.test(conf.ESTADO)) throw new Error('semana_sin_confirmar');
+  // v0.30 · regla de Pablo (16/11): una semana ya programada solo se cambia desde las opciones de cada bloque o con «Reprogramar».
+  //   Solo se deja programar el resto de una semana a medias.
+  if (conf.ESTADO === 'Programada' && !opts.forzar && !opts.reabrir) {   // reabrir = Menú › Reprogramar
+    var parc0 = {}; try { parc0 = JSON.parse(leerConfig_()['extras_parcial_' + lunes] || '{}'); } catch (eP0) {}
+    if (!(parc0.dias && parc0.dias.length && (opts.resto || (opts.dias && opts.dias.every(function (x) { return parc0.dias.indexOf(x) < 0; }))))) throw new Error('semana_programada');
+  }
   if (!sim && !listar_(HOJAS.PLAN).some(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6); })) cargarFabrikSemana_(lunes);
   var cat = catalogo_(), fin = sumarDias(lunes, 6), sello = 'auto ' + ahora_(), modoAM = enduranceManana_();
   // v0.18 · alcance: toda la semana, solo unos días, o «resto de semana» (los días que aún no se programaron; lo ya hecho se mantiene)
@@ -602,6 +608,7 @@ function generarExtras_(lunes, opts) {
   var total = mensuales.reduce(function (a, m) { return a + metaDe_(m, per.mes); }, 0);
   var hechoMes = avanceMetas_('Mes', per, cacheMetas_());
   var objetivo = Math.round(total * 0.22), minimo = Math.ceil(total * 0.17), maximo = Math.floor(total * 0.27), tope = Math.max(minimo, Math.min(objetivo, maximo));
+  var tope0 = tope;   // v0.30 · regla de Pablo (16/11): los mensuales se programan al 100 % → el tope es lo que falta repartido entre las semanas que quedan
   var mensDe = function (c) { return mensuales.filter(function (m) { return codigosDe_(m['CÓDIGOS']).indexOf(c) >= 0; })[0]; };
   var enSemana = mensuales.reduce(function (a, m) { return a + Math.min(metaDe_(m, per.mes), codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + cub(c); }, 0)); }, 0);
   var colaMes = mensuales.map(function (m) {
@@ -610,6 +617,7 @@ function generarExtras_(lunes, opts) {
     return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.15 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
   var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
+  (function () { var falt = colaMes.reduce(function (a, x) { return a + x.resta; }, 0), wl = weeksLeft_(lunes, per); tope = Math.max(tope0, enSemana + mesEnCola + (wl <= 1 ? falt : Math.ceil(falt / wl))); })();
   for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
     var c = codigosDe_(colaMes[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
     if (!c) continue;
@@ -646,6 +654,7 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
+  try { agruparCola_(cola, log); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
   (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
     if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();

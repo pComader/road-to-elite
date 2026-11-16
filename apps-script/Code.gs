@@ -2753,6 +2753,12 @@ function generarExtras_(lunes, opts) {
   lunes = lunesDe_(lunes);
   var conf = filaSemana_(lunes);
   if (!conf || !/Confirmada|Programada/.test(conf.ESTADO)) throw new Error('semana_sin_confirmar');
+  // v0.30 · regla de Pablo (16/11): una semana ya programada solo se cambia desde las opciones de cada bloque o con «Reprogramar».
+  //   Solo se deja programar el resto de una semana a medias.
+  if (conf.ESTADO === 'Programada' && !opts.forzar && !opts.reabrir) {   // reabrir = Menú › Reprogramar
+    var parc0 = {}; try { parc0 = JSON.parse(leerConfig_()['extras_parcial_' + lunes] || '{}'); } catch (eP0) {}
+    if (!(parc0.dias && parc0.dias.length && (opts.resto || (opts.dias && opts.dias.every(function (x) { return parc0.dias.indexOf(x) < 0; }))))) throw new Error('semana_programada');
+  }
   if (!sim && !listar_(HOJAS.PLAN).some(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && d >= lunes && d <= sumarDias(lunes, 6); })) cargarFabrikSemana_(lunes);
   var cat = catalogo_(), fin = sumarDias(lunes, 6), sello = 'auto ' + ahora_(), modoAM = enduranceManana_();
   // v0.18 · alcance: toda la semana, solo unos días, o «resto de semana» (los días que aún no se programaron; lo ya hecho se mantiene)
@@ -2937,6 +2943,7 @@ function generarExtras_(lunes, opts) {
   var total = mensuales.reduce(function (a, m) { return a + metaDe_(m, per.mes); }, 0);
   var hechoMes = avanceMetas_('Mes', per, cacheMetas_());
   var objetivo = Math.round(total * 0.22), minimo = Math.ceil(total * 0.17), maximo = Math.floor(total * 0.27), tope = Math.max(minimo, Math.min(objetivo, maximo));
+  var tope0 = tope;   // v0.30 · regla de Pablo (16/11): los mensuales se programan al 100 % → el tope es lo que falta repartido entre las semanas que quedan
   var mensDe = function (c) { return mensuales.filter(function (m) { return codigosDe_(m['CÓDIGOS']).indexOf(c) >= 0; })[0]; };
   var enSemana = mensuales.reduce(function (a, m) { return a + Math.min(metaDe_(m, per.mes), codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + cub(c); }, 0)); }, 0);
   var colaMes = mensuales.map(function (m) {
@@ -2945,6 +2952,7 @@ function generarExtras_(lunes, opts) {
     return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.15 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
   var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
+  (function () { var falt = colaMes.reduce(function (a, x) { return a + x.resta; }, 0), wl = weeksLeft_(lunes, per); tope = Math.max(tope0, enSemana + mesEnCola + (wl <= 1 ? falt : Math.ceil(falt / wl))); })();
   for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
     var c = codigosDe_(colaMes[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
     if (!c) continue;
@@ -2981,6 +2989,7 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
+  try { agruparCola_(cola, log); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
   (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
     if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();
@@ -7756,6 +7765,53 @@ function molestiaSemana_(lunes, desdeApp) {
 function molestiaVeta_(mo, cand, iso) {
   if (!mo || mo.dias.indexOf(iso) < 0) return false;
   return (cand.carga || []).some(function (c) { return mo.cargas.indexOf(c) >= 0; });
+}
+
+// ===================== v0.30 · BLOQUES COMBINADOS (regla de Pablo 16/11) =====================
+// Los estímulos cortos o técnicos de una misma familia se juntan en un bloque dedicado de 2 a 4 estímulos,
+// con menos volumen de cada uno, para que el mes se complete al 100 % sin llenar cada sesión de extras sueltos.
+var FAMILIAS_ = {
+  'Estabilidad OH': ['M44', 'M58', 'M13', 'M14', 'M50', 'M51', 'M56'],
+  'Core': ['M08', 'M60', 'M62', 'M46'],
+  'Unilateral': ['M45', 'M61', 'M19', 'M20'],
+  'Cadena posterior': ['M47', 'M28'],
+  'Comba': ['M33', 'M35', 'M32'],
+  'Haltero técnico': ['M10', 'M11']
+};
+function familiaDe_(o) {
+  var cs = codigosDe_(o['CÓDIGOS']);
+  for (var k in FAMILIAS_) if (cs.some(function (c) { return FAMILIAS_[k].indexOf(c) >= 0; })) return k;
+  return null;
+}
+function agruparCola_(cola, log) {
+  var grupos = {};
+  cola.forEach(function (x) {
+    var o = x.o; if (!o || norm(o.ORIGEN) === 'CARRERA' || o._prio === 'pendiente' || esIntocable_(codigosDe_(o['CÓDIGOS']))) return;
+    if ((parseFloat(o.MIN) || 10) > 15) return;
+    var f = familiaDe_(o); if (f) (grupos[f] = grupos[f] || []).push(x);
+  });
+  var quitar = [];
+  Object.keys(grupos).forEach(function (f) {
+    var L = grupos[f];
+    while (L.length >= 2) {
+      var base = L.shift(), g = [base], cods = codigosDe_(base.o['CÓDIGOS']);
+      for (var i = 0; i < L.length && g.length < 4; i++) {
+        var cs = codigosDe_(L[i].o['CÓDIGOS']); if (cs.some(function (c) { return cods.indexOf(c) >= 0; })) continue;   // nunca dos veces el mismo estímulo: cada uno cuenta una vez
+        g.push(L[i]); cods = cods.concat(cs); L.splice(i, 1); i--;
+      }
+      if (g.length < 2) continue;
+      var letras = 'ABCD', mins = g.reduce(function (a, x) { return a + (parseFloat(x.o.MIN) || 10); }, 0);
+      base.o.CONTENIDO = 'BLOQUE COMBINADO · ' + f.toUpperCase() + ' · ' + g.length + ' estímulos, menos volumen de cada uno (sin fallo).\n\n' +
+        g.map(function (x, k) { return letras[k] + ') ' + (x.o['TÍTULO'] || '') + '\n' + String(x.o.CONTENIDO || '').replace(/\n\nRegistra:[\s\S]*$/, ''); }).join('\n\n') + '\n\nRegistra: kg, reps y qué parte costó más';
+      base.o['TÍTULO'] = 'Bloque ' + f.toLowerCase() + ' · ' + g.map(function (x) { return x.o['TÍTULO']; }).join(' + ');
+      base.o['CÓDIGOS'] = cods.join('|');
+      base.o.MIN = Math.min(25, Math.round(mins * 0.75));
+      base.o['POR QUÉ (cursiva)'] = [base.o['POR QUÉ (cursiva)'], 'Bloque combinado (regla 16/11): ' + g.length + ' estímulos cortos de ' + f.toLowerCase() + ' en una sola sesión dedicada.'].filter(Boolean).join(' ');
+      g.slice(1).forEach(function (x) { quitar.push(x); });
+      if (log) log.push('Bloque combinado · ' + f + ': ' + g.length + ' estímulos');
+    }
+  });
+  for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
 }
 // ===================== v29a · RENDIMIENTO · GABI · MURPH · RITMOS · STRAVA =====================
 /*
