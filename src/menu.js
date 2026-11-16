@@ -1472,6 +1472,8 @@
     if (!op.descanso) op.descanso = par && par.descanso || 'nada';
     if (op.aprobar == null) op.aprobar = true;
     if (op.deseo == null) op.deseo = '';
+    if (op.molZona == null) { op.molZona = String(conf['MOLESTIA (zona)'] || ''); op.molDia = aIso(conf['MOLESTIA (día)']) || ''; }
+    var ZONAS_MOL = ['HOMBRO', 'CODO / MUÑECA', 'LUMBAR', 'RODILLA', 'CADERA / ISQUIOS', 'TOBILLO / AQUILES', 'CUELLO / TRAPECIO'];
     var corto = diaCortoIso;
     var titulo = '<div class="row"><h2>Programar · semana del ' + fechaCorta(lunes) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>';
     var diasDe = function () { return op.modo === 'resto' ? isos.filter(function (x) { return programados.indexOf(x) < 0; }) : op.modo === 'dias' ? op.dias.slice().sort() : isos; };
@@ -1482,6 +1484,8 @@
       if ((e = document.getElementById('pg-dob'))) op.dobles = leerDias('pg-dob');
       if ((e = document.getElementById('pg-des'))) op.descanso = e.value;
       if ((e = document.getElementById('pg-de'))) op.deseo = e.value.trim();
+      if ((e = document.getElementById('pg-molz'))) op.molZona = e.value;
+      if ((e = document.getElementById('pg-mold'))) op.molDia = e.value;
     }
     function pintar() {
       var est = function (x) { return programados.indexOf(x) >= 0 ? '✓' : fabDias.indexOf(x) >= 0 ? '·F' : ''; };
@@ -1495,11 +1499,14 @@
         '<div class="hint">' + (op.modo === 'resto' ? 'Se programan <b>' + esc(etiq(diasDe())) + '</b>. ' : op.modo === 'dias' ? 'Elige uno o varios días. ' : '') +
         (programados.length && op.modo !== 'semana' ? 'Lo ya programado (' + esc(etiq(programados)) + ') no se toca y cuenta para los estímulos de la semana.' : op.modo === 'semana' && programados.length ? 'Rehace los borradores de toda la semana; lo aprobado y lo que tenga 🔒 no se toca.' : '') +
         (op.modo === 'dias' ? ' ✓ = ya programado · ·F = Gabi ya lo ha subido.' : '') + '</div></div>' +
+        '<label for="pg-molz">¿Alguna molestia o lesión esta semana?</label><select id="pg-molz"><option value="">No</option>' + ZONAS_MOL.map(function (z) { return '<option value="' + esc(z) + '"' + (op.molZona === z ? ' selected' : '') + '>Sí · ' + esc(z.toLowerCase()) + '</option>'; }).join('') + '</select>' +
+        (op.molZona ? '<label for="pg-mold">¿Desde qué día?</label><select id="pg-mold">' + isos.map(function (x) { return '<option value="' + x + '"' + ((op.molDia || hoy) === x ? ' selected' : '') + '>' + esc(corto(x)) + '</option>'; }).join('') + '</select><div class="hint">Ese día y las 24 h siguientes no entra ningún extra que cargue la zona. Fabrik no se toca.</div>' : '') +
         '<label>Mañanas libres para sesión doble</label>' + chipsDias('pg-dob', op.dobles) +
         (des ? '<label for="pg-des">En tus días de descanso (' + esc(des) + ')</label><select id="pg-des">' + [['nada', 'Nada: descanso total'], ['extras', 'Extras'], ['z2', 'Z2 de recuperación'], ['ambos', 'Extras + Z2 de recuperación']].map(function (o) { return '<option value="' + o[0] + '"' + (op.descanso === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') +
         '<label for="pg-de">⚙ Estímulos que quiero (opcional)</label><textarea id="pg-de" rows="2" maxlength="300" placeholder="ej. intercalar carrera, calorías de assault, thrusters · metcon a medida en el mejor hueco">' + esc(op.deseo) + '</textarea>' +
         '<button class="btn btn-primary" type="button" id="pg-calc">Calcular</button>');
       $scrim.querySelectorAll('[data-pgm]').forEach(function (b) { b.onclick = function () { leer(); op.modo = b.dataset.pgm; pintar(); }; });
+      var mz = document.getElementById('pg-molz'); if (mz) mz.onchange = function () { leer(); pintar(); };
       $scrim.querySelectorAll('[data-pgd]').forEach(function (b) { b.onclick = function () { var k = op.dias.indexOf(b.dataset.pgd); if (k >= 0) op.dias.splice(k, 1); else op.dias.push(b.dataset.pgd); b.setAttribute('aria-pressed', String(k < 0)); }; });
       document.getElementById('pg-calc').onclick = calcular;
     }
@@ -1507,7 +1514,8 @@
       var dias = diasDe();
       var refrescar = op.modo === 'resto' || dias.some(function (x) { return fabDias.indexOf(x) >= 0 && fabCargados.indexOf(x) < 0; }) || (esta && d0.hayFabrik && !d0.fabrikCargado);
       return { lunes: lunes, ver: S.data.semana, dias: op.modo === 'semana' ? null : dias, resto: op.modo === 'resto', descanso: op.descanso || 'nada', reabrir: !!op.reabrir,
-        dobles: op.dobles !== String(conf['DOBLES (mañanas libres)'] || '') ? op.dobles : null, refrescar: refrescar };
+        dobles: op.dobles !== String(conf['DOBLES (mañanas libres)'] || '') ? op.dobles : null, refrescar: refrescar,
+        molestia: { zona: op.molZona || '', iso: op.molZona ? (op.molDia || (isos.indexOf(hoy) >= 0 ? hoy : lunes)) : '' } };
     }
     function calcular() {
       leer();

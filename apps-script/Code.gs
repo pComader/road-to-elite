@@ -17,7 +17,7 @@
 // ===================== CONFIGURACIÓN =====================
 var CONFIG = {
   NOMBRE_APP: 'Road To Elite',
-  VERSION: '0.30.1',
+  VERSION: '0.30.2',
   URL_APP: 'https://pcomader.github.io/road-to-elite/',   // la clave de Firebase solo acepta peticiones desde aquí
   EMAIL_PERMITIDO: 'pabloserranolopez@gmail.com',
   FIREBASE_API_KEY: 'AIzaSyArN_Bk25gA6TnHYxOg5vv-tHVohHIhnZM',
@@ -134,11 +134,11 @@ function accion_(a, body, user) {
                          actualizarFila_(HOJAS.PENDIENTES, pd._fila, { ESTADO: body.estado }); return json_({ ok: true, pendientes: pendientesAbiertos_() });
       // --- v0.9: Fabrik en el plan, extras automáticos, hoja de la semana, refuerzos, notas, WODs, avisos ---
       case 'cargar_fabrik': var rf = cargarFabrikSemana_(body.lunes); return json_({ ok: true, carga: rf, semana: semanaCompleta_(body.ver || body.lunes) });
-      case 'extras_previa': return json_(previaExtras_(body));
+      case 'extras_previa': if (body.molestia !== undefined) guardarMolestia_(body.lunes, body.molestia); return json_(previaExtras_(body));
       case 'config_set': if (['endurance_manana'].indexOf(body.clave) < 0) throw new Error('clave_no_permitida');
                          ponerConfig_(body.clave, body.valor ? 'Sí' : 'No', 'Endurance de mañana: la Z2 (carrera/erg) solo por la mañana; el domingo de comodín (Sí/No, también desde aquí)');
                          return json_({ ok: true, config: leerConfig_() });
-      case 'generar_extras': if (body.dobles != null) guardarDobles_(body); var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } if (body.aprobar) { try { rg.aprobados = aprobarPlanSemana_(body.lunes); } catch (e) { rg.aprobarError = String(e && e.message || e); } } refrescarResumen_(); MEMO = null; return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
+      case 'generar_extras': if (body.dobles != null) guardarDobles_(body); if (body.molestia !== undefined) guardarMolestia_(body.lunes, body.molestia); var rg = generarExtras_(body.lunes, { dias: body.dias, descanso: body.descanso, resto: body.resto, reabrir: body.reabrir }); if (body.deseo) { try { rg.medida = extraADeseo_(body.lunes, String(body.deseo).slice(0, 300)); if (rg.medida.ok) rg.resumen = (rg.resumen || '') + ' · + metcon a medida (' + rg.medida.dia.toLowerCase() + ' ' + rg.medida.turno + ')'; } catch (e) { rg.medida = { ok: false, avisos: [String(e && e.message || e)] }; } } if (body.aprobar) { try { rg.aprobados = aprobarPlanSemana_(body.lunes); } catch (e) { rg.aprobarError = String(e && e.message || e); } } refrescarResumen_(); MEMO = null; return json_({ ok: true, extras: rg, semana: semanaCompleta_(body.ver || body.lunes) });
       case 'posicion':   return json_({ ok: true, posicion: conMemo_(function () { return posicionOptima_(body); }) });
       case 'bloque_editar': editarBloque_(body); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
       case 'intercambiar': intercambiarBloques_(body.a, body.b); return json_({ ok: true, semana: semanaCompleta_(body.ver) });
@@ -2652,6 +2652,7 @@ function puntuarHuecos_(cand, ctx, todo) {
   ctx.dias.forEach(function (d, i) {
     if (ctx.permitidos && !ctx.permitidos[d.iso]) return;   // v0.18 · solo los días elegidos
     if (ctx.op && !todo && !opPermite_(ctx.op, cand.codigos, d.iso)) return;   // v0.27 · modo operación: ese día no admite ese estímulo
+    if (ctx.molestia && !todo && molestiaVeta_(ctx.molestia, cand, d.iso)) return;   // v0.30 · molestia marcada al programar: ese día y 24 h después, nada que cargue la zona
     ['AM', 'PM'].forEach(function (t) {
       var motivos = [], p = 0, malos = [];
       // todo = true: se puntúa también lo no disponible (para enseñarte qué pasa donde TÚ lo pones)
@@ -2782,6 +2783,7 @@ function generarExtras_(lunes, opts) {
   var OP = null; try { OP = opSemana_(lunes); if (OP.cfg.existe) opSincronizarMetas_(OP); } catch (eOp) { Logger.log('Modo operación: ' + eOp); OP = null; }   // v0.27
   var ctx = contextoSemana_(lunes, null, sim ? esAuto : null), nuevos = [], sinHueco = [], log = [], anadidos = {};
   ctx.permitidos = permitidos; ctx.op = OP;
+  try { ctx.molestia = molestiaSemana_(lunes, opts.molestia); } catch (eMo) { ctx.molestia = null; }
   if (OP && OP.enModo) log.push('Modo operación · ' + OP.fase + (OP.dosP ? ' · 2 P1–P4' : ''));
   // v0.19 · días que Gabi aún no ha subido: previsión por el perfil de la fase (lo aprendido de semanas anteriores)
   try {
@@ -2921,7 +2923,8 @@ function generarExtras_(lunes, opts) {
   var metas = EXC ? [] : listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
   metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
     var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) * factorMeta_(m, lunes, 'Semana').f - cods.reduce(function (a, c) { return a + cub(c) + enCola(c); }, 0);
-    var c = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
+    var cConC = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; }), c = cConC[0];
+    if (cConC.length > 1 && /ROTA/i.test(m.NOTAS || '')) c = cConC[Math.round(Date.parse(lunes) / 6048e5) % cConC.length];   // v0.30 · rota entre los estímulos del grupo
     for (var k = 0; k < falta && c; k++) {
       var o = deCatalogo(c);
       if (c === 'R04') { var pr01 = nuevos.concat(listar_(HOJAS.PLAN)).filter(function (r) { var d = celdaIso_(r.FECHA); return /R01/.test(r['CÓDIGOS']) && d >= lunes && d <= sumarDias(lunes, 6); })[0];
@@ -2939,7 +2942,7 @@ function generarExtras_(lunes, opts) {
   var colaMes = mensuales.map(function (m) {
     var av = hechoMes.filter(function (x) { return x.id === m.ID; })[0] || { programado: 0 }, meta = metaDe_(m, per.mes) * factorMeta_(m, per.desde, 'Mes').f;
     var resta = Math.max(0, meta - av.programado - codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + enCola(c); }, 0));
-    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.05 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
+    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.15 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
   var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
   for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
@@ -7729,6 +7732,30 @@ function reanudarEstimulo_(codigo) {
     actualizarFila_(HOJAS.PENDIENTES, p._fila, { NOTAS: String(p.NOTAS).replace(/\s*·?\s*EN PAUSA[^·]*/, '').trim() + ' · Reanudado ' + isoAFecha(hoyIso_()), 'FECHA ORIGINAL': isoAFecha(hoyIso_()) });
   });
   MEMO = null;
+}
+
+// ===================== v0.30 · MOLESTIA AL PROGRAMAR LA SEMANA =====================
+// Se pregunta en la app al «Programar extras» (o se marca en APP · SEMANAS › MOLESTIA (zona) / MOLESTIA (día)).
+// Efecto: ese día y las 24 h siguientes no entra ningún extra que cargue la zona. Fabrik no se toca.
+function guardarMolestia_(lunes, m) {
+  lunes = lunesDe_(lunes); m = m || {};
+  var zona = ZONAS_LESION_[m.zona] ? m.zona : '', iso = celdaIso_(m.iso) || '';
+  ['MOLESTIA (zona)', 'MOLESTIA (día)'].forEach(function (h) { asegurarColumna_(HOJAS.SEMANAS, h); });
+  var x = filaSemana_(lunes), o = { 'MOLESTIA (zona)': zona, 'MOLESTIA (día)': zona && iso ? isoAFecha(iso) : '' };
+  if (x) actualizarFila_(HOJAS.SEMANAS, x._fila, o);
+  else filasEnHoja_(HOJAS.SEMANAS, [Object.assign({ LUNES: isoAFecha(lunes), ESTADO: 'Pendiente de confirmar' }, o)]);
+  MEMO = null;
+}
+function molestiaSemana_(lunes, desdeApp) {
+  var m = desdeApp && desdeApp.zona ? desdeApp : null;
+  if (!m) { var x = filaSemana_(lunes) || {}; if (x['MOLESTIA (zona)']) m = { zona: x['MOLESTIA (zona)'], iso: celdaIso_(x['MOLESTIA (día)']) || lunes }; }
+  if (!m || !ZONAS_LESION_[m.zona]) return null;
+  var iso = celdaIso_(m.iso) || lunes;
+  return { zona: m.zona, cargas: ZONAS_LESION_[m.zona].cargas, dias: [iso, sumarDias(iso, 1)] };
+}
+function molestiaVeta_(mo, cand, iso) {
+  if (!mo || mo.dias.indexOf(iso) < 0) return false;
+  return (cand.carga || []).some(function (c) { return mo.cargas.indexOf(c) >= 0; });
 }
 // ===================== v29a · RENDIMIENTO · GABI · MURPH · RITMOS · STRAVA =====================
 /*

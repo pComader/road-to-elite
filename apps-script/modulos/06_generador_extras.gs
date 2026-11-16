@@ -317,6 +317,7 @@ function puntuarHuecos_(cand, ctx, todo) {
   ctx.dias.forEach(function (d, i) {
     if (ctx.permitidos && !ctx.permitidos[d.iso]) return;   // v0.18 · solo los días elegidos
     if (ctx.op && !todo && !opPermite_(ctx.op, cand.codigos, d.iso)) return;   // v0.27 · modo operación: ese día no admite ese estímulo
+    if (ctx.molestia && !todo && molestiaVeta_(ctx.molestia, cand, d.iso)) return;   // v0.30 · molestia marcada al programar: ese día y 24 h después, nada que cargue la zona
     ['AM', 'PM'].forEach(function (t) {
       var motivos = [], p = 0, malos = [];
       // todo = true: se puntúa también lo no disponible (para enseñarte qué pasa donde TÚ lo pones)
@@ -447,6 +448,7 @@ function generarExtras_(lunes, opts) {
   var OP = null; try { OP = opSemana_(lunes); if (OP.cfg.existe) opSincronizarMetas_(OP); } catch (eOp) { Logger.log('Modo operación: ' + eOp); OP = null; }   // v0.27
   var ctx = contextoSemana_(lunes, null, sim ? esAuto : null), nuevos = [], sinHueco = [], log = [], anadidos = {};
   ctx.permitidos = permitidos; ctx.op = OP;
+  try { ctx.molestia = molestiaSemana_(lunes, opts.molestia); } catch (eMo) { ctx.molestia = null; }
   if (OP && OP.enModo) log.push('Modo operación · ' + OP.fase + (OP.dosP ? ' · 2 P1–P4' : ''));
   // v0.19 · días que Gabi aún no ha subido: previsión por el perfil de la fase (lo aprendido de semanas anteriores)
   try {
@@ -586,7 +588,8 @@ function generarExtras_(lunes, opts) {
   var metas = EXC ? [] : listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
   metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
     var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) * factorMeta_(m, lunes, 'Semana').f - cods.reduce(function (a, c) { return a + cub(c) + enCola(c); }, 0);
-    var c = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
+    var cConC = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; }), c = cConC[0];
+    if (cConC.length > 1 && /ROTA/i.test(m.NOTAS || '')) c = cConC[Math.round(Date.parse(lunes) / 6048e5) % cConC.length];   // v0.30 · rota entre los estímulos del grupo
     for (var k = 0; k < falta && c; k++) {
       var o = deCatalogo(c);
       if (c === 'R04') { var pr01 = nuevos.concat(listar_(HOJAS.PLAN)).filter(function (r) { var d = celdaIso_(r.FECHA); return /R01/.test(r['CÓDIGOS']) && d >= lunes && d <= sumarDias(lunes, 6); })[0];
@@ -604,7 +607,7 @@ function generarExtras_(lunes, opts) {
   var colaMes = mensuales.map(function (m) {
     var av = hechoMes.filter(function (x) { return x.id === m.ID; })[0] || { programado: 0 }, meta = metaDe_(m, per.mes) * factorMeta_(m, per.desde, 'Mes').f;
     var resta = Math.max(0, meta - av.programado - codigosDe_(m['CÓDIGOS']).reduce(function (s, c) { return s + enCola(c); }, 0));
-    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.05 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
+    return { m: m, resta: resta, urg: resta / weeksLeft_(lunes, per) - PRIO_ORDEN(m.PRIORIDAD) * 0.15 + pesoObjetivo_(m) + sesgoCiclo_(codigosDe_(m['CÓDIGOS']), cicloExtras_(lunes)) };   // v0.27 · rendimiento → skills y carencias → resto
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
   var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
   for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {

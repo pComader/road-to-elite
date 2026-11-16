@@ -308,3 +308,27 @@ function reanudarEstimulo_(codigo) {
   });
   MEMO = null;
 }
+
+// ===================== v0.30 · MOLESTIA AL PROGRAMAR LA SEMANA =====================
+// Se pregunta en la app al «Programar extras» (o se marca en APP · SEMANAS › MOLESTIA (zona) / MOLESTIA (día)).
+// Efecto: ese día y las 24 h siguientes no entra ningún extra que cargue la zona. Fabrik no se toca.
+function guardarMolestia_(lunes, m) {
+  lunes = lunesDe_(lunes); m = m || {};
+  var zona = ZONAS_LESION_[m.zona] ? m.zona : '', iso = celdaIso_(m.iso) || '';
+  ['MOLESTIA (zona)', 'MOLESTIA (día)'].forEach(function (h) { asegurarColumna_(HOJAS.SEMANAS, h); });
+  var x = filaSemana_(lunes), o = { 'MOLESTIA (zona)': zona, 'MOLESTIA (día)': zona && iso ? isoAFecha(iso) : '' };
+  if (x) actualizarFila_(HOJAS.SEMANAS, x._fila, o);
+  else filasEnHoja_(HOJAS.SEMANAS, [Object.assign({ LUNES: isoAFecha(lunes), ESTADO: 'Pendiente de confirmar' }, o)]);
+  MEMO = null;
+}
+function molestiaSemana_(lunes, desdeApp) {
+  var m = desdeApp && desdeApp.zona ? desdeApp : null;
+  if (!m) { var x = filaSemana_(lunes) || {}; if (x['MOLESTIA (zona)']) m = { zona: x['MOLESTIA (zona)'], iso: celdaIso_(x['MOLESTIA (día)']) || lunes }; }
+  if (!m || !ZONAS_LESION_[m.zona]) return null;
+  var iso = celdaIso_(m.iso) || lunes;
+  return { zona: m.zona, cargas: ZONAS_LESION_[m.zona].cargas, dias: [iso, sumarDias(iso, 1)] };
+}
+function molestiaVeta_(mo, cand, iso) {
+  if (!mo || mo.dias.indexOf(iso) < 0) return false;
+  return (cand.carga || []).some(function (c) { return mo.cargas.indexOf(c) >= 0; });
+}
