@@ -196,7 +196,7 @@
       return '<div class="part-lbl">' + esc(k) + '</div>' + grupos[k].map(function (m) {
         var u = unidadMeta(m), pp = Math.round(m.pProg * 100), pr = Math.round(m.pReal * 100);
         return '<details class="meta-c"><summary><div class="meta-t"><b>' + esc(m.estimulo) + '</b><span class="meta-n' + (m.cubierta ? ' ok' : '') + '">' +
-          num1(m.programado) + ' / ' + num1(m.meta) + u + '</span></div>' +
+          num1(m.programado) + ' / ' + num1(m.meta) + u + (m.factor > 1 ? ' <span class="hint" title="' + esc(m.factorPor || '') + '">×' + m.factor + '</span>' : '') + '</span></div>' +
           '<div class="pbar dbl" title="Programado ' + pp + '% · hecho ' + pr + '%"><i class="prog' + (pp >= 100 ? ' full' : '') + '" style="width:' + pp + '%"></i><i class="real" style="width:' + pr + '%"></i></div>' +
           '<div class="meta-sub">' + (m.cubierta ? '✔ Programada' : 'Falta programar ' + num1(Math.max(0, m.meta - m.programado)) + u) + ' · hecho ' + num1(m.realizado) + u +
             (m.borrador ? ' · ' + num1(m.borrador) + ' en borrador' : '') + '</div></summary>' +

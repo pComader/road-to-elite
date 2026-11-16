@@ -694,7 +694,8 @@ function avanceMetas_(ambito, per, cache) {
   var claveR = function (r) { return celdaIso_(r.FECHA) + '|' + r.ID; };
   var metas = cache.metas.filter(function (m) { return m['ÁMBITO'] === ambito && m.ACTIVA !== 'No'; });
   return metas.map(function (m) {
-    var cods = codigosDe_(m['CÓDIGOS']), meta = Math.max(0, metaDe_(m, per.mes) * factorMeta_(m, per.desde, ambito).f + (ambito === 'Semana' && cache.incent ? (cache.incent[per.desde] || {})[m.ID] || 0 : 0)), tipo = String(m.TIPO || 'COUNT').toUpperCase();
+    var fMeta = factorMeta_(m, per.desde, ambito);   // v0.30.4 · el ×2 se ve en la app y en el resumen, para que el número cuadre con APP · METAS
+    var cods = codigosDe_(m['CÓDIGOS']), meta = Math.max(0, metaDe_(m, per.mes) * fMeta.f + (ambito === 'Semana' && cache.incent ? (cache.incent[per.desde] || {})[m.ID] || 0 : 0)), tipo = String(m.TIPO || 'COUNT').toUpperCase();
     var filas = plan.filter(function (r) {
       var iso = celdaIso_(r.FECHA); if (!enPer(iso)) return false;
       var rc = codigosDe_(r['CÓDIGOS']); return rc.some(function (c) { return cods.indexOf(c) >= 0; });
@@ -717,7 +718,7 @@ function avanceMetas_(ambito, per, cache) {
     var vReal = calc(prog, function (r) { return hecho[claveR(r)] || 0; }, true) + ajuste;
     var vBorr = calc(borr, function () { return 1; });
     var ratio = function (v) { return meta > 0 ? Math.min(1, v / meta) : 1; };
-    return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
+    return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, factor: fMeta.f, factorPor: fMeta.por || '', maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
       notas: m.NOTAS, integrar: m['INTEGRAR CON'] || '', mejorar: m['CÓMO MEJORARLO'] || '',
       dias: prog.map(function (r) { return { iso: celdaIso_(r.FECHA), turno: r.TURNO === 'AM' ? 'AM' : 'PM', titulo: r['TÍTULO'] || r.BLOQUE || '', origen: norm(r.ORIGEN) === 'FABRIK' ? 'FABRIK' : r.ORIGEN, estado: r.ESTADO }; }).sort(function (a, b) { return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : a.turno < b.turno ? -1 : 1; }),
       orden: Number(m.ORDEN) || 0, programado: vProg, realizado: vReal, borrador: vBorr, ajuste: ajuste,
@@ -2989,7 +2990,7 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
-  try { agruparCola_(cola, log); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
+  try { agruparCola_(cola, log, weeksLeft_(lunes, per) <= 1); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
   (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
     if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();
@@ -4003,7 +4004,8 @@ function pintarResumen_(an) {
     fila(['POR CUBRIR · SEMANA', '', '', '', '', '', '', 'POR CUBRIR · MES'], 'seccion');
     for (var i = 0; i < Math.max(fs.length, fm.length, 1); i++) {
       var a = fs[i], b = fm[i];
-      fila([a ? a.estimulo + ' [' + Math.round(a.programado * 10) / 10 + '/' + a.meta + ']' : (i ? '' : '— todo cubierto'), '', '', '', '', '', '', b ? b.estimulo + ' [' + Math.round(b.programado * 10) / 10 + '/' + b.meta + ']' : (i ? '' : '— todo cubierto')]);
+      var x2 = function (m) { return m.factor > 1 ? ' (×' + m.factor + ' ' + (/operación/.test(m.factorPor) ? 'modo operación' : 'intensivo') + ')' : ''; };
+      fila([a ? a.estimulo + ' [' + Math.round(a.programado * 10) / 10 + '/' + a.meta + ']' + x2(a) : (i ? '' : '— todo cubierto'), '', '', '', '', '', '', b ? b.estimulo + ' [' + Math.round(b.programado * 10) / 10 + '/' + b.meta + ']' + x2(b) : (i ? '' : '— todo cubierto')]);
     }
     fila(['']);
     fila(['EXTRAS · SEMANA EN CURSO (' + isoAFecha(X.lunes) + ')', '', '', '', '', '', '', '', 'Suma al mes esta semana', X.aporteSemanaMes + ' pp', 'Acumulado mes ' + X.acumuladoMes + ' %'], 'seccion');
@@ -4014,7 +4016,7 @@ function pintarResumen_(an) {
     fila(['METAS', '', '', '', '', '', '', '', '', '', ''], 'seccion');
     fila(['Ámbito', 'Prioridad', 'Estímulo', '', 'Meta', 'Programado', 'Hecho', 'Borrador', '% programado', '% hecho', 'Estado'], 'cab');
     [['Semana', M.semana], ['Mes', M.mes]].forEach(function (z) {
-      z[1].metas.forEach(function (m) { fila([z[0], m.prioridad, m.estimulo, '', m.meta, Math.round(m.programado * 10) / 10, Math.round(m.realizado * 10) / 10, m.borrador || '', pct(m.pProg), pct(m.pReal), m.cubierta ? '✓' : 'falta']); });
+      z[1].metas.forEach(function (m) { fila([z[0], m.prioridad, m.estimulo, '', m.factor > 1 ? m.meta + ' (×' + m.factor + ')' : m.meta, Math.round(m.programado * 10) / 10, Math.round(m.realizado * 10) / 10, m.borrador || '', pct(m.pProg), pct(m.pReal), m.cubierta ? '✓' : 'falta']); });
     });
     fila(['']);
     fila(['CARRERA · CONCLUSIONES', '', '', '', '', '', '', '', '', '', ''], 'seccion');
@@ -7783,7 +7785,7 @@ function familiaDe_(o) {
   for (var k in FAMILIAS_) if (cs.some(function (c) { return FAMILIAS_[k].indexOf(c) >= 0; })) return k;
   return null;
 }
-function agruparCola_(cola, log) {
+function agruparCola_(cola, log, ultima) {
   var grupos = {};
   cola.forEach(function (x) {
     var o = x.o; if (!o || norm(o.ORIGEN) === 'CARRERA' || o._prio === 'pendiente' || esIntocable_(codigosDe_(o['CÓDIGOS']))) return;
@@ -7809,6 +7811,34 @@ function agruparCola_(cola, log) {
       base.o['POR QUÉ (cursiva)'] = [base.o['POR QUÉ (cursiva)'], 'Bloque combinado (regla 16/11): ' + g.length + ' estímulos cortos de ' + f.toLowerCase() + ' en una sola sesión dedicada.'].filter(Boolean).join(' ');
       g.slice(1).forEach(function (x) { quitar.push(x); });
       if (log) log.push('Bloque combinado · ' + f + ': ' + g.length + ' estímulos');
+    }
+  });
+  for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
+  if (ultima) microbloquesMes_(cola, log);
+}
+// v0.30.4 · regla de Pablo (16/11): en la última semana del mes, lo que falte del mes va en microbloques de 2 a 5 estímulos:
+// volumen bajo e intensidad media-alta; los técnicos van juntos y a calidad (sin fatiga).
+function microbloquesMes_(cola, log) {
+  var tec = [], fue = [];
+  cola.forEach(function (x) {
+    var o = x.o; if (!o || o._prio !== 'mes' || norm(o.ORIGEN) === 'CARRERA' || /^BLOQUE COMBINADO/.test(o.CONTENIDO || '')) return;
+    var cs = codigosDe_(o['CÓDIGOS']); if (esIntocable_(cs) || cs.some(function (c) { return /^(R0|W0|V01|RC1|RF1)/.test(c); }) || (parseFloat(o.MIN) || 10) > 20) return;
+    (norm(o.ORIGEN) === 'TÉCNICA' ? tec : fue).push(x);
+  });
+  var quitar = [], letras = 'ABCDE';
+  [[tec, true], [fue, false]].forEach(function (par) {
+    var L = par[0];
+    while (L.length >= 2) {
+      var n = L.length <= 5 ? L.length : (L.length % 5 === 1 ? 4 : 5), g = L.splice(0, n), base = g[0], cods = [];
+      g.forEach(function (x) { codigosDe_(x.o['CÓDIGOS']).forEach(function (c) { if (cods.indexOf(c) < 0) cods.push(c); }); });
+      var mins = g.reduce(function (a, x) { return a + (parseFloat(x.o.MIN) || 10); }, 0);
+      base.o.CONTENIDO = (par[1] ? 'MICROBLOQUE TÉCNICO · ' + g.length + ' estímulos del mes, calidad y descansos completos (sin fatiga).' : 'MICROBLOQUE DEL MES · ' + g.length + ' estímulos, volumen bajo e intensidad media-alta (RPE 7–8, sin fallo).') + '\n\n' +
+        g.map(function (x, k) { return letras[k] + ') ' + (x.o['TÍTULO'] || '') + '\n' + String(x.o.CONTENIDO || '').replace(/\n\nRegistra:[\s\S]*$/, '') + (par[1] ? '' : '\n→ 2 series en vez de las de la ficha, carga alta.'); }).join('\n\n') + '\n\nRegistra: kg, reps y qué parte costó más';
+      base.o['TÍTULO'] = 'Microbloque ' + (par[1] ? 'técnico' : 'del mes') + ' · ' + g.map(function (x) { return x.o['TÍTULO']; }).join(' + ');
+      base.o['CÓDIGOS'] = cods.join('|'); base.o.MIN = Math.min(30, Math.max(12, Math.round(mins * 0.6)));
+      base.o['POR QUÉ (cursiva)'] = 'Última semana del mes (regla 16/11): lo que falta del mes en un solo microbloque para tocarlo todo sin llenar la semana de extras sueltos.';
+      g.slice(1).forEach(function (x) { quitar.push(x); });
+      if (log) log.push('Microbloque del mes: ' + g.length + ' estímulos');
     }
   });
   for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);

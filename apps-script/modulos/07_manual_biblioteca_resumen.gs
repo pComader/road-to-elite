@@ -841,7 +841,8 @@ function pintarResumen_(an) {
     fila(['POR CUBRIR · SEMANA', '', '', '', '', '', '', 'POR CUBRIR · MES'], 'seccion');
     for (var i = 0; i < Math.max(fs.length, fm.length, 1); i++) {
       var a = fs[i], b = fm[i];
-      fila([a ? a.estimulo + ' [' + Math.round(a.programado * 10) / 10 + '/' + a.meta + ']' : (i ? '' : '— todo cubierto'), '', '', '', '', '', '', b ? b.estimulo + ' [' + Math.round(b.programado * 10) / 10 + '/' + b.meta + ']' : (i ? '' : '— todo cubierto')]);
+      var x2 = function (m) { return m.factor > 1 ? ' (×' + m.factor + ' ' + (/operación/.test(m.factorPor) ? 'modo operación' : 'intensivo') + ')' : ''; };
+      fila([a ? a.estimulo + ' [' + Math.round(a.programado * 10) / 10 + '/' + a.meta + ']' + x2(a) : (i ? '' : '— todo cubierto'), '', '', '', '', '', '', b ? b.estimulo + ' [' + Math.round(b.programado * 10) / 10 + '/' + b.meta + ']' + x2(b) : (i ? '' : '— todo cubierto')]);
     }
     fila(['']);
     fila(['EXTRAS · SEMANA EN CURSO (' + isoAFecha(X.lunes) + ')', '', '', '', '', '', '', '', 'Suma al mes esta semana', X.aporteSemanaMes + ' pp', 'Acumulado mes ' + X.acumuladoMes + ' %'], 'seccion');
@@ -852,7 +853,7 @@ function pintarResumen_(an) {
     fila(['METAS', '', '', '', '', '', '', '', '', '', ''], 'seccion');
     fila(['Ámbito', 'Prioridad', 'Estímulo', '', 'Meta', 'Programado', 'Hecho', 'Borrador', '% programado', '% hecho', 'Estado'], 'cab');
     [['Semana', M.semana], ['Mes', M.mes]].forEach(function (z) {
-      z[1].metas.forEach(function (m) { fila([z[0], m.prioridad, m.estimulo, '', m.meta, Math.round(m.programado * 10) / 10, Math.round(m.realizado * 10) / 10, m.borrador || '', pct(m.pProg), pct(m.pReal), m.cubierta ? '✓' : 'falta']); });
+      z[1].metas.forEach(function (m) { fila([z[0], m.prioridad, m.estimulo, '', m.factor > 1 ? m.meta + ' (×' + m.factor + ')' : m.meta, Math.round(m.programado * 10) / 10, Math.round(m.realizado * 10) / 10, m.borrador || '', pct(m.pProg), pct(m.pReal), m.cubierta ? '✓' : 'falta']); });
     });
     fila(['']);
     fila(['CARRERA · CONCLUSIONES', '', '', '', '', '', '', '', '', '', ''], 'seccion');

@@ -654,7 +654,7 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
-  try { agruparCola_(cola, log); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
+  try { agruparCola_(cola, log, weeksLeft_(lunes, per) <= 1); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
   (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
     if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();

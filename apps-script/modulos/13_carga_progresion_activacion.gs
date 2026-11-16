@@ -349,7 +349,7 @@ function familiaDe_(o) {
   for (var k in FAMILIAS_) if (cs.some(function (c) { return FAMILIAS_[k].indexOf(c) >= 0; })) return k;
   return null;
 }
-function agruparCola_(cola, log) {
+function agruparCola_(cola, log, ultima) {
   var grupos = {};
   cola.forEach(function (x) {
     var o = x.o; if (!o || norm(o.ORIGEN) === 'CARRERA' || o._prio === 'pendiente' || esIntocable_(codigosDe_(o['CÓDIGOS']))) return;
@@ -375,6 +375,34 @@ function agruparCola_(cola, log) {
       base.o['POR QUÉ (cursiva)'] = [base.o['POR QUÉ (cursiva)'], 'Bloque combinado (regla 16/11): ' + g.length + ' estímulos cortos de ' + f.toLowerCase() + ' en una sola sesión dedicada.'].filter(Boolean).join(' ');
       g.slice(1).forEach(function (x) { quitar.push(x); });
       if (log) log.push('Bloque combinado · ' + f + ': ' + g.length + ' estímulos');
+    }
+  });
+  for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
+  if (ultima) microbloquesMes_(cola, log);
+}
+// v0.30.4 · regla de Pablo (16/11): en la última semana del mes, lo que falte del mes va en microbloques de 2 a 5 estímulos:
+// volumen bajo e intensidad media-alta; los técnicos van juntos y a calidad (sin fatiga).
+function microbloquesMes_(cola, log) {
+  var tec = [], fue = [];
+  cola.forEach(function (x) {
+    var o = x.o; if (!o || o._prio !== 'mes' || norm(o.ORIGEN) === 'CARRERA' || /^BLOQUE COMBINADO/.test(o.CONTENIDO || '')) return;
+    var cs = codigosDe_(o['CÓDIGOS']); if (esIntocable_(cs) || cs.some(function (c) { return /^(R0|W0|V01|RC1|RF1)/.test(c); }) || (parseFloat(o.MIN) || 10) > 20) return;
+    (norm(o.ORIGEN) === 'TÉCNICA' ? tec : fue).push(x);
+  });
+  var quitar = [], letras = 'ABCDE';
+  [[tec, true], [fue, false]].forEach(function (par) {
+    var L = par[0];
+    while (L.length >= 2) {
+      var n = L.length <= 5 ? L.length : (L.length % 5 === 1 ? 4 : 5), g = L.splice(0, n), base = g[0], cods = [];
+      g.forEach(function (x) { codigosDe_(x.o['CÓDIGOS']).forEach(function (c) { if (cods.indexOf(c) < 0) cods.push(c); }); });
+      var mins = g.reduce(function (a, x) { return a + (parseFloat(x.o.MIN) || 10); }, 0);
+      base.o.CONTENIDO = (par[1] ? 'MICROBLOQUE TÉCNICO · ' + g.length + ' estímulos del mes, calidad y descansos completos (sin fatiga).' : 'MICROBLOQUE DEL MES · ' + g.length + ' estímulos, volumen bajo e intensidad media-alta (RPE 7–8, sin fallo).') + '\n\n' +
+        g.map(function (x, k) { return letras[k] + ') ' + (x.o['TÍTULO'] || '') + '\n' + String(x.o.CONTENIDO || '').replace(/\n\nRegistra:[\s\S]*$/, '') + (par[1] ? '' : '\n→ 2 series en vez de las de la ficha, carga alta.'); }).join('\n\n') + '\n\nRegistra: kg, reps y qué parte costó más';
+      base.o['TÍTULO'] = 'Microbloque ' + (par[1] ? 'técnico' : 'del mes') + ' · ' + g.map(function (x) { return x.o['TÍTULO']; }).join(' + ');
+      base.o['CÓDIGOS'] = cods.join('|'); base.o.MIN = Math.min(30, Math.max(12, Math.round(mins * 0.6)));
+      base.o['POR QUÉ (cursiva)'] = 'Última semana del mes (regla 16/11): lo que falta del mes en un solo microbloque para tocarlo todo sin llenar la semana de extras sueltos.';
+      g.slice(1).forEach(function (x) { quitar.push(x); });
+      if (log) log.push('Microbloque del mes: ' + g.length + ' estímulos');
     }
   });
   for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);

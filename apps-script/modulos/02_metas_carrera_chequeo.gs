@@ -95,7 +95,8 @@ function avanceMetas_(ambito, per, cache) {
   var claveR = function (r) { return celdaIso_(r.FECHA) + '|' + r.ID; };
   var metas = cache.metas.filter(function (m) { return m['ÁMBITO'] === ambito && m.ACTIVA !== 'No'; });
   return metas.map(function (m) {
-    var cods = codigosDe_(m['CÓDIGOS']), meta = Math.max(0, metaDe_(m, per.mes) * factorMeta_(m, per.desde, ambito).f + (ambito === 'Semana' && cache.incent ? (cache.incent[per.desde] || {})[m.ID] || 0 : 0)), tipo = String(m.TIPO || 'COUNT').toUpperCase();
+    var fMeta = factorMeta_(m, per.desde, ambito);   // v0.30.4 · el ×2 se ve en la app y en el resumen, para que el número cuadre con APP · METAS
+    var cods = codigosDe_(m['CÓDIGOS']), meta = Math.max(0, metaDe_(m, per.mes) * fMeta.f + (ambito === 'Semana' && cache.incent ? (cache.incent[per.desde] || {})[m.ID] || 0 : 0)), tipo = String(m.TIPO || 'COUNT').toUpperCase();
     var filas = plan.filter(function (r) {
       var iso = celdaIso_(r.FECHA); if (!enPer(iso)) return false;
       var rc = codigosDe_(r['CÓDIGOS']); return rc.some(function (c) { return cods.indexOf(c) >= 0; });
@@ -118,7 +119,7 @@ function avanceMetas_(ambito, per, cache) {
     var vReal = calc(prog, function (r) { return hecho[claveR(r)] || 0; }, true) + ajuste;
     var vBorr = calc(borr, function () { return 1; });
     var ratio = function (v) { return meta > 0 ? Math.min(1, v / meta) : 1; };
-    return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
+    return { id: m.ID, prioridad: m.PRIORIDAD, estimulo: m['ESTÍMULO'], meta: meta, factor: fMeta.f, factorPor: fMeta.por || '', maximo: m['MÁXIMO'], tipo: tipo, unidad: m.UNIDAD, codigos: m['CÓDIGOS'],
       notas: m.NOTAS, integrar: m['INTEGRAR CON'] || '', mejorar: m['CÓMO MEJORARLO'] || '',
       dias: prog.map(function (r) { return { iso: celdaIso_(r.FECHA), turno: r.TURNO === 'AM' ? 'AM' : 'PM', titulo: r['TÍTULO'] || r.BLOQUE || '', origen: norm(r.ORIGEN) === 'FABRIK' ? 'FABRIK' : r.ORIGEN, estado: r.ESTADO }; }).sort(function (a, b) { return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : a.turno < b.turno ? -1 : 1; }),
       orden: Number(m.ORDEN) || 0, programado: vProg, realizado: vReal, borrador: vBorr, ajuste: ajuste,
