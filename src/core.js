@@ -785,7 +785,7 @@
     var F = S.fbAy = S.fbAy || {};
     return '<section class="fb-ayer" aria-label="Feedback de ayer"><h3>¿Cómo salieron ayer tus extras?</h3>' + L.map(function (e) {
       var v = F[e.id] || {};
-      return '<div class="fb-i" data-fbi="' + esc(e.id) + '"><b>' + esc(e.titulo) + (e.codigos ? ' <span class="hint">' + esc(e.codigos) + '</span>' : '') + '</b>' +
+      return '<div class="fb-i" data-fbi="' + esc(e.id) + '"><b>' + esc(e.titulo) + (e.codigos ? ' <span class="hint">' + esc(nombresCodigos(e.codigos)) + '</span>' : '') + '</b>' +
         '<div class="seg" role="group" aria-label="Resultado">' + ['Completado', 'A medias', 'No salió'].map(function (r) {
           return '<button type="button" data-fbr="' + esc(e.id) + '|' + r + '" aria-pressed="' + (v.res === r) + '">' + r + '</button>'; }).join('') + '</div>' +
         '<div class="chips fb-rpe" role="group" aria-label="RPE (opcional)">' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (k) {
@@ -806,6 +806,8 @@
     return rpeColor(t);
   }
 
+  /** v0.31.3 · los estímulos se enseñan por su nombre, nunca por el código interno. */
+  function nombresCodigos(cods) { var N = (S.data && S.data.nombresEst) || {}; return String(cods || '').split(/[|,\s]+/).filter(Boolean).map(function (c) { return N[c] || c; }).join(' · '); }
   function bloque(b, x, d) {
     if (norm(b.estado) === 'CANCELADO') {   // v0.22 · cancelado: plegado y reactivable
       var idc = idPlanDe(x, b);
@@ -848,7 +850,7 @@
       '<div class="b-head"><span class="b-num ex">+</span><span class="b-title">' + esc(b.titulo) + '</span>' + cam +
         (b.intensidad ? '<span class="b-rpe" style="--c:' + claseIntensidad(b.intensidad) + '">' + esc(b.intensidad.replace(/[🟢🔵🟠🔴]\s*/gu, '') || '●') + '</span>' : '') + '</div>' +
         '<div class="b-tags"><span class="tag ex">EXTRA</span>' + (b.min ? '<span class="tag">⏱ ' + esc(b.min) + '′</span>' : '') +
-        (b.codigos ? '<span class="tag">' + esc(b.codigos) + '</span>' : '') + (norm(b.estado) === 'BORRADOR' ? '<span class="tag draft">Borrador</span>' : '') + '</div>' :
+        (b.codigos ? '<span class="tag">' + esc(nombresCodigos(b.codigos)) + '</span>' : '') + (norm(b.estado) === 'BORRADOR' ? '<span class="tag draft">Borrador</span>' : '') + '</div>' :
       '<div class="b-head"><span class="b-num">' + (b.n || '•') + '</span><span class="b-title">' + esc(b.titulo) + '</span>' + cam +
         (b.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(b.rpe) + '">RPE ' + esc(b.rpe) + '</span>' : '') + '</div>';
 
@@ -1272,15 +1274,15 @@
     api({ action: 'estimulos_lista', id: id, lunes: S.data.semana }).then(ok).then(function (r) {
       var L = r.lista, q = '';
       var pinta = function () {
-        var nq = norm(q), V = L.filter(function (x) { return !nq || norm(x.c + ' ' + x.nombre + ' ' + x.familia).indexOf(nq) >= 0; });
+        var nq = norm(q), V = L.filter(function (x) { return !nq || norm(x.nombre + ' ' + (x.bloque || '') + ' ' + x.familia).indexOf(nq) >= 0; });
         document.getElementById('ce-l').innerHTML = V.slice(0, 80).map(function (x) {
-          return '<button type="button" class="ce-i' + (x.mismaFamilia ? ' fam' : '') + '" data-ce="' + esc(x.c) + '"><b>' + (x.mismaFamilia ? '★ ' : '') + esc(x.c + ' · ' + x.nombre) + '</b><span>' + esc([x.familia, x.ambito, x.min ? x.min + '′' : '', x.falta > 0 ? 'faltan ' + x.falta : 'cubierto'].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') || '<div class="empty">Nada con ese texto.</div>';
+          return '<button type="button" class="ce-i' + (x.mismaFamilia ? ' fam' : '') + '" data-ce="' + esc(x.c) + '"><b>' + (x.mismaFamilia ? '★ ' : '') + esc(x.nombre) + '</b><span>' + esc([x.bloque || x.familia, x.ambito, x.min ? x.min + '′' : '', x.falta > 0 ? 'faltan ' + x.falta : 'cubierto'].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') || '<div class="empty">Nada con ese texto.</div>';
         $scrim.querySelectorAll('[data-ce]').forEach(function (b) { b.onclick = function () {
           b.disabled = true;
-          api({ action: 'cambiar_estimulo', id: id, codigo: b.dataset.ce, ver: S.data.semana }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast('Cambiado a ' + b.dataset.ce + ': cuenta en semana y mes'); }).catch(falloApi(b));
+          api({ action: 'cambiar_estimulo', id: id, codigo: b.dataset.ce, ver: S.data.semana }).then(ok).then(function (r2) { aplicarSemana(r2.semana); cerrarHoja(); render(); toast('Cambiado a ' + ((L.filter(function (z) { return z.c === b.dataset.ce; })[0] || {}).nombre || 'el nuevo estímulo') + ': cuenta en semana y mes'); }).catch(falloApi(b));
         }; });
       };
-      abrirHoja(tit + '<input id="ce-q" placeholder="Buscar estímulo (nombre, código, familia)…" autocomplete="off"><div class="hint">★ = misma familia. Mensuales = dosis ligera; semanales = dosis completa. El elegido cuenta para la semana y el mes.</div><div id="ce-l" class="ce-l"></div>');
+      abrirHoja(tit + '<input id="ce-q" placeholder="Buscar ejercicio o bloque…" autocomplete="off"><div class="hint">★ = misma familia. Mensuales = dosis ligera; semanales = dosis completa. El elegido cuenta para la semana y el mes.</div><div id="ce-l" class="ce-l"></div>');
       document.getElementById('ce-q').oninput = function () { q = this.value; pinta(); };
       pinta();
     }).catch(function (e) { abrirHoja(tit + '<div class="pos-act warn"><b>No se pudo cargar</b><span>' + esc(mensajeError(e.message)) + '</span></div>'); });

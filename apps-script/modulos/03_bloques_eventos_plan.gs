@@ -161,7 +161,7 @@ function pintarHojaSemana_(lunes) {
       sh.getRange(f, 8).setDataValidation(esFusionPropuesta_(r) ? vProp : norm(r.ORIGEN) === 'FUSION' ? vEstF : vEst);
       if (vFus && /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO) && !esFusionPropuesta_(r)) sh.getRange(f, 13).setDataValidation(vFus).setBackground('#fff7ed');
       if (listaE && r.ID && norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'FUSION' && !/CARRERA/.test(norm(r.ORIGEN)) && /^(BORRADOR|PROGRAMADO)$/.test(r.ESTADO)) {   // v0.24 · cambiar el estímulo (misma familia primero)
-        var ops = candidatosCambio_(r, listaE).filter(function (x) { return codigosDe_(r['CÓDIGOS']).indexOf(x.c) < 0; }).slice(0, 60).map(function (x) { return '⇄ ' + x.c + ' · ' + String(x.nombre).slice(0, 40) + (x.mismaFamilia ? ' ★' : '') + (x.falta > 0 ? ' · faltan ' + x.falta : ''); });
+        var ops = candidatosCambio_(r, listaE).filter(function (x) { return codigosDe_(r['CÓDIGOS']).indexOf(x.c) < 0; }).slice(0, 60).map(function (x) { return '⇄ ' + (x.bloque || 'Otros') + ' · ' + String(x.nombre).slice(0, 50) + (x.mismaFamilia ? ' ★' : '') + (x.falta > 0 ? ' · faltan ' + x.falta : ''); });   // v0.31.3 · sin códigos
         if (ops.length) sh.getRange(f, 7).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ops, true).setAllowInvalid(true).build());
       }
     });
@@ -223,8 +223,11 @@ function alEditarHoja(e) {
       MEMO = null; pintarHojaSemana_(lunes);
       SpreadsheetApp.getActive().toast(nm + ' bloques movidos (' + (dia ? 'día entero' : 'sesión') + ')', 'Road To Elite', 4); return;
     }
-    if (c === 7 && /^⇄\s*([A-Z][0-9]{2,3})/.test(String(v))) {   // v0.24 · cambiar estímulo
-      var cn = String(v).match(/^⇄\s*([A-Z][0-9]{2,3})/)[1]; cambiarEstimulo_(id, cn); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estímulo cambiado a ' + cn + ' (cuenta en semana y mes)', 'Road To Elite', 4); return;
+    if (c === 7 && /^⇄\s*\S/.test(String(v))) {   // v0.24 · cambiar estímulo (v0.31.3 · por bloque y nombre)
+      var tv = String(v).replace(/^⇄\s*/, '').replace(/ ★.*$| · faltan .*$/g, '').trim(), cn = (tv.match(/^([A-Z][0-9]{2,3})\b/) || [])[1], nomE = tv;
+      if (!cn) { var le = estimulosLista_(lunes).filter(function (x) { return ((x.bloque || 'Otros') + ' · ' + String(x.nombre).slice(0, 50)) === tv; })[0]; if (le) { cn = le.c; nomE = le.nombre; } }
+      if (!cn) { SpreadsheetApp.getActive().toast('No encuentro ese estímulo', 'Road To Elite', 4); pintarHojaSemana_(lunes); return; }
+      cambiarEstimulo_(id, cn); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estímulo cambiado a ' + nomE + ' (cuenta en semana y mes)', 'Road To Elite', 4); return;
     }
     if (/^ORI\|/.test(id)) { pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Ese bloque está dentro de una fusión propuesta: apruébala o recházala en la fila amarilla.', 'Road To Elite', 5); return; }
     if (c === 13 && v) {   // v0.26 · fusionar: propuesta que se aprueba o se rechaza
@@ -729,8 +732,8 @@ function estimulosLista_(lunes) {
   return Object.keys(cat).filter(function (c) { return cat[c].CONTENIDO; }).map(function (c) {
     var r = cat[c], ms = por[c] || [], m = ms[0] || {};
     var falta = ms.reduce(function (a, x) { return Math.max(a, (x.meta || 0) - (x.programado || 0)); }, 0);
-    return { c: c, nombre: r.NOMBRE, familia: m.prioridad || r.ORIGEN || '', carga: String(r.CARGA || ''), min: +r.MIN || 0, ambito: ms.map(function (x) { return x.programado != null && cache.metas.filter(function (q) { return q.ID === x.id; })[0] ? cache.metas.filter(function (q) { return q.ID === x.id; })[0]['ÁMBITO'] : ''; }).filter(Boolean).join('/'), falta: Math.round(falta * 10) / 10, intensidad: r.INTENSIDAD || '' };
-  }).sort(function (a, b) { return a.c < b.c ? -1 : 1; });
+    return { c: c, nombre: r.NOMBRE, bloque: bloqueEstimulo_(c, r), familia: m.prioridad || r.ORIGEN || '', carga: String(r.CARGA || ''), min: +r.MIN || 0, ambito: ms.map(function (x) { return x.programado != null && cache.metas.filter(function (q) { return q.ID === x.id; })[0] ? cache.metas.filter(function (q) { return q.ID === x.id; })[0]['ÁMBITO'] : ''; }).filter(Boolean).join('/'), falta: Math.round(falta * 10) / 10, intensidad: r.INTENSIDAD || '' };
+  }).sort(ordenEstimulos_);   // v0.31.3 · por bloque y nombre del ejercicio, no por código
 }
 /** Familia de un bloque: la de sus códigos (prioridad de la meta) o, si no, su carga. */
 function familiaDe_(codigos, lista) { var cs = codigosDe_(codigos); var e = lista.filter(function (x) { return cs.indexOf(x.c) >= 0; })[0]; return e ? e.familia : ''; }
@@ -740,7 +743,7 @@ function candidatosCambio_(r, lista) {
   var VAC = /^(P[0-9]+|CALIDAD|FATIGA|EN|DE|Y|ESPECIFICA|INTEGRACION|ACCESORIOS|COMPETICION)$/;
   var gr = function (f) { return norm(String(f)).split(/[^A-Z0-9]+/).filter(function (w) { return w.length > 2 && !VAC.test(w); }); };
   return lista.map(function (x) { var gf = gr(fam), p = (x.familia && x.familia === fam ? 100 : gr(x.familia).some(function (w) { return gf.indexOf(w) >= 0; }) ? 60 : 0) + (car && x.carga && norm(x.carga).split(/[ ,]+/).some(function (k) { return k && norm(car).indexOf(k) >= 0; }) ? 20 : 0) + Math.min(10, x.falta * 5);
-    return Object.assign({ puntos: p, mismaFamilia: p >= 60 }, x); }).sort(function (a, b) { return b.puntos - a.puntos || (a.c < b.c ? -1 : 1); });
+    return Object.assign({ puntos: p, mismaFamilia: p >= 60 }, x); }).sort(function (a, b) { return (b.mismaFamilia ? 1 : 0) - (a.mismaFamilia ? 1 : 0) || ordenEstimulos_(a, b); });   // v0.31.3 · ★ primero y luego por bloque y nombre
 }
 /** Dosis según el ámbito: semanal = completa; mensual = pequeña dosis ligera (≤12′, RPE ≤7, sin fatiga del SNC). */
 function dosisPorAmbito_(o, ambito) {
@@ -835,7 +838,7 @@ function abrirDialogoBloque_(iso, turno) {
 /** Datos del diálogo: estímulos (con lo que falta) y los bloques de esa sesión para elegir el hueco. Público para google.script.run. */
 function datosDialogoBloque(iso, turno) {
   iso = celdaIso_(iso) || hoyIso_(); turno = turno === 'AM' ? 'AM' : 'PM';
-  var est = []; try { est = estimulosLista_(lunesDe_(iso)).map(function (x) { return { c: x.c, nombre: x.nombre, familia: x.familia || 'Otros', falta: x.falta || 0 }; }); } catch (e) {}
+  var est = []; try { est = estimulosLista_(lunesDe_(iso)).map(function (x) { return { c: x.c, nombre: x.nombre, familia: x.bloque || 'Otros', falta: x.falta || 0 }; }); } catch (e) {}
   var bl = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && (r.TURNO === 'AM' ? 'AM' : 'PM') === turno && !/^(SUSTITUIDO|OCULTO|PROPUESTA|NO HACER|CANCELADO)$/.test(r.ESTADO); })
     .map(function (r) { return { orden: parseFloat(String(r.ORDEN).replace(',', '.')) || 0, titulo: String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 60), fabrik: norm(r.ORIGEN) === 'FABRIK' }; })
     .sort(function (a, b) { return a.orden - b.orden; });
@@ -874,7 +877,7 @@ var HTML_DIALOGO_BLOQUE_ = '<!doctype html><html><head><base target="_top"><styl
   'if(!E.length){E=r.estimulos;filtrar()}}' +
   'function filtrar(){var q=$("q").value.toLowerCase(),sel={};[].forEach.call(document.querySelectorAll("#est input:checked"),function(i){sel[i.value]=1});var g={};' +
   'E.forEach(function(e){if(q&&(e.c+" "+e.nombre).toLowerCase().indexOf(q)<0&&!sel[e.c])return;(g[e.familia]=g[e.familia]||[]).push(e)});var h="";' +
-  'Object.keys(g).sort().forEach(function(f){h+="<div class=fam>"+f+"</div>";g[f].forEach(function(e){h+="<label class=e><input type=checkbox value=\'"+e.c+"\'"+(sel[e.c]?" checked":"")+"> "+e.c+" · "+e.nombre+(e.falta>0?" <span class=f>falta "+e.falta+"</span>":"")+"</label>"})});' +
+  'Object.keys(g).forEach(function(f){h+="<div class=fam>"+f+"</div>";g[f].forEach(function(e){h+="<label class=e><input type=checkbox value=\'"+e.c+"\'"+(sel[e.c]?" checked":"")+"> "+e.nombre+(e.falta>0?" <span class=f>falta "+e.falta+"</span>":"")+"</label>"})});' +
   '$("est").innerHTML=h||"Sin resultados"}' +
   '$("fecha").value=D.iso;$("turno").value=D.turno;$("fecha").onchange=cargar;$("turno").onchange=cargar;$("q").oninput=filtrar;cargar();' +
   '$("ok").onclick=function(){var c=[].map.call(document.querySelectorAll("#est input:checked"),function(i){return i.value});var b=this;b.disabled=true;b.textContent="Guardando…";' +
@@ -918,7 +921,7 @@ function estadoEditadoEnPlan_(e) {
 function pintarFilasNuevo_(sh, lunes, nuevas) {
   if (!nuevas.length) return;
   var est = []; try { est = estimulosLista_(lunes); } catch (e) {}
-  var ops = est.map(function (x) { return x.c + ' · ' + String(x.nombre || '').slice(0, 60) + (x.falta > 0 ? ' (falta ' + x.falta + ')' : ''); });
+  var ops = est.map(etiquetaEstimulo_);   // v0.31.3 · «Bloque · ejercicio», sin códigos
   if (!ops.length) { var cat0 = catalogo_(); ops = Object.keys(cat0).map(function (c) { return c + ' · ' + String(cat0[c].NOMBRE || ''); }); }
   var vEst = SpreadsheetApp.newDataValidation().requireValueInList(ops.slice(0, 480), true).setAllowInvalid(true).setHelpText('Estímulo que cubre este bloque (hasta 4: columnas CÓDIGOS, MOVER A, INTERCAMBIAR CON y POR QUÉ).').build();
   var vTipo = SpreadsheetApp.newDataValidation().requireValueInList(['EXTRA', 'TÉCNICA', 'CARRERA', 'Z6–Z8', 'MOVILIDAD'], true).setAllowInvalid(false).build();
@@ -938,7 +941,9 @@ function crearDesdeFilaNueva_(sh, f, id, lunes) {
   var v = sh.getRange(f, 1, 1, 12).getValues()[0], pa = id.split('|'), iso = pa[1], tu = pa[2] === 'AM' ? 'AM' : 'PM';
   var titulo = String(v[2] || '').trim();
   if (!titulo) { SpreadsheetApp.getActive().toast('Falta el título del bloque (columna BLOQUE).', 'Road To Elite', 5); sh.getRange(f, 8).setValue(''); return; }
-  var cods = [v[6], v[8], v[9], v[10]].map(function (x) { return String(x || '').split(' · ')[0].trim().toUpperCase(); }).filter(function (c, i, a) { return /^[A-Z]{1,3}[0-9]{1,3}$/.test(c) && a.indexOf(c) === i; });
+  var mapa = {}; try { estimulosLista_(lunes).forEach(function (x) { mapa[etiquetaEstimulo_(x).replace(/ \(falta [^)]*\)$/, '')] = x.c; }); } catch (eM) {}
+  var cods = [v[6], v[8], v[9], v[10]].map(function (x) { var t = String(x || '').trim().replace(/ \(falta [^)]*\)$/, ''); if (mapa[t]) return mapa[t]; return t.split(' · ')[0].trim().toUpperCase(); })
+    .filter(function (c, i, a) { return /^[A-Z]{1,3}[0-9]{1,3}$/.test(c) && a.indexOf(c) === i; });
   var bl = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && (r.TURNO === 'AM' ? 'AM' : 'PM') === tu && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO); })
     .sort(function (a, b) { return (parseFloat(String(a.ORDEN).replace(',', '.')) || 0) - (parseFloat(String(b.ORDEN).replace(',', '.')) || 0); });
   var ord = function (r) { return parseFloat(String(r.ORDEN).replace(',', '.')) || 0; }, h = String(v[1] || 'Antes de la clase'), orden;
@@ -953,3 +958,21 @@ function crearDesdeFilaNueva_(sh, f, id, lunes) {
   pintarHojaSemana_(lunes); try { refrescarResumen_(); } catch (e2) {}
   SpreadsheetApp.getActive().toast('Añadido «' + titulo + '»' + (cods.length ? ' · cuenta para ' + cods.join(', ') : ' · sin estímulos: no suma a metas'), 'Road To Elite', 6);
 }
+
+// ===================== v0.31.3 · ESTÍMULOS POR BLOQUE Y NOMBRE (Pablo 17/11: los códigos no le dicen nada) =====================
+var ORDEN_BLOQUES_EST_ = ['Motor', 'Empuje vertical', 'Estabilidad OH', 'RMU y gimnásticos', 'Haltero y potencia', 'Haltero técnico', 'Pierna accesoria', 'Cadena posterior', 'Core', 'Comba', 'Interferencia', 'Movilidad', 'Otros'];
+function bloqueEstimulo_(c, r) {
+  for (var k in FAMILIAS_) if (FAMILIAS_[k].indexOf(c) >= 0) return k === 'Unilateral' ? 'Pierna accesoria' : k;
+  if (/^(W0[1-4]|R0[1-4]|V01|RC1|RF1|W40|MU1|OP3)$/.test(c) || norm(r && r.ORIGEN) === 'CARRERA') return 'Motor';
+  if (/^(W13|M30|M49|M48|M01|M31|M36|M37)$/.test(c)) return 'RMU y gimnásticos';
+  if (/^(W20|W23|W24|W34|M17|M63|M52|W07|W08)$/.test(c)) return 'Haltero y potencia';
+  if (/^(T0[1-3]|C0[1-4]|M57|M38|M05|M07|M54|M55|M64|M59)$/.test(c)) return 'Interferencia';
+  if (/^(W10|W41)$/.test(c) || norm(r && r.ORIGEN) === 'MOVILIDAD') return 'Movilidad';
+  return 'Otros';
+}
+function ordenEstimulos_(a, b) {
+  var ia = ORDEN_BLOQUES_EST_.indexOf(a.bloque), ib = ORDEN_BLOQUES_EST_.indexOf(b.bloque);
+  if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es');
+}
+function etiquetaEstimulo_(x) { return (x.bloque || 'Otros') + ' · ' + String(x.nombre || x.c).slice(0, 60) + (x.falta > 0 ? ' (falta ' + x.falta + ')' : ''); }

@@ -38,6 +38,7 @@ function semanaCompletaSin_(semana) {
   try { out.reest = reestActiva_(lunes); } catch (e) { out.reest = []; }
   try { out.activacion = activacionSemana_(lunes); } catch (e) { out.activacion = {}; }   // v0.29
   try { out.pausa = pausaInfo_(); } catch (e) { out.pausa = []; }   // v0.30
+  try { var catN = catalogo_(); out.nombresEst = {}; Object.keys(catN).forEach(function (c) { out.nombresEst[c] = String(catN[c].NOMBRE || c); }); } catch (e) { out.nombresEst = {}; }   // v0.31.3 · nombres de los estímulos (la app no enseña códigos)
   try { var hoyF = hoyIso_(); out.feedbackAyer = hoyF >= lunes && hoyF <= sumarDias(lunes, 7) ? feedbackAyer_(hoyF) : []; } catch (e) { out.feedbackAyer = []; }
   try { out.op = opPayload_(lunes); if (out.op && out.op.activo && out.fabrik) out.fabrik = opFabrik_(out.fabrik, opSemana_(lunes)); } catch (e) { out.op = null; }   // v0.27 · modo operación (Fabrik solo se filtra al enseñarlo)
   try { var pk = pesoKg_(); out.combustible = {}; for (var k = 0; k < 7; k++) { var dk = sumarDias(lunes, k); out.combustible[dk] = combustibleDia_(dk, pk); } } catch (e) { out.combustible = {}; }

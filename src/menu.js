@@ -1203,7 +1203,7 @@
           var idSel = b.extra ? b.id : b.idPlan;
           return '<button type="button" class="h-b' + (b.extra ? ' ex' : '') + (S.fusionSel && S.fusionSel.indexOf(idSel) >= 0 ? ' sel' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' || est === 'CANCELADO' ? ' off' : '') + (est === 'BORRADOR' ? ' draft' : '') + '"' + edit + '>' +
             '<span class="h-n">' + (b.extra ? '+' : esc(b.n)) + '</span><span class="h-ti">' + (b.clave ? '🎯 ' : '') + esc(b.titulo) + '</span>' + (/^manual/.test((filaPlanDe(b) || {}).GENERADO || '') ? '<span title="Con candado: «Rehacer extras» no lo mueve">🔒</span>' : '') + (gr && gr.reels && gr.reels.length ? '<span>📷</span>' : '') +
-            (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(String(b.codigos).split('|')[0]) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
+            (b.min ? '<span class="tag">' + esc(b.min) + '′</span>' : '') + (b.codigos ? '<span class="tag">' + esc(nombresCodigos(String(b.codigos).split('|')[0])) + '</span>' : '') + (EST_CORTO[est] ? '<span class="tag draft">' + EST_CORTO[est] + '</span>' : '') + '</button>';
         }).join('') + '</div>';
       };
       return '<section class="h-dia' + (x.iso === d.hoy ? ' hoy' : '') + '"><div class="h-cab"><b>' + NOMBRE_DIA[x.nombre] + ' ' + diaMes(x.iso) + '</b>' + (x.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(x.rpe) + '">RPE ' + esc(x.rpe) + '</span>' : '') +
