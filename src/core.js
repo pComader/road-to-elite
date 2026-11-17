@@ -315,8 +315,15 @@
     d.diasCambiados = {}; re.forEach(function (r) { d.diasCambiados[aIso(r.FECHA)] = 1; });
     return d;
   }
+  // v0.31.2 · ORDEN llega con coma decimal (libro en es_ES: «50,5») → Number() daba NaN y el bloque se pintaba fuera de sitio
+  function ordenNum(v) { var n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? 0 : n; }
+  /** v0.31.2 · «lo último manda»: de dos filas con el mismo ID (o la misma referencia de Fabrik) vale la modificada más tarde. */
+  function selloAct(r) { var m = String(r.ACTUALIZADO || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/); return m ? m[3] + ('0' + m[2]).slice(-2) + ('0' + m[1]).slice(-2) + ('0' + (m[4] || 0)).slice(-2) + (m[5] || '00') : ''; }
+  function masNueva(a, b) { if (!a) return true; var sa = selloAct(a), sb = selloAct(b); return sb !== sa ? sb > sa : (b._fila || 0) > (a._fila || 0); }
   function construirDatosBase(sem) {
-    var fab = sem.fabrik, porNombre = {}, plan = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO' && norm(r.ESTADO) !== 'SIN HUECO'; });
+    var fab = sem.fabrik, porNombre = {}, plan0 = (sem.plan || []).filter(function (r) { return norm(r.ESTADO) !== 'SUSTITUIDO' && norm(r.ESTADO) !== 'SIN HUECO'; });
+    var vig = {}; plan0.forEach(function (r) { if (r.ID && masNueva(vig[r.ID], r)) vig[r.ID] = r; });
+    var plan = plan0.filter(function (r) { return !r.ID || vig[r.ID] === r; });   // v0.31.2 · una sola fila por ID (la vigente)
     if (fab) { fab.dias.forEach(function (fd) { porNombre[fd.nombre] = fd; }); S.ciclo = fab.ciclo; guardar('rte-ciclo', fab.ciclo); }
     var dias = DIAS7.map(function (nom, i) { return { nombre: nom, iso: sumarDias(sem.lunes, i), foco: [], bloques: [], rpe: null, notasDia: [] }; });
     var porIso = {}; dias.forEach(function (x) { porIso[x.iso] = x; });
@@ -324,7 +331,7 @@
     plan.forEach(function (r) {
       if (norm(r.ORIGEN) !== 'FABRIK') return;
       var f = refFabrik(r); if (!f) return;
-      if (f.n == null) refDia[f.dia] = r; else refBloque[f.dia + '·' + f.n] = r;
+      if (f.n == null) { if (masNueva(refDia[f.dia], r)) refDia[f.dia] = r; } else if (masNueva(refBloque[f.dia + '·' + f.n], r)) refBloque[f.dia + '·' + f.n] = r;   // v0.31.2 · la más reciente
     });
     function datosDia(dia, fd, nota) {
       if (dia.fabrik && dia.fabrik !== fd.nombre) return;
@@ -341,7 +348,7 @@
         var r = rb || rd;
         if (rb && /editado/.test(rb.GENERADO || '') && rb.CONTENIDO) b = Object.assign({}, b, { titulo: rb['TÍTULO'] || b.titulo, partes: partesDeTexto(rb.CONTENIDO) });
         b.turno = r && norm(r.TURNO) === 'AM' ? 'AM' : 'PM';
-        b.orden = rb && rb.ORDEN !== '' ? Number(rb.ORDEN) : (rd && rd.ORDEN !== '' ? Number(rd.ORDEN) + k / 100 : 50 + k / 100);
+        b.orden = rb && rb.ORDEN !== '' ? ordenNum(rb.ORDEN) : (rd && rd.ORDEN !== '' ? ordenNum(rd.ORDEN) + k / 100 : 50 + k / 100);   // v0.31.2
         b.fabrikDia = fd.nombre;
         infoPlan(b, r);
         if (rd && !rb) { b.porque = b.porque || ''; }
@@ -355,7 +362,7 @@
       var dd = porIso[aIso(r.FECHA)];
       if (!dd) return;
       dd.bloques.push(infoPlan({ n: 'E' + (k + 1), titulo: r['TÍTULO'] || r.BLOQUE || 'EXTRA', partes: [{ etiqueta: '', tipo: 'main', texto: r.CONTENIDO || '' }],
-        extra: true, origen: r.ORIGEN || 'EXTRA', turno: norm(r.TURNO) === 'AM' ? 'AM' : 'PM', orden: Number(r.ORDEN) || 0, intensidad: r.INTENSIDAD || '', min: r.MIN || '',
+        extra: true, origen: r.ORIGEN || 'EXTRA', turno: norm(r.TURNO) === 'AM' ? 'AM' : 'PM', orden: ordenNum(r.ORDEN), intensidad: r.INTENSIDAD || '', min: r.MIN || '',
         codigos: r['CÓDIGOS'] || '', id: r.ID || ('X-' + r._fila) }, r));
     });
     var clave = sem.clave || {};
@@ -386,7 +393,8 @@
       sinHueco: (sem.plan || []).filter(function (r) { return norm(r.ESTADO) === 'SIN HUECO'; }), extrasTxt: sem.extras || '', extrasParcial: sem.extrasParcial || null, videosVer: sem.videosVer || '', competisPreguntas: sem.competisPreguntas || [], fabrikDias: sem.fabrikDias || [], rpeEst: fab ? fab.dias.reduce(function (o, fd) { if (fd.rpeEstimado) o[fd.nombre] = 1; return o; }, {}) : {} };
   }
   /** Aplica la respuesta del servidor (acciones que devuelven la semana) sin perder el día abierto. */
-  function aplicarSemana(sem) { if (!sem) return; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
+  // v0.31.2 · verDatos cuenta las semanas aplicadas desde respuestas de cambios: ver cargar()
+  function aplicarSemana(sem) { if (!sem) return; S.verDatos = (S.verDatos || 0) + 1; var dia = S.dia; S.cobertura = null; S.data = construirDatos(sem); S.dia = dia; guardar('rte-cache', { config: S.config, semana: sem, marcas: S.marcasFilas || null }); guardarSemanaLocal(sem); }
 
   // ---------- sin conexión: copia de cada semana en el móvil y cola de lo que guardas ----------
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
@@ -503,9 +511,12 @@
 
   function cargar(semana) {
     S.cargando = true;
-    var primera = !S.config;
+    var primera = !S.config, ver0 = S.verDatos || 0;
     return api({ action: primera ? 'inicio' : 'semana', semana: semana || null }).then(function (res) {
       S.cargando = false;
+      // v0.31.2 · lo último manda: si mientras llegaba esta recarga se aplicó la respuesta de un cambio (no hacer, volver a programar, mover…),
+      //   esta copia es anterior a ese cambio y no debe pisarlo: se pide otra vez.
+      if (res.ok && (S.verDatos || 0) !== ver0 && S.data && (!semana || semana === S.data.semana)) { if (res.config) S.config = res.config; S.cargando = true; return cargar(semana); }
       if (!res.ok) {
         if (res.error === 'no_autorizado' || res.error === 'sesion_caducada' || res.error === 'sin_sesion') { salir(); return; }
         S.aviso = 'No se pudo cargar (' + (res.detalle || res.error) + ').';
@@ -1995,7 +2006,9 @@
       api({ action: 'backup_ahora' }).then(ok).then(function (r) { S.config = r.config; render(); toast('Backup en Drive hecho (' + r.backup.kb + ' KB). El PC lo copiará a E: en la hora siguiente.'); }).catch(falloApi(b));
       return;
     }
-    if ((b = t.closest('[data-mananas]'))) { abrirPreviaExtras(S.data.semana, null, { reabrir: !S.data.borrador, modo: 'semana' }); return; }
+    // v0.31.2 · semana ya Programada = siempre Reprogramar (reabrir), haya o no borradores: sin reabrir el servidor responde «semana_programada»
+    if ((b = t.closest('[data-mananas]'))) { abrirPreviaExtras(S.data.semana, null, { reabrir: !S.data.borrador || /Programada/.test((S.data.conf || {}).ESTADO || ''), modo: 'semana' }); return; }
+    if ((b = t.closest('[data-reprogramar]'))) { abrirPreviaExtras(b.dataset.reprogramar || S.data.semana, null, { reabrir: true, modo: 'semana' }); return; }
     if ((b = t.closest('[data-cargar-extras]'))) { abrirPreviaExtras(b.dataset.cargarExtras || S.data.semana, b); return; }
     if ((b = t.closest('[data-sin-hueco]'))) {
       var rsh = (S.data.sinHueco || []).filter(function (r) { return r.ID === b.dataset.sinHueco; })[0];

@@ -61,6 +61,8 @@ function doPost(e) {
     // Operaciones que pueden llegar desde la cola sin conexión: si ya se procesaron (mismo «op»), no se repiten.
     var op = /^[\w-]{8,60}$/.test(String(body.op || '')) ? 'op_' + body.op : '', cacheOp = CacheService.getScriptCache();
     if (op && cacheOp.get(op)) return json_({ ok: true, repetida: true });
+    // v0.31.2 · la caché de la semana se invalida ANTES y después de escribir: una lectura en paralelo no puede guardar lo de antes con la revisión de después
+    if (!esSoloLectura_(a)) try { invalidarSemana_(); } catch (eI0) {}
     var res; try { res = accion_(a, body, user); } finally { if (!esSoloLectura_(a)) try { invalidarSemana_(); } catch (eI) {} }
     if (op && res && res.ok) cacheOp.put(op, '1', 21600);
     var ms = Date.now() - t0;
@@ -321,7 +323,22 @@ function celdaSegura_(v) {
   if (/^\+/.test(v) && !/^\+\d+([.,]\d+)?$/.test(v)) return "'" + v;
   return v;
 }
-function filaDe_(cab, o) { return cab.map(function (h) { return o[h] == null ? '' : celdaSegura_(o[h]); }); }
+function filaDe_(cab, o) { return cab.map(function (h) { return o[h] == null ? '' : celdaSegura_(h === 'ORDEN' ? ordenCelda_(o[h]) : o[h]); }); }
+// v0.31.2 · ORDEN siempre como NÚMERO. El libro está en es_ES: getDisplayValues lo enseña con coma («50,5») y un texto
+//   «49.125» escrito con setValue se lee como 49125 (punto = miles) → el bloque saltaba al final de la sesión.
+function ordenNum_(v) { var n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? 0 : n; }
+function ordenCelda_(v) { return /^\s*-?\d+([.,]\d+)?\s*$/.test(String(v == null ? '' : v)) ? ordenNum_(v) : v; }
+// v0.31.2 · «lo último manda»: si una fila del PLAN está duplicada (mismo ID), manda la modificada más tarde (ACTUALIZADO; a igualdad, la de más abajo).
+function selloActualizado_(r) { var m = String(r.ACTUALIZADO || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/); return m ? m[3] + ('0' + m[2]).slice(-2) + ('0' + m[1]).slice(-2) + ('0' + (m[4] || 0)).slice(-2) + (m[5] || '00') : ''; }
+function masReciente_(a, b) { var sa = selloActualizado_(a), sb = selloActualizado_(b); return sa !== sb ? (sa < sb ? 1 : -1) : b._fila - a._fila; }
+/** Todas las filas de APP · PLAN con ese ID (sin las SUSTITUIDO, salvo que solo haya esas), la vigente primero. */
+function filasPlanId_(id, plan) {
+  id = String(id || ''); if (!id) return [];
+  var l = (plan || listar_(HOJAS.PLAN)).filter(function (r) { return r.ID === id; });
+  var vivas = l.filter(function (r) { return r.ESTADO !== 'SUSTITUIDO'; });
+  return (vivas.length ? vivas : l).sort(masReciente_);
+}
+function filaPlanId_(id, plan) { return filasPlanId_(id, plan)[0] || null; }
 
 function anadirFila_(nombre, o) {
   return bloqueo_(function () {

@@ -10,13 +10,13 @@ function soloPosicion_(o) { return Object.keys(o).every(function (k) { return CA
 function intercambiarBloques_(idA, idB) {
   return bloqueo_(function () {
     var plan = listar_(HOJAS.PLAN);
-    var a = plan.filter(function (r) { return r.ID === String(idA || ''); })[0], b = plan.filter(function (r) { return r.ID === String(idB || ''); })[0];
+    var la = filasPlanId_(idA, plan), lb = filasPlanId_(idB, plan), a = la[0], b = lb[0];   // v0.31.2 · la fila vigente (y sus copias)
     if (!a || !b || a.ID === b.ID) throw new Error('no_encontrado');
     if (lunesDe_(celdaIso_(a.FECHA)) !== lunesDe_(celdaIso_(b.FECHA))) throw new Error('otra_semana');
-    var pos = function (r) { var iso = celdaIso_(r.FECHA); return { FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: r.TURNO === 'AM' ? 'AM' : 'PM', ORDEN: r.ORDEN }; };
+    var pos = function (r) { var iso = celdaIso_(r.FECHA); return { FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: r.TURNO === 'AM' ? 'AM' : 'PM', ORDEN: ordenNum_(r.ORDEN) }; };
     var pa = pos(a), pb = pos(b), sello = function (r) { return norm(r.ORIGEN) === 'FABRIK' ? {} : { GENERADO: 'manual ' + ahora_() + ' (candado · intercambio)' }; };
-    actualizarFila_(HOJAS.PLAN, a._fila, Object.assign({}, pb, sello(a), { ACTUALIZADO: ahora_() }));
-    actualizarFila_(HOJAS.PLAN, b._fila, Object.assign({}, pa, sello(b), { ACTUALIZADO: ahora_() }));
+    la.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, Object.assign({}, pb, sello(a), { ACTUALIZADO: ahora_() })); });
+    lb.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, Object.assign({}, pa, sello(b), { ACTUALIZADO: ahora_() })); });
     return lunesDe_(celdaIso_(a.FECHA));
   });
 }
@@ -41,7 +41,7 @@ function intercambiarSesion_(a, b) {
     var A = de(ia, ta), B = de(ib, tb), n = 0;
     var mover = function (r, iso, t) {
       var o = { FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), ACTUALIZADO: ahora_() };
-      if (t !== 'DIA') { o.TURNO = t; var ord = parseFloat(String(r.ORDEN).replace(',', '.')) || 50; if (tu(r) !== t) o.ORDEN = String(t === 'AM' ? (ord >= 50 ? ord - 40 : ord) : (ord < 50 ? ord + 40 : ord)); }
+      if (t !== 'DIA') { o.TURNO = t; var ord = ordenNum_(r.ORDEN) || 50; if (tu(r) !== t) o.ORDEN = String(t === 'AM' ? (ord >= 50 ? ord - 40 : ord) : (ord < 50 ? ord + 40 : ord)); }
       if (norm(r.ORIGEN) !== 'FABRIK' && !/^manual/.test(r.GENERADO || '')) o.GENERADO = 'manual ' + ahora_() + ' (candado · intercambio de sesión)';
       actualizarFila_(HOJAS.PLAN, r._fila, o); n++;
     };
@@ -54,9 +54,9 @@ function intercambiarSesion_(a, b) {
 function moverBloqueA_(id, hueco, lunes) {
   var k = HUECOS_.indexOf(String(hueco || '').trim()); if (k < 0) throw new Error('hueco_no_valido');
   var iso = sumarDias(lunes, Math.floor(k / 2)), turno = k % 2 ? 'PM' : 'AM';
-  var otros = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && r.TURNO === turno && r.ID !== id; });
-  var orden = otros.reduce(function (m, r) { return Math.max(m, parseFloat(String(r.ORDEN).replace(',', '.')) || 0); }, turno === 'AM' ? 9 : 49) + 1;
-  editarBloque_({ id: id, campos: { FECHA: isoAFecha(iso), TURNO: turno, ORDEN: String(orden) } });
+  var otros = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && r.TURNO === turno && r.ID !== id && !/^(SUSTITUIDO|OCULTO)$/.test(r.ESTADO); });
+  var orden = otros.reduce(function (m, r) { return Math.max(m, ordenNum_(r.ORDEN)); }, turno === 'AM' ? 9 : 49) + 1;
+  editarBloque_({ id: id, campos: { FECHA: isoAFecha(iso), TURNO: turno, ORDEN: orden } });   // v0.31.2 · número, no texto
 }
 
 /** Pinta la semana día a día (AM / PM) con todos los bloques: Fabrik + extras + carrera. */
@@ -74,7 +74,7 @@ function pintarHojaSemana_(lunes) {
   var todosSem = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin; });
   var propFus = [], oriFus = [];   // v0.26 · filas de fusiones en propuesta y de sus originales
   try { clave = claveSemana_(lunes, plan); } catch (e) {}
-  var filas = [], estilos = [], claves = [], sesiones = [], tuyos = [], cancel = [];   // estilos: [fila, tipo]
+  var filas = [], estilos = [], claves = [], sesiones = [], tuyos = [], cancel = [], nuevasFilas = [];   // estilos: [fila, tipo]
   filas.push(['SEMANA EN BLOQUES · Fabrik + extras + carrera', '', '', '', '', '', '', '', '', '', '', '']);
   filas.push(['Lunes de la semana →', isoAFecha(lunes), '↻ Actualizar', false, '✓ PROGRAMAR TODA LA SEMANA →', false, '', '', '', '', '', '']);
   filas.push(['Cambia la fecha o marca la casilla para recargar. Edita BLOQUE, EJERCICIOS o MIN y se guarda en el plan (lo que ves en la app). Para mover un bloque elige «MOVER A»; para cambiar dos entre sí, «INTERCAMBIAR CON». En la fila de cada sesión (☀️ AM / 🌙 PM), «INTERCAMBIAR CON» cambia la sesión entera o el día entero por los de otro día. En ESTADO: CANCELADO = no se hace (no va a pendientes; vuelve con PROGRAMADO), A PENDIENTES = para la semana siguiente. En naranja, lo que no es Fabrik. 🎯 = clave para tus carencias. ✓ PROGRAMAR: en la fila de cada sesión, columna ESTADO → sesión o día entero; arriba, toda la semana. ⇄ CÓDIGOS (extras): cambia el estímulo por otro del catálogo (primero la misma familia). 🔗 FUSIONAR: en la última columna del bloque elige el otro (solo en uno de los dos); aparece la PROPUESTA en amarillo y en su ESTADO eliges ✓ APROBAR o ✗ RECHAZAR (al rechazar, los dos vuelven a su sitio y estado). Ya aprobada: ESTADO → ↶ DESHACER FUSIÓN.', '', '', '', '', '', '', '', '', '', '', '']);
@@ -110,6 +110,9 @@ function pintarHojaSemana_(lunes) {
         }
         estilos.push([filas.length, /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03)\b/.test(r['CÓDIGOS'] || '') ? 'carrera' : /W03/.test(r['CÓDIGOS'] || '') ? 'ergo' : fab ? 'fabrik' : 'extra']);
       });
+      // v0.31.2 · fila fija para añadir un bloque en esta sesión (si no se rellena, no existe y no sale en la app)
+      filas.push(['', 'Antes de la clase', '', '', 'EXTRA', '', '', '', '', '', '', 'NEW|' + iso + '|' + tu]);
+      nuevasFilas.push({ fila: filas.length, bl: bl });
     });
   }
   sh.clear(); sh.setConditionalFormatRules([]);
@@ -171,6 +174,7 @@ function pintarHojaSemana_(lunes) {
   sesiones.forEach(function (f) { sh.getRange(f, 10).setDataValidation(vSes).setBackground('#ffffff'); sh.getRange(f, 12).setFontColor('#bbbbbb'); });
   var vAdd = SpreadsheetApp.newDataValidation().requireValueInList(['⇄ sesión →', '＋ AÑADIR BLOQUE AQUÍ'], true).setAllowInvalid(true).setHelpText('Elige «＋ AÑADIR BLOQUE AQUÍ» para crear un bloque en esta sesión con uno o varios estímulos.').build();
   sesiones.forEach(function (f) { sh.getRange(f, 9).setDataValidation(vAdd).setBackground('#ecfdf5').setFontColor('#047857'); });   // v0.30.5
+  try { pintarFilasNuevo_(sh, lunes, nuevasFilas); } catch (eNf) { Logger.log('Filas nuevo bloque: ' + eNf); }   // v0.31.2
   sh.getRange(5, 1, Math.max(1, filas.length - 4), 12).setVerticalAlignment('top').setWrap(true);
   sh.getRange(5, 11, Math.max(1, filas.length - 4), 1).setFontStyle('italic');
   sh.getRange(5, 4, Math.max(1, filas.length - 4), 1).setFontFamily('Roboto Mono').setFontSize(9);
@@ -206,6 +210,7 @@ function alEditarHoja(e) {
     if (f === 2 && c === 6 && v === true) { var np = programarRango_(lunesDe_(lunes)); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(np + ' bloques pasan a PROGRAMADO (toda la semana)', 'Road To Elite', 4); return; }
     if (f < 5) return;
     var id = String(sh.getRange(f, 12).getValue() || '').trim(); if (!id) return;
+    if (/^NEW\|/.test(id)) { if (c === 8 && /AÑADIR/.test(String(v))) crearDesdeFilaNueva_(sh, f, id, lunes); return; }   // v0.31.2 · fila «＋ nuevo bloque»
     if (/^SES\|/.test(id) && c === 9 && /AÑADIR/.test(String(v))) { var pa = id.split('|'); sh.getRange(f, 9).setValue('⇄ sesión →'); abrirDialogoBloque_(pa[1], pa[2]); return; }   // v0.30.5
     if (/^SES\|/.test(id)) {   // v0.22 · sesión o día entero
       if (c === 8 && /PROGRAMAR/.test(String(v))) { var pz = id.split('|'), nz = programarRango_(lunesDe_(lunes), pz[1], /DÍA/.test(String(v)) ? '' : pz[2]); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(nz + ' bloques pasan a PROGRAMADO', 'Road To Elite', 4); return; }
@@ -241,12 +246,13 @@ function alEditarHoja(e) {
     }
     if (c === 8 && /DESHACER FUSI/.test(String(v))) { desfusionar_(id); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Fusión deshecha', 'Road To Elite', 4); return; }
     if (c === 8) {   // v0.22 · estado desde el Sheet
-      var ev = String(v || '').trim(), xr = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0]; if (!xr) return;
+      var ev = String(v || '').trim(), xr = filaPlanId_(id); if (!xr) return;   // v0.31.2 · la fila vigente si hay duplicadas
       if (ev === 'CANCELADO') noHacer_({ id: id, fecha: celdaIso_(xr.FECHA), cancelar: true, motivo: 'Cancelado desde el Sheet' });
-      else if (ev === 'PROGRAMADO' && /^(CANCELADO|NO HACER|SIN HUECO)$/.test(xr.ESTADO)) reactivarBloque_(id);   // v0.31.1 · también desde NO HACER
+      else if (/^(PROGRAMADO|BORRADOR)$/.test(ev) && /^(CANCELADO|NO HACER|SIN HUECO)$/.test(xr.ESTADO)) reactivarBloque_(id, ev);   // v0.31.1 · también desde NO HACER · v0.31.2 · y a BORRADOR
       else if (ev === 'NO HACER') noHacer_({ id: id, fecha: celdaIso_(xr.FECHA), motivo: 'No hacer desde el Sheet' });
       else if (ev === 'A PENDIENTES') quitarBloque_({ id: id, pendiente: true, motivo: 'Desde APP · SEMANA EN BLOQUES' });
-      else if (ev === 'PROGRAMADO' && xr.ESTADO === 'BORRADOR') actualizarFila_(HOJAS.PLAN, xr._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
+      else if (/^(PROGRAMADO|BORRADOR)$/.test(ev) && /^(PROGRAMADO|BORRADOR)$/.test(xr.ESTADO) && ev !== xr.ESTADO)   // v0.31.2 · PROGRAMADO → BORRADOR también
+        filasPlanId_(id).forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: ev, ACTUALIZADO: ahora_() }); });
       MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estado: ' + ev, 'Road To Elite', 3); return;
     }
     if (c === 3 || c === 4 || c === 6) {   // v0.11: editar título, ejercicios o minutos desde el Sheet
@@ -340,7 +346,7 @@ function diaDe_(iso) { return iso ? NOMBRES_DIA[(new Date(iso + 'T12:00:00Z').ge
 /** Actualiza columnas concretas de una fila (solo en este libro). */
 function actualizarFila_(nombre, fila, o) {
   var sh = hojaMia_(nombre), cab = cabeceras_(sh);
-  Object.keys(o).forEach(function (h) { var j = cab.indexOf(h); if (j >= 0) sh.getRange(fila, j + 1).setValue(celdaSegura_(o[h])); });
+  Object.keys(o).forEach(function (h) { var j = cab.indexOf(h); if (j >= 0) sh.getRange(fila, j + 1).setValue(celdaSegura_(h === 'ORDEN' ? ordenCelda_(o[h]) : o[h])); });   // v0.31.2 · ORDEN como número
 }
 
 // ===================== EVENTOS =====================
@@ -489,12 +495,17 @@ function noHacer_(b) {
   var id = String(b.id || ''), motivo = String(b.motivo || '').slice(0, 1000);
   if (!id || !b.fecha) throw new Error('faltan_datos');
   return bloqueo_(function () {
-    var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0];
+    var plan = listar_(HOJAS.PLAN), filas = filasPlanId_(id, plan), x = filas[0];
+    // v0.31.2 · id de respaldo de la app («F-JUEVES-1», copia vieja sin la fila de Fabrik): si el bloque ya está en el PLAN se usa esa fila (no se duplica)
+    if (!x && b.ref) { var iso0 = celdaIso_(b.fecha), l0 = lunesDe_(iso0), ref0 = norm(b.ref).replace(/\s+/g, '');
+      filas = plan.filter(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && norm(r.FABRIK_REF).replace(/\s+/g, '') === ref0 && d >= l0 && d <= sumarDias(l0, 6) && r.ESTADO !== 'SUSTITUIDO'; }).sort(masReciente_);
+      x = filas[0]; if (x) { filas = filasPlanId_(x.ID, plan); id = x.ID; } }
     var est = b.cancelar ? 'CANCELADO' : 'NO HACER';   // v0.22 · CANCELADO = no se hace y no va a pendientes (se puede reactivar)
     if (x) {
-      actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: est, ACTUALIZADO: ahora_() });
+      filas.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: est, ACTUALIZADO: ahora_() }); });   // v0.31.2 · todas las copias del ID
       if (b.cancelar) quitarRegistroDe_(id);   // v0.26 · cancelado = fuera del cómputo, también si lo habías marcado como hecho
-      if (!b.cancelar) anadirPendiente_(x, motivo);
+      if (b.cancelar) cerrarPendientesDe_(id, 'Descartado', 'Cancelado ' + ahora_());   // v0.31.2 · cancelado no va a pendientes (si venía de NO HACER, sale)
+      else if (!pendienteAbiertoDe_(id)) anadirPendiente_(x, motivo);   // v0.31.2 · sin duplicar el pendiente
     } else {
       var sh = hojaMia_(HOJAS.PLAN), cab = cabeceras_(sh), iso = celdaIso_(b.fecha);
       var o = { ID: id, FECHA: isoAFecha(iso), 'DÍA': diaDe_(iso), TURNO: b.turno || 'PM', ORDEN: b.orden || 50, ORIGEN: 'FABRIK', FABRIK_REF: b.ref || '',
@@ -505,21 +516,35 @@ function noHacer_(b) {
   });
 }
 
+/** v0.31.2 · ¿Hay un pendiente abierto (Pendiente o Propuesto) de ese bloque? */
+function pendienteAbiertoDe_(idPlan) { return listar_(HOJAS.PENDIENTES).some(function (p) { return p.ID_PLAN === idPlan && /^(Pendiente|Propuesto)$/i.test(p.ESTADO); }); }
+/** v0.31.2 · Cierra los pendientes abiertos de un bloque (la última decisión manda). Si ya estaban recolocados en otra semana (Propuesto),
+ *  el borrador recolocado se borra; lo ya aprobado allí no se toca. Devuelve las filas del PLAN borradas. */
+function cerrarPendientesDe_(idPlan, estado, nota) {
+  var ps = listar_(HOJAS.PENDIENTES).filter(function (p) { return p.ID_PLAN === idPlan && /^(Pendiente|Propuesto)$/i.test(p.ESTADO); });
+  if (!ps.length) return [];
+  var ids = {}; ps.forEach(function (p) { ids[p.ID] = 1; actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: estado, NOTAS: ((p.NOTAS ? p.NOTAS + ' · ' : '') + nota).slice(0, 1000) }); });
+  var sh = hojaMia_(HOJAS.PLAN), borr = listar_(HOJAS.PLAN).filter(function (r) { return r.PENDIENTE_ID && ids[r.PENDIENTE_ID] && /^(BORRADOR|SIN HUECO)$/.test(r.ESTADO); })
+    .map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; });
+  borr.forEach(function (f) { sh.deleteRow(f); });
+  MEMO = null; return borr;
+}
 function quitarRegistroDe_(idPlan) {
   var sh = hojaMia_(HOJAS.REGISTRO), n = 0;
   listar_(HOJAS.REGISTRO).filter(function (r) { return r.ID_PLAN === idPlan; }).map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); n++; });
   if (n) MEMO = null; return n;
 }
-/** v0.22 · Reactivar un bloque CANCELADO o (v0.31.1) NO HACER: vuelve a PROGRAMADO, cuenta otra vez y sale de pendientes. */
-function reactivarBloque_(id) {
+/** v0.22 · Reactivar un bloque CANCELADO o (v0.31.1) NO HACER: vuelve a PROGRAMADO, cuenta otra vez y sale de pendientes.
+ *  v0.31.2 · con filas duplicadas manda la vigente y se actualizan todas; «estado» = PROGRAMADO (por defecto) o BORRADOR;
+ *  sale de pendientes también si el pendiente ya estaba recolocado (Propuesto): ese borrador recolocado se quita. */
+function reactivarBloque_(id, estado) {
   return bloqueo_(function () {
-    var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(id || ''); })[0];
+    var filas = filasPlanId_(id), x = filas[0];
     if (!x) throw new Error('no_encontrado');
-    if (!/^(CANCELADO|NO HACER|SIN HUECO)$/.test(x.ESTADO)) return x.ID;
-    var eraNo = x.ESTADO === 'NO HACER';
-    actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
-    if (eraNo) listar_(HOJAS.PENDIENTES).filter(function (p) { return p.ID_PLAN === x.ID && /^Pendiente$/i.test(p.ESTADO); })
-      .forEach(function (p) { actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Reprogramado', NOTAS: 'Vuelto a programar desde la app ' + ahora_() }); });
+    if (!/^(CANCELADO|NO HACER|SIN HUECO)$/.test(x.ESTADO) && !filas.some(function (r) { return /^(CANCELADO|NO HACER)$/.test(r.ESTADO); })) return x.ID;
+    var nuevo = estado === 'BORRADOR' ? 'BORRADOR' : 'PROGRAMADO';
+    filas.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: nuevo, ACTUALIZADO: ahora_() }); });
+    cerrarPendientesDe_(x.ID, 'Reprogramado', 'Vuelto a programar ' + ahora_());
     MEMO = null; try { invalidarSemana_(); } catch (e) {}
     try { refrescarHojaSemana_(celdaIso_(x.FECHA)); } catch (e2) {}
     return x.ID;
@@ -861,15 +886,70 @@ var HTML_DIALOGO_BLOQUE_ = '<!doctype html><html><head><base target="_top"><styl
  *  PROGRAMADO → NO HACER lo manda a pendientes (como la app). Repinta la semana en bloques. */
 function estadoEditadoEnPlan_(e) {
   var sh = e.range.getSheet(), cab = cabeceras_(sh), col = cab.indexOf('ESTADO') + 1;
-  if (!col || e.range.getColumn() > col || e.range.getLastColumn() < col) return;
-  for (var f = e.range.getRow(); f <= e.range.getLastRow(); f++) {
+  var c0 = e.range.getColumn(), c1 = e.range.getLastColumn(), tocaEstado = col && c0 <= col && c1 >= col;
+  // v0.31.2 · cualquier cambio a mano (día, turno, orden, contenido…) también manda: ACTUALIZADO y 🔒 candado para que «Rehacer extras» / la recarga de Fabrik no lo pisen
+  var CAND = ['FECHA', 'TURNO', 'ORDEN', 'TÍTULO', 'CONTENIDO', 'MIN', 'CÓDIGOS', 'INTENSIDAD'], tocaPos = cab.some(function (h, i) { return CAND.indexOf(h) >= 0 && i + 1 >= c0 && i + 1 <= c1; });
+  if (!tocaEstado && !tocaPos) return;
+  var finF = e.range.getLastRow(), corre = function (l) { var k = l.filter(function (x) { return x < f; }).length; f -= k; finF -= l.length; };   // filas borradas al cerrar pendientes
+  for (var f = e.range.getRow(); f <= finF; f++) {
     if (f < 2) continue;
     var fila = sh.getRange(f, 1, 1, cab.length).getValues()[0], o = {}; cab.forEach(function (h, i) { o[h] = fila[i]; });
+    if (!String(o.ID || '').trim()) continue;
     var nuevo = String(o.ESTADO || '').trim(), viejo = e.range.getNumRows() === 1 ? String(e.oldValue || '') : '';
-    if (/^(PROGRAMADO|BORRADOR)$/.test(nuevo)) listar_(HOJAS.PENDIENTES).filter(function (p) { return p.ID_PLAN === o.ID && /^Pendiente$/i.test(p.ESTADO); })
-      .forEach(function (p) { actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Reprogramado', NOTAS: 'Vuelto a programar desde el Sheet ' + ahora_() }); });
-    if (nuevo === 'NO HACER' && viejo !== 'NO HACER' && !listar_(HOJAS.PENDIENTES).some(function (p) { return p.ID_PLAN === o.ID && /^Pendiente$/i.test(p.ESTADO); })) anadirPendiente_(o, 'No hacer desde APP · PLAN');
-    try { sh.getRange(f, cab.indexOf('ACTUALIZADO') + 1).setValue(ahora_()); } catch (x) {}
+    if (tocaEstado) {
+      if (/^(PROGRAMADO|BORRADOR)$/.test(nuevo)) corre(cerrarPendientesDe_(o.ID, 'Reprogramado', 'Vuelto a programar desde el Sheet ' + ahora_()));
+      else if (nuevo === 'CANCELADO') { corre(cerrarPendientesDe_(o.ID, 'Descartado', 'Cancelado desde el Sheet ' + ahora_())); quitarRegistroDe_(o.ID); }   // v0.31.2 · como en la app
+      if (nuevo === 'NO HACER' && viejo !== 'NO HACER' && !pendienteAbiertoDe_(o.ID)) anadirPendiente_(o, 'No hacer desde APP · PLAN');
+    }
+    var sello = { ACTUALIZADO: ahora_() };
+    if (tocaPos) { var gen = String(o.GENERADO || ''), fab = norm(o.ORIGEN) === 'FABRIK', soloPos = !cab.some(function (h, i) { return ['FECHA', 'TURNO', 'ORDEN'].indexOf(h) < 0 && CAND.indexOf(h) >= 0 && i + 1 >= c0 && i + 1 <= c1; });
+      if (!fab && !/^manual/.test(gen)) sello.GENERADO = 'manual ' + ahora_() + ' (candado · Sheet)';
+      else if (fab && !soloPos && !/editado/.test(gen)) sello.GENERADO = 'manual ' + ahora_() + ' (editado · candado: la recarga de Fabrik no lo pisa)';
+      var iF = cab.indexOf('FECHA'), iD = cab.indexOf('DÍA'), isoF = iF >= 0 ? celdaIso_(fila[iF]) : '';
+      if (isoF && iD >= 0) sello['DÍA'] = diaDe_(isoF); }
+    try { actualizarFila_(HOJAS.PLAN, f, sello); } catch (x) {}
     try { MEMO = null; refrescarHojaSemana_(celdaIso_(o.FECHA)); } catch (x2) {}
   }
+}
+
+// ===================== v0.31.2 · FILA «＋ NUEVO BLOQUE» EN CADA SESIÓN (AM y PM de cada día) =====================
+// Col 2 hueco · 3 título · 4 ejercicios · 5 tipo · 6 min · 7, 9, 10 y 11 = ESTÍMULO 1–4 (todos los estímulos) · 8 «✓ AÑADIR».
+// Mientras no pulses «✓ AÑADIR» la fila no existe en APP · PLAN, así que no sale en la app.
+function pintarFilasNuevo_(sh, lunes, nuevas) {
+  if (!nuevas.length) return;
+  var est = []; try { est = estimulosLista_(lunes); } catch (e) {}
+  var ops = est.map(function (x) { return x.c + ' · ' + String(x.nombre || '').slice(0, 60) + (x.falta > 0 ? ' (falta ' + x.falta + ')' : ''); });
+  if (!ops.length) { var cat0 = catalogo_(); ops = Object.keys(cat0).map(function (c) { return c + ' · ' + String(cat0[c].NOMBRE || ''); }); }
+  var vEst = SpreadsheetApp.newDataValidation().requireValueInList(ops.slice(0, 480), true).setAllowInvalid(true).setHelpText('Estímulo que cubre este bloque (hasta 4: columnas CÓDIGOS, MOVER A, INTERCAMBIAR CON y POR QUÉ).').build();
+  var vTipo = SpreadsheetApp.newDataValidation().requireValueInList(['EXTRA', 'TÉCNICA', 'CARRERA', 'Z6–Z8', 'MOVILIDAD'], true).setAllowInvalid(false).build();
+  var vOk = SpreadsheetApp.newDataValidation().requireValueInList(['✓ AÑADIR COMO PROGRAMADO', '✓ AÑADIR COMO BORRADOR'], true).setAllowInvalid(true).build();
+  nuevas.forEach(function (n) {
+    var huecos = ['Al principio', 'Antes de la clase'].concat(n.bl.map(function (r, i) { return 'Después de ' + (i + 1) + ': ' + String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 40); })).concat(['Al final']);
+    var vH = SpreadsheetApp.newDataValidation().requireValueInList(huecos, true).setAllowInvalid(false).build();
+    var f = n.fila;
+    sh.getRange(f, 1, 1, 12).setBackground('#ecfdf5').setFontColor('#065f46').setFontWeight('normal');
+    sh.getRange(f, 1).setValue('＋ nuevo bloque').setFontStyle('italic');
+    sh.getRange(f, 2).setDataValidation(vH); sh.getRange(f, 5).setDataValidation(vTipo); sh.getRange(f, 8).setDataValidation(vOk);
+    [7, 9, 10, 11].forEach(function (c) { sh.getRange(f, c).setDataValidation(vEst); });
+    sh.getRange(f, 3).setNote('Escribe el título, los ejercicios, el tipo y los minutos; elige hasta 4 estímulos (CÓDIGOS, MOVER A, INTERCAMBIAR CON, POR QUÉ) y en ESTADO «✓ AÑADIR».');
+  });
+}
+function crearDesdeFilaNueva_(sh, f, id, lunes) {
+  var v = sh.getRange(f, 1, 1, 12).getValues()[0], pa = id.split('|'), iso = pa[1], tu = pa[2] === 'AM' ? 'AM' : 'PM';
+  var titulo = String(v[2] || '').trim();
+  if (!titulo) { SpreadsheetApp.getActive().toast('Falta el título del bloque (columna BLOQUE).', 'Road To Elite', 5); sh.getRange(f, 8).setValue(''); return; }
+  var cods = [v[6], v[8], v[9], v[10]].map(function (x) { return String(x || '').split(' · ')[0].trim().toUpperCase(); }).filter(function (c, i, a) { return /^[A-Z]{1,3}[0-9]{1,3}$/.test(c) && a.indexOf(c) === i; });
+  var bl = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && (r.TURNO === 'AM' ? 'AM' : 'PM') === tu && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO); })
+    .sort(function (a, b) { return (parseFloat(String(a.ORDEN).replace(',', '.')) || 0) - (parseFloat(String(b.ORDEN).replace(',', '.')) || 0); });
+  var ord = function (r) { return parseFloat(String(r.ORDEN).replace(',', '.')) || 0; }, h = String(v[1] || 'Antes de la clase'), orden;
+  if (/^Al principio/.test(h)) orden = (bl.length ? ord(bl[0]) : 50) - 1;
+  else if (/^Al final/.test(h)) orden = (bl.length ? ord(bl[bl.length - 1]) : 50) + 1;
+  else if (/^Después de (\d+)/.test(h)) { var i = parseInt(h.match(/^Después de (\d+)/)[1], 10) - 1, a = bl[i], b = bl[i + 1]; orden = a ? (b ? (ord(a) + ord(b)) / 2 : ord(a) + 1) : 50; }
+  else { var fab = bl.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; })[0], f0 = fab ? ord(fab) : (bl.length ? ord(bl[bl.length - 1]) + 1 : 50), pre = bl.filter(function (r) { return ord(r) < f0; }); orden = pre.length ? (ord(pre[pre.length - 1]) + f0) / 2 : f0 - 1; }
+  var idN = crearBloque_({ fecha: iso, TURNO: tu, ORDEN: Math.round(orden * 1000) / 1000, ORIGEN: String(v[4] || 'EXTRA'), 'TÍTULO': titulo.slice(0, 120), CONTENIDO: String(v[3] || ''), MIN: v[5] || '', 'CÓDIGOS': cods.join('|') });
+  var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === idN; })[0];
+  if (x) actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: /BORRADOR/.test(String(v[7])) ? 'BORRADOR' : 'PROGRAMADO', GENERADO: 'Pablo · Sheet ' + ahora_(), ACTUALIZADO: ahora_() });
+  MEMO = null; try { invalidarSemana_(); } catch (e) {}
+  pintarHojaSemana_(lunes); try { refrescarResumen_(); } catch (e2) {}
+  SpreadsheetApp.getActive().toast('Añadido «' + titulo + '»' + (cods.length ? ' · cuenta para ' + cods.join(', ') : ' · sin estímulos: no suma a metas'), 'Road To Elite', 6);
 }

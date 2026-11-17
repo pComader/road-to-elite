@@ -22,7 +22,7 @@ function semanaCompletaSin_(semana) {
   var base = {
     lunes: lunes, hoy: hoyIso_(), semanasFabrik: F.lista, erratasFabrik: F.erratas,
     fabrik: F.fabrik,
-    plan: listar_(HOJAS.PLAN).filter(enSemana).sort(function (x, y) { return (Number(x.ORDEN) || 0) - (Number(y.ORDEN) || 0); }),
+    plan: listar_(HOJAS.PLAN).filter(enSemana).sort(function (x, y) { return ordenNum_(x.ORDEN) - ordenNum_(y.ORDEN); }),   // v0.31.2 · «50,5» (es_ES)
     registro: listar_(HOJAS.REGISTRO).filter(enSemana),
     carrera: listar_(HOJAS.CARRERA).filter(enSemana),
     chequeos: listar_(HOJAS.CHEQUEO).filter(function (r) { var d = celdaIso_(r.FECHA); return d && d >= sumarDias(lunes, -1) && d <= domingo; }),
@@ -79,7 +79,7 @@ function migrarTestsAEventos_() {
 /** Un solo disparador hace las tres fases en orden y deja el resultado en APP · CONFIG (clave «ultimo_domingo»). */
 function domingoNoche() { return conSalud_('domingoNoche', domingoNoche_sin_); }
 function domingoNoche_sin_() {
-  var fases = [['cierre', cierreSemanal], ['carrera', function () { ajusteCarrera_(); }], ['aprendizaje', function () { aprendizajeSemanal(); }], ['backup', backupSemanal], ['archivo', archivarSiToca_]], estado = [];
+  var fases = [['warm-up lunes', function () { asegurarWarmupLunes_(sumarDias(lunesDe_(hoyIso_()), 7)); }], ['cierre', cierreSemanal], ['carrera', function () { ajusteCarrera_(); }], ['aprendizaje', function () { aprendizajeSemanal(); }], ['backup', backupSemanal], ['archivo', archivarSiToca_]], estado = [];
   fases.forEach(function (f) {
     try { f[1](); estado.push(f[0] + ' OK ' + Utilities.formatDate(new Date(), CONFIG.ZONA, 'HH:mm')); }
     catch (e) { estado.push(f[0] + ' FALLO (' + String(e && e.message || e).slice(0, 120) + ')'); }

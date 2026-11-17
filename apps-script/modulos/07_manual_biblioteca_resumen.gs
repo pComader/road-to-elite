@@ -182,13 +182,14 @@ function guardarRefuerzo_(b) {
 function refuerzosDe_(lunes) { return listar_(HOJAS.REFUERZOS).filter(function (r) { return celdaIso_(r.SEMANA) === lunes; }); }
 var CAMPOS_EDITABLES = ['FECHA', 'TURNO', 'ORDEN', 'TÍTULO', 'CONTENIDO', 'INTENSIDAD', 'MIN', 'CÓDIGOS', 'CANTIDAD', 'POR QUÉ (cursiva)'];
 function editarBloque_(b) {
-  var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(b.id || ''); })[0];
+  var filas = filasPlanId_(b.id), x = filas[0];   // v0.31.2 · la fila vigente; el cambio se aplica a todas las copias del ID
   if (!x) throw new Error('no_encontrado');
   var o = permitidas_(b.campos || {}, CAMPOS_EDITABLES);
   var fabX = norm(x.ORIGEN) === 'FABRIK';
   if (fabX) o = permitidas_(o, ['FECHA', 'TURNO', 'ORDEN', 'CÓDIGOS', 'POR QUÉ (cursiva)', 'TÍTULO', 'CONTENIDO', 'MIN']);   // v0.11: también su contenido, y queda con candado
   // ¿Solo cambia de sitio? (lo demás llega igual que estaba) → lo aprobado sigue aprobado: moverlo es decisión tuya
   Object.keys(o).forEach(function (k) { if (CAMPOS_POSICION_.indexOf(k) < 0 && String(o[k]) === String(x[k] == null ? '' : x[k])) delete o[k]; });
+  if (o.ORDEN != null) { if (String(o.ORDEN).trim() === '' || isNaN(parseFloat(String(o.ORDEN).replace(',', '.')))) delete o.ORDEN; else o.ORDEN = ordenNum_(o.ORDEN); }   // v0.31.2 · número (es_ES) y nunca «NaN»
   var soloMover = soloPosicion_(o);
   if (o.FECHA) { var iso = celdaIso_(o.FECHA); if (!iso) throw new Error('fecha_no_valida'); o.FECHA = isoAFecha(iso); o['DÍA'] = diaDe_(iso); }
   if (o.TURNO) o.TURNO = o.TURNO === 'AM' ? 'AM' : 'PM';
@@ -199,20 +200,22 @@ function editarBloque_(b) {
   if (!fabX) o.GENERADO = 'manual ' + ahora_() + ' (candado)';   // lo que tocas a mano no lo vuelve a mover «Rehacer extras»
   else if (o.CONTENIDO != null || o['TÍTULO'] != null || o.MIN != null) o.GENERADO = 'manual ' + ahora_() + ' (editado · candado: la recarga de Fabrik no lo pisa)';
   o.ACTUALIZADO = ahora_();
-  bloqueo_(function () { actualizarFila_(HOJAS.PLAN, x._fila, o); });
+  bloqueo_(function () { filas.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, o); }); });
   return x.ID;
 }
 /** Quitar un bloque desde la hoja de la semana: los borradores se borran; lo programado pasa a «NO HACER» (y a pendientes si quieres). */
 function quitarBloque_(b) {
-  var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(b.id || ''); })[0];
+  var filas = filasPlanId_(b.id), x = filas[0];   // v0.31.2 · la fila vigente (y sus copias)
   if (!x) throw new Error('no_encontrado');
   if (/^(BORRADOR|SIN HUECO)$/.test(x.ESTADO) && norm(x.ORIGEN) !== 'FABRIK') {
     if (b.pendiente && !x.PENDIENTE_ID) anadirPendiente_(x, b.motivo || (x.ESTADO === 'SIN HUECO' ? 'Sin hueco en la semana' : 'Quitado desde la hoja de la semana'));
     if (x.REFUERZO_ID) { var rz = listar_(HOJAS.REFUERZOS).filter(function (r) { return r.ID === x.REFUERZO_ID; })[0]; if (rz) actualizarFila_(HOJAS.REFUERZOS, rz._fila, { ESTADO: b.pendiente ? 'Pendiente' : 'Descartado' }); }
     if (x.PENDIENTE_ID) { var p = listar_(HOJAS.PENDIENTES).filter(function (r) { return r.ID === x.PENDIENTE_ID; })[0]; if (p) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Pendiente', 'SEMANA DESTINO': '' }); }
-    return borrarFila_(HOJAS.PLAN, x._fila, { ID: x.ID });
+    filas.map(function (r) { return r._fila; }).sort(function (p1, p2) { return p2 - p1; }).forEach(function (f) { borrarFila_(HOJAS.PLAN, f, { ID: x.ID }); });
+    return;
   }
-  bloqueo_(function () { actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'NO HACER', ACTUALIZADO: ahora_() }); if (b.pendiente) anadirPendiente_(x, b.motivo || 'Quitado desde la hoja de la semana'); });
+  bloqueo_(function () { filas.forEach(function (r) { actualizarFila_(HOJAS.PLAN, r._fila, { ESTADO: 'NO HACER', ACTUALIZADO: ahora_() }); });
+    if (b.pendiente && !pendienteAbiertoDe_(x.ID)) anadirPendiente_(x, b.motivo || 'Quitado desde la hoja de la semana'); });   // v0.31.2 · sin duplicar pendientes
 }
 function guardarNotaBloque_(n) {
   var o = permitidas_(n, ['FECHA', 'ID_PLAN', 'BLOQUE', 'MIS NOTAS', 'RECOMENDACIÓN']);

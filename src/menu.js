@@ -24,7 +24,7 @@
       '<section class="me"><div class="who big">P</div><div><b>Pablo</b><div class="hint">' + esc(S.email || '') + '</div></div></section>';
     var L = function (id, ico, txt, cls) { return '<button class="set-link' + (cls ? ' ' + cls : '') + '" type="button" id="' + id + '"><span class="set-ico">' + ico + '</span>' + txt + '<span class="go">›</span></button>'; };
     var grupo = function (t, cuerpo) { return '<details class="set-grupo" open><summary>' + esc(t) + '</summary><div class="set-grupo-b">' + cuerpo + '</div></details>'; };
-    html += grupo('Semana', L('ir-reest', '🔀', 'Reestructurar · viaje, reorganizar, competi', 'reest-link') + L('ir-hoja', '☰', 'Hoja de la semana · bloques') + L('ir-extras', '⊕', 'Extras semana en curso') +
+    html += grupo('Semana', L('ir-reest', '🔀', 'Reestructurar · viaje, reorganizar, competi', 'reest-link') + L('ir-hoja', '☰', 'Hoja de la semana · bloques') + L('ir-reprogramar', '↻', 'Reprogramar semana · recoloca lo automático desde hoy') + L('ir-extras', '⊕', 'Extras semana en curso') +
       L('ir-calendario', '▦', 'Calendario de eventos') + L('ir-cobertura', '%', 'Estímulos semana y mes · carrera'));
     html += grupo('Rendimiento', L('ir-rendimiento', '📈', 'Rendimiento · indicadores, ritmos y Strava') + L('ir-resumen', '🗓', 'Resumen del lunes') + L('ir-aprendizaje', '🧠', 'Aprendizaje · deathnote y lo aprendido') +
       (d.op ? L('ir-operacion', '🩺', 'Modo operación' + (d.op.activo ? ' · ' + esc(d.op.nombre || 'activo') : ' · apagado')) : ''));
@@ -65,6 +65,8 @@
     document.getElementById('ir-resumen').onclick = function () { S.vista = 'resumen'; S.res = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-salud').addEventListener('toggle', function () { if (this.open) cargarSalud(); });
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
+    // v0.31.2 · Menú › Reprogramar: el aviso «semana ya programada» remitía aquí pero el botón no existía
+    document.getElementById('ir-reprogramar').onclick = function () { if (!S.data) return; abrirPreviaExtras(S.data.semana, null, { reabrir: true, modo: 'semana' }); };
     document.getElementById('ir-extras').onclick = function () { S.vista = 'extras'; S.extrasCurso = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-wods').addEventListener('toggle', function () { if (this.open) cargarWods(); });
     if (S._abrir === 's-wods') cargarWods();
@@ -1177,7 +1179,7 @@
   //  v0.7 · HOJA DE LA SEMANA (bloques editables + posición óptima), REFUERZOS, WODS, AVISOS, RENDIMIENTO
   // =====================================================================
   var EST_CORTO = { BORRADOR: 'borrador', PROGRAMADO: '', 'NO HACER': 'no hacer', CANCELADO: 'cancelado', PROPUESTA: 'propuesta', 'PROPUESTA · NO HACER': 'propuesta' };
-  function filaPlanDe(b) { return (S.data.plan || []).filter(function (r) { return r.ID === (b.extra ? b.id : b.idPlan); })[0] || null; }
+  function filaPlanDe(b) { return (S.data.plan || []).filter(function (r) { return r.ID === (b.extra ? b.id : b.idPlan); }).reduce(function (a, r) { return masNueva(a, r) ? r : a; }, null); }   // v0.31.2 · la fila vigente si hay duplicadas
   function renderHoja() {
     var d = S.data, sig = sumarDias(d.semana, 7), conf = d.conf && /Confirmada|Programada/.test(d.conf.ESTADO || '');
     var html = cabeceraVista('Hoja de la semana', 'Semana') +
@@ -1527,7 +1529,7 @@
         if (r.semana) { aplicarSemana(r.semana); conf = (lunes === S.data.semana ? S.data.conf : S.data.confSiguiente) || conf; render(); }
         resultado(r.previa);
       }).catch(function (er) {
-        if (/semana_programada/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana ya está programada</b><span>Para cambiarla usa las opciones de cada bloque (mover, cancelar, cambiar…) o Menú › Reprogramar.</span></div>'); return; }
+        if (/semana_programada/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana ya está programada</b><span>Para cambiarla usa las opciones de cada bloque (mover, cancelar, cambiar…) o Reprogramar.</span></div><button class="btn btn-primary" type="button" data-reprogramar="' + lunes + '">↻ Reprogramar</button>'); return; }   // v0.31.2
         if (/semana_sin_confirmar/.test(er.message)) { abrirHoja(titulo + '<div class="pos-act warn"><b>La semana no está confirmada</b><span>Confirma mañanas, descansos y eventos y vuelve aquí.</span></div><button class="btn btn-primary" type="button" data-confirmar="' + lunes + '">Cargar y confirmar semana</button>'); return; }
         abrirHoja(titulo + '<div class="pos-act warn"><b>No se pudo calcular</b><span>' + esc(mensajeError(er.message)) + '</span></div><button class="btn" type="button" id="pg-vol">✎ Volver a las opciones</button>');
         document.getElementById('pg-vol').onclick = pintar;

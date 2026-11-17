@@ -731,20 +731,20 @@ function generarExtras_(lunes, opts) {
  * con el bloque de antes y el de después (cargas compartidas). Nunca antes del primer bloque (el calentamiento y la haltero van frescos).
  * Carrera, ergos y Z6–Z8 no se mueven: van al final o en sesión aparte (manual: los sprints, 10′ después de la barra).
  */
-function ordenAntesMetcon_(o, cand, h, nuevos) {
+function ordenAntesMetcon_(o, cand, h, nuevos) {   // v0.31.2 · ORDEN con ordenNum_ («50,5» del libro es_ES; parseFloat lo truncaba a 50)
   var cods = cand.codigos || [], esRun = /CARRERA/.test(norm(o.ORIGEN)) || cods.some(function (k) { return /^(W0[1-4]|R0[23])$/.test(k); });
   var esP = /Z6/.test(norm(o.ORIGEN)) || cods.some(function (k) { return /^R0[14]$/.test(k); });
   var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
   var filas = listar_(HOJAS.PLAN).concat(nuevos).filter(function (r) { return celdaIso_(r.FECHA) === h.iso && r.TURNO === h.turno && act(r) && r.ID !== o.ID; })
-    .sort(function (a, b) { return (parseFloat(a.ORDEN) || 0) - (parseFloat(b.ORDEN) || 0); });
+    .sort(function (a, b) { return (ordenNum_(a.ORDEN) || 0) - (ordenNum_(b.ORDEN) || 0); });
   // v0.31 · regla de Pablo (17/11): la clase siempre lo último. Extras antes de la clase; los P1–P4 también antes,
   //   salvo que la clase empiece con barra pesada (entonces después, 10′ tras la barra, como pide el manual).
   var fab = filas.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; });
   if (fab.length && !esRun) {
-    var f0 = parseFloat(fab[0].ORDEN) || 50;
+    var f0 = ordenNum_(fab[0].ORDEN) || 50;
     if (esP && /SNATCH|CLEAN|JERK|SQUAT|DEADLIFT|STRENGTH|STRENGHT|WEIGHTLIFTING|PRESS|THRUSTER|CLUSTER/.test(norm((fab[0]['TÍTULO'] || '') + ' ' + String(fab[0].CONTENIDO || '').slice(0, 300))))
-      return { orden: Math.max.apply(null, filas.map(function (r) { return parseFloat(r.ORDEN) || 0; })) + 1, motivo: 'después de la clase: empieza con barra pesada y el P no puede ir antes (10′ después de la barra)' };
-    var pre = filas.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && (parseFloat(r.ORDEN) || 0) < f0; }).map(function (r) { return parseFloat(r.ORDEN) || 0; });
+      return { orden: Math.max.apply(null, filas.map(function (r) { return ordenNum_(r.ORDEN) || 0; })) + 1, motivo: 'después de la clase: empieza con barra pesada y el P no puede ir antes (10′ después de la barra)' };
+    var pre = filas.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && (ordenNum_(r.ORDEN) || 0) < f0; }).map(function (r) { return ordenNum_(r.ORDEN) || 0; });
     if (norm(o.ORIGEN) === 'MOVILIDAD') return { orden: (pre.length ? Math.min.apply(null, pre) : f0) - 1, motivo: 'al empezar, antes de la clase' };
     var ult = pre.length ? Math.max.apply(null, pre) : f0 - 2;
     return { orden: Math.round((ult + (f0 - ult) / 2) * 100) / 100, motivo: 'antes de la clase (la clase siempre lo último)' };
@@ -752,14 +752,14 @@ function ordenAntesMetcon_(o, cand, h, nuevos) {
   if (esRun || esP) return null;
   var im = -1; filas.forEach(function (r, k) { if (im < 0 && /METCON/.test(norm((r['TÍTULO'] || '') + ' ' + (r.BLOQUE || '') + ' ' + String(r.CONTENIDO || '').slice(0, 20)))) im = k; });
   if (im < 0) return null;   // sin metcon: se queda al final
-  if (im === 0) return { orden: (parseFloat(filas[0].ORDEN) || 50) - 1, motivo: 'antes del metcon (es el primer bloque de la sesión)' };
+  if (im === 0) return { orden: (ordenNum_(filas[0].ORDEN) || 50) - 1, motivo: 'antes del metcon (es el primer bloque de la sesión)' };
   var mia = cand.carga || [], comp = function (r) { var cr = cargasFila_(r); return mia.filter(function (x) { return cr.indexOf(x) >= 0; }); };
   var mejor = null;
   for (var j = 1; j <= im; j++) {
     var a = filas[j - 1], b = filas[j], ca = comp(a), cb = comp(b), pts = ca.length + cb.length * 1.2;
     if (!mejor || pts < mejor.pts || (pts === mejor.pts && j > mejor.j)) mejor = { j: j, pts: pts, a: a, b: b, ca: ca, cb: cb };
   }
-  var oa = parseFloat(mejor.a.ORDEN) || 0, ob = parseFloat(mejor.b.ORDEN) || oa + 1;
+  var oa = ordenNum_(mejor.a.ORDEN) || 0, ob = ordenNum_(mejor.b.ORDEN) || oa + 1;
   var orden = Math.round((oa + (ob - oa) / 2) * 100) / 100;
   var tit = function (r) { return '«' + (r['TÍTULO'] || r.BLOQUE || '') + '»'; };
   var comparte = mejor.ca.concat(mejor.cb).filter(function (x, i, l) { return l.indexOf(x) === i; });
