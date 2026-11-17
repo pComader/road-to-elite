@@ -139,6 +139,8 @@ function codigosTexto_(txt, cat, enMetcon) {
     var re = reSeguro_(cat[c]['DETECTAR (regex)']);
     if (re && re.test(t)) out.push(c);
   });
+  // v0.31 · deathnote D1: un metcon de Fabrik de RPE ≥8 por intervalos o ventanas cumple el P4 y cuenta como uno de los P del mes
+  if (enMetcon && /RPE\s*\D{0,3}\s*(8|9|10)\b/.test(t) && /INTERVAL|ON\s*\/|\bOFF\b|VENTANA|WINDOW|EVERY|E\dMOM|EMOM/.test(t)) out.push('R01');
   if (out.indexOf('W20') >= 0 && !(t.match(/(\d{2,3})\s*%/g) || []).some(function (x) { return parseInt(x, 10) > 85; })) out.splice(out.indexOf('W20'), 1);   // >85 % o no cuenta
   if (out.indexOf('T01') >= 0 && out.indexOf('T02') >= 0) out.splice(out.indexOf(enMetcon ? 'T01' : 'T02'), 1);
   // W34 · split jerk en fatiga o pesado (decisión de Pablo 6/11): en metcon siempre cuenta; fuera, solo a ≥85 % o heavy (no los push/power jerk ni el jerk drive)
@@ -294,7 +296,7 @@ function contextoSemana_(lunes, excluirId, excluirFn) {
     if (norm(r.ORIGEN) === 'FABRIK') d.fabrik = true;
     d.cargas[t] = d.cargas[t].concat(cargasDe_(r['TÍTULO'] + '\n' + r.CONTENIDO, r.INTENSIDAD || d.fabrikRpe));
     d.min[t] += min; d.codigos = d.codigos.concat(codigosDe_(r['CÓDIGOS'])); if (norm(r.ORIGEN) !== 'FABRIK') d.nExtra[t]++;
-    if (norm(r.ORIGEN) !== 'FABRIK' && !esIntocable_(codigosDe_(r['CÓDIGOS']))) { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[t]++; d.minExtraX[t] += min; }
+    if (norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'MOVILIDAD' && !esIntocable_(codigosDe_(r['CÓDIGOS']))) { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[t]++; d.minExtraX[t] += min; }
     if (t === 'AM') { var cAM = codigosDe_(r['CÓDIGOS']); d.codigosAM = (d.codigosAM || []).concat(cAM); if (cAM.some(function (c) { return /^(W01|W02|W04)$/.test(c); })) d.minCarreraAM = (d.minCarreraAM || 0) + min;
       else if (!cAM.some(function (c) { return /^W0[123]$/.test(c); })) d.nExtraAMcal = (d.nExtraAMcal || 0) + 1; }
     if (/R01|R02|R03|R04|W04/.test(r['CÓDIGOS'])) d.duro = true;
@@ -482,7 +484,7 @@ function generarExtras_(lunes, opts) {
     if (ante) { o.ORDEN = ante.orden; h.motivos = [ante.motivo].concat(h.motivos || []); }
     o.ESTADO = 'BORRADOR'; o.GENERADO = sello; o.ACTUALIZADO = ahora_(); o.BLOQUE = o['TÍTULO'];
     o['POR QUÉ (cursiva)'] = [o['POR QUÉ (cursiva)'], 'Va el ' + h.dia.toLowerCase() + ' ' + h.turno + ': ' + (h.motivos.join('; ') || 'mejor hueco disponible') + (h.choques.length ? ' (a vigilar: ' + h.choques.join('; ') + ')' : '') + '.'].filter(Boolean).join(' ');
-    if (!esIntocable_(cand.codigos)) { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[h.turno]++; d.minExtraX[h.turno] += cand.min || 10; }
+    if (!esIntocable_(cand.codigos) && norm(o.ORIGEN) !== 'MOVILIDAD') { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[h.turno]++; d.minExtraX[h.turno] += cand.min || 10; }
     d.min[h.turno] += cand.min || 10; d.nExtra[h.turno]++; d.cargas[h.turno] = d.cargas[h.turno].concat(cand.carga || []); d.codigos = d.codigos.concat(cand.codigos); if (cand.duro) d.duro = true;
     if (h.turno === 'AM') { d.codigosAM = (d.codigosAM || []).concat(cand.codigos);
       if (cand.codigos.some(function (c) { return /^(W01|W02|W04)$/.test(c); })) d.minCarreraAM = (d.minCarreraAM || 0) + (cand.min || 0);
@@ -654,6 +656,7 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
+  try { absorberEnP_(cola, log); } catch (eAb) { Logger.log('Absorber en P: ' + eAb); }   // v0.31 · deathnote A6/A7
   try { agruparCola_(cola, log, weeksLeft_(lunes, per) <= 1); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
   (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
@@ -688,6 +691,8 @@ function generarExtras_(lunes, opts) {
       log.push(c === 'MU1' ? 'Ensayo de Murph con chaleco' : 'Taper: test de WODs + estrategia');
     });
   } catch (eV29) { Logger.log('Murph/taper: ' + eV29); }
+  try { ordenarHalteroJueves_(lunes, nuevos); } catch (eHj) { Logger.log('Haltero jueves: ' + eHj); }   // v0.31 · deathnote A2
+  try { warmupLunes_(lunes, nuevos, sello, permitidos, log); } catch (eWu) { Logger.log('Warm-up lunes: ' + eWu); }   // v0.31
   if (OP) try { nuevos = nuevos.concat(opBloques_(lunes, OP, sello, permitidos)); } catch (eOp3) { Logger.log('Modo operación · bloques: ' + eOp3); }
   // 6.6 · escribir (o devolver la simulación)
   var mensualesSemana = enSemana + nuevos.filter(function (o) { return o.ESTADO !== 'SIN HUECO' && codigosDe_(o['CÓDIGOS']).some(mensDe); }).length;
@@ -727,10 +732,24 @@ function generarExtras_(lunes, opts) {
  * Carrera, ergos y Z6–Z8 no se mueven: van al final o en sesión aparte (manual: los sprints, 10′ después de la barra).
  */
 function ordenAntesMetcon_(o, cand, h, nuevos) {
-  if (/CARRERA|Z6/.test(norm(o.ORIGEN)) || (cand.codigos || []).some(function (k) { return /^(W0[1-4]|R0[1-4])$/.test(k); })) return null;
+  var cods = cand.codigos || [], esRun = /CARRERA/.test(norm(o.ORIGEN)) || cods.some(function (k) { return /^(W0[1-4]|R0[23])$/.test(k); });
+  var esP = /Z6/.test(norm(o.ORIGEN)) || cods.some(function (k) { return /^R0[14]$/.test(k); });
   var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
   var filas = listar_(HOJAS.PLAN).concat(nuevos).filter(function (r) { return celdaIso_(r.FECHA) === h.iso && r.TURNO === h.turno && act(r) && r.ID !== o.ID; })
     .sort(function (a, b) { return (parseFloat(a.ORDEN) || 0) - (parseFloat(b.ORDEN) || 0); });
+  // v0.31 · regla de Pablo (17/11): la clase siempre lo último. Extras antes de la clase; los P1–P4 también antes,
+  //   salvo que la clase empiece con barra pesada (entonces después, 10′ tras la barra, como pide el manual).
+  var fab = filas.filter(function (r) { return norm(r.ORIGEN) === 'FABRIK'; });
+  if (fab.length && !esRun) {
+    var f0 = parseFloat(fab[0].ORDEN) || 50;
+    if (esP && /SNATCH|CLEAN|JERK|SQUAT|DEADLIFT|STRENGTH|STRENGHT|WEIGHTLIFTING|PRESS|THRUSTER|CLUSTER/.test(norm((fab[0]['TÍTULO'] || '') + ' ' + String(fab[0].CONTENIDO || '').slice(0, 300))))
+      return { orden: Math.max.apply(null, filas.map(function (r) { return parseFloat(r.ORDEN) || 0; })) + 1, motivo: 'después de la clase: empieza con barra pesada y el P no puede ir antes (10′ después de la barra)' };
+    var pre = filas.filter(function (r) { return norm(r.ORIGEN) !== 'FABRIK' && (parseFloat(r.ORDEN) || 0) < f0; }).map(function (r) { return parseFloat(r.ORDEN) || 0; });
+    if (norm(o.ORIGEN) === 'MOVILIDAD') return { orden: (pre.length ? Math.min.apply(null, pre) : f0) - 1, motivo: 'al empezar, antes de la clase' };
+    var ult = pre.length ? Math.max.apply(null, pre) : f0 - 2;
+    return { orden: Math.round((ult + (f0 - ult) / 2) * 100) / 100, motivo: 'antes de la clase (la clase siempre lo último)' };
+  }
+  if (esRun || esP) return null;
   var im = -1; filas.forEach(function (r, k) { if (im < 0 && /METCON/.test(norm((r['TÍTULO'] || '') + ' ' + (r.BLOQUE || '') + ' ' + String(r.CONTENIDO || '').slice(0, 20)))) im = k; });
   if (im < 0) return null;   // sin metcon: se queda al final
   if (im === 0) return { orden: (parseFloat(filas[0].ORDEN) || 50) - 1, motivo: 'antes del metcon (es el primer bloque de la sesión)' };

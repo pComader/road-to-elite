@@ -53,7 +53,7 @@ function estadoCarga_(lunes) {
   return { media: Math.round(media * 10) / 10, n: cans.length, sinDescanso: !descanso, descarga: ult.length >= 2 && media >= 8 && !descanso };
 }
 // ---------- factores de meta: duplicar HSPU/RMU hasta la operación e intensivos de vuelta ----------
-var DUP_PREVIA_ = /\b(W15|W16|W17|W31|W13|M30|M49|W32|W33|M53|M55)\b/, INT_PINO_ = /\b(W32|W33|W25|W26|W27|W28|M56|M57)\b/, INT_HSPU_ = /\b(W15|W16|W17|W31|W32)\b/;
+var DUP_PREVIA_ = /\b(W15|W16|W17|W31|M49|W32|W33|M53|M55)\b/   // v0.31 · deathnote B3: el RMU técnico ya no se duplica (cuenta el de Fabrik), INT_PINO_ = /\b(W32|W33|W25|W26|W27|W28|M56|M57)\b/, INT_HSPU_ = /\b(W15|W16|W17|W31|W32)\b/;
 function ventanasIntensivo_() {
   if (ventanasIntensivo_.c !== undefined) return ventanasIntensivo_.c;
   var o = null; try { var cfg = opCfg_(); if (cfg.existe && cfg.d0) { var fs = opFases_(cfg), p6 = fs.filter(function (f) { return f.clave === 'POST6'; })[0], p7 = fs.filter(function (f) { return f.clave === 'POST7'; })[0];
@@ -339,7 +339,8 @@ function molestiaVeta_(mo, cand, iso) {
 var FAMILIAS_ = {
   'Estabilidad OH': ['M44', 'M58', 'M13', 'M14', 'M50', 'M51', 'M56'],
   'Core': ['M08', 'M60', 'M62', 'M46'],
-  'Unilateral': ['M45', 'M61', 'M19', 'M20'],
+  'Empuje vertical': ['W17', 'W15', 'W16', 'W32', 'W33', 'OP1', 'M53', 'M56'],   // v0.31 · deathnote A1
+  'Unilateral': ['M45', 'M61', 'M19', 'M20', 'M28', 'M65'],   // v0.31 · A5 pierna accesoria (+ hip thrust y Nordic)
   'Cadena posterior': ['M47', 'M28'],
   'Comba': ['M33', 'M35', 'M32'],
   'Haltero técnico': ['M10', 'M11']
@@ -406,4 +407,47 @@ function microbloquesMes_(cola, log) {
     }
   });
   for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
+}
+
+// ===================== v0.31 · DEATHNOTE 3 (decisiones de Pablo 17/11) =====================
+var COMBA_P_ = ['M33', 'C01', 'M32', 'M35'], INTERF_P_ = ['T01', 'T02', 'T03', 'C02', 'C03', 'C04', 'M57', 'M05', 'M07', 'M64'];
+/** A6 · la comba entra dentro de los P (heavy rope, DU en fatiga, crossovers, triples). A7 · hasta 3 movimientos de interferencia dentro de un P (metcon por ventanas = P4). */
+function absorberEnP_(cola, log) {
+  var esP = function (x) { return codigosDe_(x.o['CÓDIGOS']).some(function (c) { return /^R0[14]$/.test(c); }); };
+  var Ps = cola.filter(esP); if (!Ps.length) return;
+  var quitar = [], usa = function (lista) { return function (x) { return !esP(x) && quitar.indexOf(x) < 0 && x.o._prio !== 'pendiente' && codigosDe_(x.o['CÓDIGOS']).every(function (c) { return lista.indexOf(c) >= 0; }); }; };
+  var meter = function (p, x, que) {
+    p.o['CÓDIGOS'] = codigosDe_(p.o['CÓDIGOS']).concat(codigosDe_(x.o['CÓDIGOS']).filter(function (c) { return codigosDe_(p.o['CÓDIGOS']).indexOf(c) < 0; })).join('|');
+    p.o.CONTENIDO = String(p.o.CONTENIDO || '') + '\n\n+ ' + que + ' dentro del P: ' + (x.o['TÍTULO'] || '') + ' (dosis corta en cada ronda o ventana, sin romper el ritmo).';
+    quitar.push(x);
+  };
+  Ps.forEach(function (p, k) {
+    var c = cola.filter(usa(COMBA_P_))[0]; if (c) { meter(p, c, 'Comba'); if (log) log.push('Comba dentro del P'); }
+  });
+  var p4 = Ps.filter(function (p) { return /P4|INTEGRADO|R04/.test(norm((p.o['TÍTULO'] || '') + ' ' + p.o['CÓDIGOS'])); })[0] || Ps[Ps.length - 1];
+  cola.filter(usa(INTERF_P_)).slice(0, 3).forEach(function (x) { meter(p4, x, 'Interferencia'); });
+  if (quitar.length && log) log.push('Metcon de interferencia en el P: ' + quitar.length + ' estímulos');
+  for (var j = cola.length - 1; j >= 0; j--) if (quitar.indexOf(cola[j]) >= 0) cola.splice(j, 1);
+}
+/** A2 · el haltero extra del jueves en orden fijo: técnica → split → sobrecarga → tirón. */
+var ORDEN_HALTERO_ = ['W20', 'M10', 'M11', 'W23', 'W24', 'W34', 'M17', 'M51', 'M50', 'M63', 'M47'];
+function ordenarHalteroJueves_(lunes, nuevos) {
+  var jue = sumarDias(lunes, 3), pos = function (r) { var cs = codigosDe_(r['CÓDIGOS']), m = 99; cs.forEach(function (c) { var i = ORDEN_HALTERO_.indexOf(c); if (i >= 0 && i < m) m = i; }); return m; };
+  var L = nuevos.filter(function (r) { return celdaIso_(r.FECHA) === jue && r.TURNO !== 'AM' && pos(r) < 99; }); if (L.length < 2) return;
+  var ords = L.map(function (r) { return parseFloat(r.ORDEN) || 0; }).sort(function (a, b) { return a - b; });
+  L.sort(function (a, b) { return pos(a) - pos(b); }).forEach(function (r, i) { r.ORDEN = ords[i]; });
+}
+/** Pablo 17/11 · todos los lunes, warm-up de activación tobillo–cintilla/rodilla–cadera antes de la clase (no cuenta como extra). */
+function warmupLunes_(lunes, nuevos, sello, permitidos, log) {
+  if (permitidos && !permitidos[lunes]) return;
+  var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
+  var ses = listar_(HOJAS.PLAN).concat(nuevos).filter(function (r) { return celdaIso_(r.FECHA) === lunes && act(r); });
+  if (ses.some(function (r) { return codigosDe_(r['CÓDIGOS']).indexOf('W41') >= 0; })) return;
+  var pm = ses.filter(function (r) { return r.TURNO !== 'AM'; }), f0 = pm.map(function (r) { return parseFloat(r.ORDEN) || 50; });
+  var orden = (f0.length ? Math.min.apply(null, f0) : 50) - 1;
+  nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(lunes), 'DÍA': 'Lunes', TURNO: 'PM', ORDEN: orden, ORIGEN: 'MOVILIDAD', BLOQUE: 'Warm-up · tobillo, cintilla/rodilla y cadera', 'TÍTULO': 'Warm-up · tobillo, cintilla/rodilla y cadera',
+    CONTENIDO: '6–8′ antes de la clase, 1 vuelta continua:\n- 60″ rodillo en cintilla y TFL por lado\n- 8+8 rodilla sobre pie en pared (tobillo, talón apoyado)\n- 10+10 clamshell con banda + 10 monster walks\n- 5+5 cossack squat lento\n- 5+5 90/90 de cadera con paso a rodilla\n- 10 sentadillas con pausa 2″ + 3 saltos suaves\n\nRegistra: zona que más costó',
+    INTENSIDAD: '🟢 Movilidad', MIN: 8, 'CÓDIGOS': 'W41', 'POR QUÉ (cursiva)': 'Pablo 17/11: todos los lunes, para empezar la semana con tobillo, cintilla/rodilla y cadera activados. No cuenta como extra (máx. 2 extras + 1 warm-up por sesión).',
+    ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() });
+  if (log) log.push('Warm-up del lunes');
 }

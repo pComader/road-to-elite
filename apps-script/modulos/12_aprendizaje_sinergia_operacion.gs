@@ -675,7 +675,7 @@ function opCorreoHtml_(lunes) {
     (dnL != null ? ' · el lunes es D' + (dnL >= 0 ? '+' : '') + dnL : p.faltan != null ? ' · faltan ' + p.faltan + ' días para la fecha ' + (p.fecha ? '' : 'prevista ') + '(' + isoAFecha(p.fecha || p.prevista) + ')' : '') +
     '<br><span style="font-size:13px">Autorizaciones: ' + esc_(p.aut.filter(function (a) { return a.si; }).map(function (a) { return a.nombre; }).join(', ') || 'ninguna todavía') +
     (p.bloqueado.length ? '<br>Bloqueado: ' + esc_(p.bloqueado.join(' · ')) : '') + (p.pendiente ? '<br>⚠ ' + esc_(p.pendiente) : '') + (p.alarma ? '<br>⛔ Alarma activa desde el ' + isoAFecha(p.alarma) + ': fase congelada.' : '') +
-    (op.fase === 'PREVIA' ? '<br>Esta semana: Z2 ×2 (≥90′), ergo 20–40′, 1 calidad, <b>2 P1–P4</b> (≥48 h) y <b>+1 de empuje vertical</b> (press OH + HSPU + HSW). Sin semana de choque ni dieta.' : '') +
+    (op.fase === 'PREVIA' ? '<br>Esta semana: Z2 ×2 (≥90′), ergo 20–40′, 1 calidad, <b>2 P1–P4</b> (≥48 h) y <b>+1 de empuje vertical</b> (press OH + HSPU + HSW). <b>Pino 3–5′ cada día en casa</b> (a pared, sin fatiga; no cuenta como sesión). Sin semana de choque ni dieta.' : '') +
     opTareas_(lunes, op).map(function (t) { return '<br>📌 ' + esc_(t.texto); }).join('') + '</span></div>';
 }
 /** Valores iniciales (configurar): no pisa lo que ya exista. */
