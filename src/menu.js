@@ -1351,11 +1351,12 @@
   function htmlIntercambio(b, x, idb) {
     if (!b.extra || !esCarreraOErgo(b)) return '';
     var otros = [];
-    S.data.dias.forEach(function (y) { y.bloques.forEach(function (z) {
+    S.data.dias.forEach(function (y) { y.bloques.forEach(function (z, iz) {
       if (z === b || !z.extra || z.id === idb || !esCarreraOErgo(z) || /NO HACER|CANCELADO|OCULTO|SUSTITUIDO|SIN HUECO|PROPUESTA/.test(norm(z.estado || ''))) return;
-      otros.push('<button type="button" class="pos-op" data-swap="' + esc(z.id) + '"><b>⇄ ' + esc(NOMBRE_DIA[y.nombre] + ' ' + diaMes(y.iso) + ' · ' + z.turno) + '</b><span>' + esc(z.titulo) + (z.min ? ' · ' + esc(z.min) + '′' : '') + '</span><span class="go">Cambiar</span></button>');
+      otros.push({ k: y.iso + (z.turno === 'AM' ? '0' : '1') + ('00' + (parseFloat(z.orden) || iz)).slice(-6), h: '<button type="button" class="pos-op" data-swap="' + esc(z.id) + '"><b>⇄ ' + esc(NOMBRE_DIA[y.nombre] + ' ' + diaMes(y.iso) + ' · ' + z.turno) + '</b><span>' + esc(z.titulo) + (z.min ? ' · ' + esc(z.min) + '′' : '') + '</span><span class="go">Cambiar</span></button>' });
     }); });
     if (!otros.length) return '';
+    otros = otros.sort(function (p, q) { return p.k < q.k ? -1 : p.k > q.k ? 1 : 0; }).map(function (o) { return o.h; });   // v0.30.5 · por día y por orden de bloque
     return '<div class="part-lbl">Intercambiar con otra sesión de carrera o ergómetro</div><div class="hint">Cada uno pasa al día, turno y orden del otro. Sigue aprobado.</div><div class="mover-sel">' + otros.join('') + '</div>';
   }
   function abrirPedirClaude(lunes) {

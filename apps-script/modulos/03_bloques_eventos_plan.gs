@@ -66,6 +66,10 @@ function pintarHojaSemana_(lunes) {
   var fin = sumarDias(lunes, 6);
   var plan = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && !/^(SUSTITUIDO|OCULTO|PROPUESTA)$/.test(r.ESTADO); });
   var etq = function (r) { var d = celdaIso_(r.FECHA), k = (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7; return DIAS_CORTO_[k] + ' ' + (r.TURNO === 'AM' ? 'AM' : 'PM') + ' · ' + String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 40) + ' · #' + r.ID; };
+  var ordenPlan_ = function (a, b) { var da = celdaIso_(a.FECHA), db = celdaIso_(b.FECHA); if (da !== db) return da < db ? -1 : 1;
+    var ta = a.TURNO === 'AM' ? 0 : 1, tb = b.TURNO === 'AM' ? 0 : 1; if (ta !== tb) return ta - tb;
+    return (parseFloat(String(a.ORDEN).replace(',', '.')) || 0) - (parseFloat(String(b.ORDEN).replace(',', '.')) || 0); };
+  plan.sort(ordenPlan_);   // v0.30.5 · INTERCAMBIAR CON / FUSIONAR CON salen por día y, dentro del día, en el orden de los bloques
   var opcionesSwap = plan.map(etq), clave = {};
   var todosSem = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin; });
   var propFus = [], oriFus = [];   // v0.26 · filas de fusiones en propuesta y de sus originales
@@ -165,6 +169,8 @@ function pintarHojaSemana_(lunes) {
   var opSes = []; DIAS_CORTO_.forEach(function (dc) { opSes.push('⇄ ' + dc + ' AM'); opSes.push('⇄ ' + dc + ' PM'); opSes.push('⇄ ' + dc + ' · día entero'); });
   var vSes = SpreadsheetApp.newDataValidation().requireValueInList(opSes, true).setAllowInvalid(false).build();
   sesiones.forEach(function (f) { sh.getRange(f, 10).setDataValidation(vSes).setBackground('#ffffff'); sh.getRange(f, 12).setFontColor('#bbbbbb'); });
+  var vAdd = SpreadsheetApp.newDataValidation().requireValueInList(['⇄ sesión →', '＋ AÑADIR BLOQUE AQUÍ'], true).setAllowInvalid(true).setHelpText('Elige «＋ AÑADIR BLOQUE AQUÍ» para crear un bloque en esta sesión con uno o varios estímulos.').build();
+  sesiones.forEach(function (f) { sh.getRange(f, 9).setDataValidation(vAdd).setBackground('#ecfdf5').setFontColor('#047857'); });   // v0.30.5
   sh.getRange(5, 1, Math.max(1, filas.length - 4), 12).setVerticalAlignment('top').setWrap(true);
   sh.getRange(5, 11, Math.max(1, filas.length - 4), 1).setFontStyle('italic');
   sh.getRange(5, 4, Math.max(1, filas.length - 4), 1).setFontFamily('Roboto Mono').setFontSize(9);
@@ -199,6 +205,7 @@ function alEditarHoja(e) {
     if (f === 2 && c === 6 && v === true) { var np = programarRango_(lunesDe_(lunes)); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(np + ' bloques pasan a PROGRAMADO (toda la semana)', 'Road To Elite', 4); return; }
     if (f < 5) return;
     var id = String(sh.getRange(f, 12).getValue() || '').trim(); if (!id) return;
+    if (/^SES\|/.test(id) && c === 9 && /AÑADIR/.test(String(v))) { var pa = id.split('|'); sh.getRange(f, 9).setValue('⇄ sesión →'); abrirDialogoBloque_(pa[1], pa[2]); return; }   // v0.30.5
     if (/^SES\|/.test(id)) {   // v0.22 · sesión o día entero
       if (c === 8 && /PROGRAMAR/.test(String(v))) { var pz = id.split('|'), nz = programarRango_(lunesDe_(lunes), pz[1], /DÍA/.test(String(v)) ? '' : pz[2]); MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast(nz + ' bloques pasan a PROGRAMADO', 'Road To Elite', 4); return; }
       if (c !== 10 || !v) return;
@@ -785,3 +792,60 @@ function coberturaSin_() {
   return { metas: metasDe_(hoyIso_()), carrera: { intro: car.slice(0, iCab >= 0 ? iCab : 6).map(function (r) { return String(r[0]).trim(); }).filter(Boolean), semanas: carrera } };
 }
 
+
+// ===================== v0.30.5 · AÑADIR BLOQUE DESDE EL SHEET (cualquier día, cualquier hueco, varios estímulos) =====================
+function menuAnadirBloque() { abrirDialogoBloque_(hoyIso_(), 'PM'); }
+function abrirDialogoBloque_(iso, turno) {
+  var t = HtmlService.createTemplate(HTML_DIALOGO_BLOQUE_);
+  t.datos = JSON.stringify({ iso: iso, turno: turno === 'AM' ? 'AM' : 'PM' });
+  SpreadsheetApp.getUi().showModalDialog(t.evaluate().setWidth(560).setHeight(680), 'Añadir bloque · Road To Elite');
+}
+/** Datos del diálogo: estímulos (con lo que falta) y los bloques de esa sesión para elegir el hueco. Público para google.script.run. */
+function datosDialogoBloque(iso, turno) {
+  iso = celdaIso_(iso) || hoyIso_(); turno = turno === 'AM' ? 'AM' : 'PM';
+  var est = []; try { est = estimulosLista_(lunesDe_(iso)).map(function (x) { return { c: x.c, nombre: x.nombre, familia: x.familia || 'Otros', falta: x.falta || 0 }; }); } catch (e) {}
+  var bl = listar_(HOJAS.PLAN).filter(function (r) { return celdaIso_(r.FECHA) === iso && (r.TURNO === 'AM' ? 'AM' : 'PM') === turno && !/^(SUSTITUIDO|OCULTO|PROPUESTA|NO HACER|CANCELADO)$/.test(r.ESTADO); })
+    .map(function (r) { return { orden: parseFloat(String(r.ORDEN).replace(',', '.')) || 0, titulo: String(r['TÍTULO'] || r.BLOQUE || '').slice(0, 60), fabrik: norm(r.ORIGEN) === 'FABRIK' }; })
+    .sort(function (a, b) { return a.orden - b.orden; });
+  return { iso: iso, turno: turno, estimulos: est, bloques: bl };
+}
+/** Crea el bloque (PROGRAMADO) con todos los estímulos marcados: cuenta en semana y mes. Público para google.script.run. */
+function anadirBloqueHoja(b) {
+  var iso = celdaIso_(b.fecha); if (!iso || !String(b.titulo || '').trim()) throw new Error('Falta la fecha o el título');
+  var cods = (b.codigos || []).filter(function (c) { return /^[A-Z]{1,2}[0-9]{1,3}$/.test(c); });
+  var id = crearBloque_({ fecha: iso, TURNO: b.turno, ORDEN: b.orden, ORIGEN: b.origen || 'EXTRA', 'TÍTULO': String(b.titulo).slice(0, 120), CONTENIDO: String(b.contenido || ''), MIN: b.min || '', CANTIDAD: b.cantidad || '', 'CÓDIGOS': cods.join('|'),
+    'POR QUÉ (cursiva)': String(b.porque || ''), INTENSIDAD: b.intensidad || '' });
+  var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0];
+  if (x) actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'PROGRAMADO', GENERADO: 'Pablo · Sheet ' + ahora_() });
+  MEMO = null; try { invalidarSemana_(); } catch (e) {}
+  refrescarHojaSemana_(iso); refrescarResumen_();
+  return 'Añadido «' + b.titulo + '» el ' + isoAFecha(iso) + ' ' + b.turno + (cods.length ? ' · cuenta para ' + cods.join(', ') : ' · sin estímulos (no suma a metas)');
+}
+var HTML_DIALOGO_BLOQUE_ = '<!doctype html><html><head><base target="_top"><style>' +
+  'body{font:13px/1.4 Roboto,Arial,sans-serif;margin:10px;color:#111}label{display:block;font-weight:600;margin:8px 0 3px}input,select,textarea{width:100%;box-sizing:border-box;padding:6px;font:inherit}' +
+  'textarea{height:90px;font-family:Roboto Mono,monospace;font-size:12px}.row{display:flex;gap:8px}.row>div{flex:1}#est{border:1px solid #ddd;border-radius:6px;max-height:210px;overflow:auto;padding:4px 8px}' +
+  '.fam{font-weight:700;margin:6px 0 2px;color:#2f81f7}.e{display:flex;gap:6px;align-items:center;font-weight:400;margin:2px 0}.e input{width:auto}.f{color:#c2410c;font-size:11px}' +
+  'button{margin-top:12px;padding:9px 14px;background:#e8590c;color:#fff;border:0;border-radius:6px;font-weight:700;cursor:pointer}#msg{margin-top:8px;color:#047857}#q{margin-bottom:4px}</style></head><body>' +
+  '<div class="row"><div><label>Día</label><input type="date" id="fecha"></div><div><label>Turno</label><select id="turno"><option>AM</option><option>PM</option></select></div></div>' +
+  '<label>Hueco</label><select id="hueco"></select>' +
+  '<div class="row"><div><label>Tipo</label><select id="origen"><option>EXTRA</option><option>TÉCNICA</option><option>CARRERA</option><option>Z6–Z8</option><option>MOVILIDAD</option></select></div><div><label>Minutos</label><input type="number" id="min" min="0"></div><div><label>Saltos (si hay)</label><input type="number" id="cant" min="0"></div></div>' +
+  '<label>Título</label><input id="titulo" placeholder="Bloque OH · OHS + waiter walk">' +
+  '<label>Contenido</label><textarea id="cont" placeholder="Series, reps, cargas…"></textarea>' +
+  '<label>Estímulos (marca todos los que cubre)</label><input id="q" placeholder="Buscar…"><div id="est">Cargando…</div>' +
+  '<button id="ok">Añadir bloque</button><div id="msg"></div>' +
+  '<script>var D=<?!= datos ?>,E=[];' +
+  'function $(i){return document.getElementById(i)}' +
+  'function cargar(){google.script.run.withSuccessHandler(pintar).datosDialogoBloque($("fecha").value,$("turno").value)}' +
+  'function pintar(r){var h=$("hueco");h.innerHTML="";var op=[["Al principio",(r.bloques[0]?r.bloques[0].orden-1:50)]];' +
+  'r.bloques.forEach(function(b,i){var sig=r.bloques[i+1];op.push(["Después de: "+b.titulo+(b.fabrik?" (Gabi)":""),sig?(b.orden+sig.orden)/2:b.orden+1])});' +
+  'op.forEach(function(o){var x=document.createElement("option");x.textContent=o[0];x.value=o[1];h.appendChild(x)});h.selectedIndex=0;' +
+  'if(!E.length){E=r.estimulos;filtrar()}}' +
+  'function filtrar(){var q=$("q").value.toLowerCase(),sel={};[].forEach.call(document.querySelectorAll("#est input:checked"),function(i){sel[i.value]=1});var g={};' +
+  'E.forEach(function(e){if(q&&(e.c+" "+e.nombre).toLowerCase().indexOf(q)<0&&!sel[e.c])return;(g[e.familia]=g[e.familia]||[]).push(e)});var h="";' +
+  'Object.keys(g).sort().forEach(function(f){h+="<div class=fam>"+f+"</div>";g[f].forEach(function(e){h+="<label class=e><input type=checkbox value=\'"+e.c+"\'"+(sel[e.c]?" checked":"")+"> "+e.c+" · "+e.nombre+(e.falta>0?" <span class=f>falta "+e.falta+"</span>":"")+"</label>"})});' +
+  '$("est").innerHTML=h||"Sin resultados"}' +
+  '$("fecha").value=D.iso;$("turno").value=D.turno;$("fecha").onchange=cargar;$("turno").onchange=cargar;$("q").oninput=filtrar;cargar();' +
+  '$("ok").onclick=function(){var c=[].map.call(document.querySelectorAll("#est input:checked"),function(i){return i.value});var b=this;b.disabled=true;b.textContent="Guardando…";' +
+  'google.script.run.withSuccessHandler(function(m){$("msg").textContent=m;setTimeout(function(){google.script.host.close()},1500)}).withFailureHandler(function(e){$("msg").style.color="#b91c1c";$("msg").textContent=e.message;b.disabled=false;b.textContent="Añadir bloque"})' +
+  '.anadirBloqueHoja({fecha:$("fecha").value,turno:$("turno").value,orden:parseFloat($("hueco").value),origen:$("origen").value,titulo:$("titulo").value,contenido:$("cont").value,min:$("min").value,cantidad:$("cant").value,codigos:c})}' +
+  '</script></body></html>';

@@ -354,7 +354,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('Road To Elite')
     .addItem('Cargar Fabrik · semana siguiente', 'menuCargarFabrikSiguiente').addItem('Cargar Fabrik · esta semana', 'menuCargarFabrikActual')
     .addItem('Cargar extras · semana siguiente', 'menuExtrasSiguiente').addSeparator()
-    .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
+    .addItem('Semana en bloques · actualizar', 'menuSemanaBloques').addItem('＋ Añadir bloque (cualquier día y hueco)', 'menuAnadirBloque').addItem('Enviar por correo los estímulos de la semana', 'menuEnviarResumen').addSeparator()
     .addItem('Motor · analizar WODs de Fabrik ahora', 'menuMotorAhora').addItem('Motor · explicar con Gemini (8)', 'menuGemini')
     .addItem('Competis · actualizar desde la app de Gabi', 'menuCompetis').addItem('Lesiones · completar con IA (Gemini)', 'menuLesionesIA').addItem('Estímulos en bloques (incentivar)', 'menuEstimulosBloques').addItem('Aprendizaje · analizar la semana y generar preguntas', 'menuAprendizaje').addItem('Backup completo ahora', 'menuBackupAhora').addItem('Vídeos · revisar enlaces ahora', 'menuRevisarVideos').addItem('Motor · KNOWLEDGE + aprender del ciclo ahora', 'menuAprenderCiclo').addItem('Agente del PC · ver token', 'menuTokenAgente').addItem('Agente del PC · cambiar token (PC perdido)', 'menuNuevoTokenAgente')
     .addItem('Base de datos WODs · token de lectura para otras apps', 'menuTokenBd').addToUi();
