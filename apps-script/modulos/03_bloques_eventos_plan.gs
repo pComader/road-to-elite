@@ -197,6 +197,7 @@ function alEditarHoja(e) {
   try { invalidarSemana_(); } catch (x) {}
   try {
     var sh = e.range.getSheet(); if (sh.getName() === COMP_VISTA_) { editarCompetisSheet_(e); return; }
+    if (sh.getName() === HOJAS.PLAN) { estadoEditadoEnPlan_(e); return; }   // v0.31.1 · el Sheet manda
     if (sh.getName() === HOJAS.ESTBLOQUES) { editarEstimulosSheet_(e); return; }
     if (sh.getName() !== HOJAS.SEMBLOQUES) return;
     var f = e.range.getRow(), c = e.range.getColumn(), v = e.range.getValue();
@@ -242,7 +243,8 @@ function alEditarHoja(e) {
     if (c === 8) {   // v0.22 · estado desde el Sheet
       var ev = String(v || '').trim(), xr = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === id; })[0]; if (!xr) return;
       if (ev === 'CANCELADO') noHacer_({ id: id, fecha: celdaIso_(xr.FECHA), cancelar: true, motivo: 'Cancelado desde el Sheet' });
-      else if (ev === 'PROGRAMADO' && xr.ESTADO === 'CANCELADO') reactivarBloque_(id);
+      else if (ev === 'PROGRAMADO' && /^(CANCELADO|NO HACER|SIN HUECO)$/.test(xr.ESTADO)) reactivarBloque_(id);   // v0.31.1 · también desde NO HACER
+      else if (ev === 'NO HACER') noHacer_({ id: id, fecha: celdaIso_(xr.FECHA), motivo: 'No hacer desde el Sheet' });
       else if (ev === 'A PENDIENTES') quitarBloque_({ id: id, pendiente: true, motivo: 'Desde APP · SEMANA EN BLOQUES' });
       else if (ev === 'PROGRAMADO' && xr.ESTADO === 'BORRADOR') actualizarFila_(HOJAS.PLAN, xr._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
       MEMO = null; pintarHojaSemana_(lunes); SpreadsheetApp.getActive().toast('Estado: ' + ev, 'Road To Elite', 3); return;
@@ -508,13 +510,18 @@ function quitarRegistroDe_(idPlan) {
   listar_(HOJAS.REGISTRO).filter(function (r) { return r.ID_PLAN === idPlan; }).map(function (r) { return r._fila; }).sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); n++; });
   if (n) MEMO = null; return n;
 }
-/** v0.22 · Reactivar un bloque CANCELADO: vuelve a PROGRAMADO y cuenta otra vez para las metas. */
+/** v0.22 · Reactivar un bloque CANCELADO o (v0.31.1) NO HACER: vuelve a PROGRAMADO, cuenta otra vez y sale de pendientes. */
 function reactivarBloque_(id) {
   return bloqueo_(function () {
     var x = listar_(HOJAS.PLAN).filter(function (r) { return r.ID === String(id || ''); })[0];
     if (!x) throw new Error('no_encontrado');
-    if (x.ESTADO !== 'CANCELADO') return x.ID;
+    if (!/^(CANCELADO|NO HACER|SIN HUECO)$/.test(x.ESTADO)) return x.ID;
+    var eraNo = x.ESTADO === 'NO HACER';
     actualizarFila_(HOJAS.PLAN, x._fila, { ESTADO: 'PROGRAMADO', ACTUALIZADO: ahora_() });
+    if (eraNo) listar_(HOJAS.PENDIENTES).filter(function (p) { return p.ID_PLAN === x.ID && /^Pendiente$/i.test(p.ESTADO); })
+      .forEach(function (p) { actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Reprogramado', NOTAS: 'Vuelto a programar desde la app ' + ahora_() }); });
+    MEMO = null; try { invalidarSemana_(); } catch (e) {}
+    try { refrescarHojaSemana_(celdaIso_(x.FECHA)); } catch (e2) {}
     return x.ID;
   });
 }
@@ -849,3 +856,20 @@ var HTML_DIALOGO_BLOQUE_ = '<!doctype html><html><head><base target="_top"><styl
   'google.script.run.withSuccessHandler(function(m){$("msg").textContent=m;setTimeout(function(){google.script.host.close()},1500)}).withFailureHandler(function(e){$("msg").style.color="#b91c1c";$("msg").textContent=e.message;b.disabled=false;b.textContent="Añadir bloque"})' +
   '.anadirBloqueHoja({fecha:$("fecha").value,turno:$("turno").value,orden:parseFloat($("hueco").value),origen:$("origen").value,titulo:$("titulo").value,contenido:$("cont").value,min:$("min").value,cantidad:$("cant").value,codigos:c})}' +
   '</script></body></html>';
+
+/** v0.31.1 · ESTADO cambiado a mano en APP · PLAN: el Sheet manda. NO HACER → PROGRAMADO/BORRADOR saca el bloque de pendientes;
+ *  PROGRAMADO → NO HACER lo manda a pendientes (como la app). Repinta la semana en bloques. */
+function estadoEditadoEnPlan_(e) {
+  var sh = e.range.getSheet(), cab = cabeceras_(sh), col = cab.indexOf('ESTADO') + 1;
+  if (!col || e.range.getColumn() > col || e.range.getLastColumn() < col) return;
+  for (var f = e.range.getRow(); f <= e.range.getLastRow(); f++) {
+    if (f < 2) continue;
+    var fila = sh.getRange(f, 1, 1, cab.length).getValues()[0], o = {}; cab.forEach(function (h, i) { o[h] = fila[i]; });
+    var nuevo = String(o.ESTADO || '').trim(), viejo = e.range.getNumRows() === 1 ? String(e.oldValue || '') : '';
+    if (/^(PROGRAMADO|BORRADOR)$/.test(nuevo)) listar_(HOJAS.PENDIENTES).filter(function (p) { return p.ID_PLAN === o.ID && /^Pendiente$/i.test(p.ESTADO); })
+      .forEach(function (p) { actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Reprogramado', NOTAS: 'Vuelto a programar desde el Sheet ' + ahora_() }); });
+    if (nuevo === 'NO HACER' && viejo !== 'NO HACER' && !listar_(HOJAS.PENDIENTES).some(function (p) { return p.ID_PLAN === o.ID && /^Pendiente$/i.test(p.ESTADO); })) anadirPendiente_(o, 'No hacer desde APP · PLAN');
+    try { sh.getRange(f, cab.indexOf('ACTUALIZADO') + 1).setValue(ahora_()); } catch (x) {}
+    try { MEMO = null; refrescarHojaSemana_(celdaIso_(o.FECHA)); } catch (x2) {}
+  }
+}

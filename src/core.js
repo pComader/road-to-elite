@@ -841,7 +841,7 @@
       '<div class="b-head"><span class="b-num">' + (b.n || '•') + '</span><span class="b-title">' + esc(b.titulo) + '</span>' + cam +
         (b.rpe ? '<span class="b-rpe" style="--c:' + rpeColor(b.rpe) + '">RPE ' + esc(b.rpe) + '</span>' : '') + '</div>';
 
-    var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes</div>' :
+    var est = norm(b.estado), tagEst = est === 'NO HACER' ? '<div class="b-state no">No hacer · pasa a pendientes <button type="button" class="btn-ghost sm" data-reactivar="' + esc(idPlanDe(x, b)) + '">↺ Volver a programar</button></div>' :
       est === 'PROPUESTA' ? '<div class="b-state prop">Propuesta de cambio · pendiente de tu aprobación</div>' :
       est === 'PROPUESTA · NO HACER' ? '<div class="b-state prop">Propuesta: no hacer este bloque</div>' : '';
     if (b.clave) tagEst += '<div class="b-clave">🎯 Clave para tus carencias · ' + esc(b.clave) + '</div>';
@@ -2014,7 +2014,7 @@
       return;
     }
     if ((b = t.closest('[data-nohacer]'))) { abrirNoHacer(JSON.parse(b.dataset.nohacer)); return; }
-    if ((b = t.closest('[data-reactivar]'))) { b.disabled = true; api({ action: 'reactivar', id: b.dataset.reactivar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Reactivado'); }).catch(falloApi(b)); return; }
+    if ((b = t.closest('[data-reactivar]'))) { b.disabled = true; api({ action: 'reactivar', id: b.dataset.reactivar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Vuelve a estar programado (y sale de pendientes)'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-intercambio]'))) { abrirIntercambio(b.dataset.intercambio); return; }
     if ((b = t.closest('[data-cambiar-est]'))) { abrirCambiarEstimulo(b.dataset.cambiarEst); return; }
     if ((b = t.closest('[data-desfusionar]'))) { if (!confirmar(b, '¿Deshacer?')) return; b.disabled = true; api({ action: 'desfusionar', id: b.dataset.desfusionar, ver: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); render(); toast('Fusión deshecha: vuelven los bloques originales'); }).catch(falloApi(b)); return; }

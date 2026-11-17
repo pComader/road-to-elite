@@ -371,7 +371,10 @@ function archivarSiToca_() {
 function invalidarSemana_() { PROPS.setProperty('rev_datos', String((parseInt(PROPS.getProperty('rev_datos') || '0', 10) || 0) + 1)); }
 function semanaCacheada_(semana) {
   if (semana && !isoOk_(semana)) return semanaCompleta_(semana);
-  var lunes = lunesDe_(semana || hoyIso_()), c = CacheService.getScriptCache(), rev = PROPS.getProperty('rev_datos') || '0', base = 'sem|' + lunes + '|' + hoyIso_() + '|' + rev;
+  var lunes = lunesDe_(semana || hoyIso_()), c = CacheService.getScriptCache(), rev = PROPS.getProperty('rev_datos') || '0';
+  // v0.31.1 · el Sheet manda: cualquier cambio en el libro (a mano, por la API o desde otro sitio) invalida la caché de la app
+  try { rev += '.' + DriveApp.getFileById(miLibro_().getId()).getLastUpdated().getTime(); } catch (eLu) {}
+  var base = 'sem|' + lunes + '|' + hoyIso_() + '|' + rev;
   try {
     var n = parseInt(c.get(base + '|n'), 10);
     if (n > 0) {
