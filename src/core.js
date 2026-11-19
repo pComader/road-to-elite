@@ -876,7 +876,8 @@
       (b.porque ? '<div class="part-lbl">Por qué va aquí</div><p class="why-t">' + esc(b.porque) + '</p>' : '') +
       (b.ciencia ? '<div class="part-lbl">Explicación técnica, fisiológica y biológica</div><div class="prose-n">' + esc(b.ciencia) + '</div>' : '') +
       (b.interf ? '<div class="part-lbl">Posibles interferencias</div><div class="prose-n">' + esc(b.interf) + '</div>' : '') + '</div></details>' : '';
-    return '<article class="block' + (b.extra ? ' extra' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' ? ' off' : '') + (/^PROPUESTA/.test(est) ? ' prop' : '') + '" id="b-' + esc(b.n) + '">' + cab + tagEst +
+    if (norm(b.origen || '') === 'CLASE') tagEst = '<div class="b-state clase">👥 Para la clase · no es para ti (no cuenta en tus metas)</div>' + tagEst;   // v0.31.4
+    return '<article class="block' + (b.extra ? ' extra' : '') + (norm(b.origen || '') === 'CLASE' ? ' clase' : '') + (b.clave ? ' clave' : '') + (est === 'NO HACER' ? ' off' : '') + (/^PROPUESTA/.test(est) ? ' prop' : '') + '" id="b-' + esc(b.n) + '">' + cab + tagEst +
       (prep.length ? '<details><summary>Calentamiento y activación</summary><div class="exp-body">' + prep.map(parte).join('') + '</div></details>' : '') +
       main.map(parte).join('') + (b.alternativas ? '<details class="alt"><summary>↔ Alternativas · elige según con quién entrenas</summary><div class="exp-body"><div class="prose-n pre">' + esc(b.alternativas) + '</div></div></details>' : '') + sci +
       (adapt.length ? '<details><summary>Adaptaciones</summary><div class="exp-body">' + adapt.map(parte).join('') + '</div></details>' : '') +

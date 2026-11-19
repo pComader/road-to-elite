@@ -1136,3 +1136,7 @@ details.activ ul{margin:6px 0 2px;padding-left:18px}
 section.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 16px}
 section.card h2{font-size:16px;margin:0 0 8px}
 section.card .warn,.rend-i .warn{border-left:3px solid #e0a800;padding:4px 8px;margin:6px 0;background:color-mix(in srgb,#e0a800 12%,var(--surface));border-radius:6px}
+
+/* v0.31.4 · bloques para la clase (no son de Pablo): borde verde */
+.block.clase{border:2px solid #22c55e!important;border-left:6px solid #22c55e!important}
+.b-state.clase{color:#15803d;font-weight:700;font-size:12px}

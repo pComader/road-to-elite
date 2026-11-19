@@ -108,7 +108,7 @@ function pintarHojaSemana_(lunes) {
             oriFus.push(filas.length); });
           return;
         }
-        estilos.push([filas.length, /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03)\b/.test(r['CÓDIGOS'] || '') ? 'carrera' : /W03/.test(r['CÓDIGOS'] || '') ? 'ergo' : fab ? 'fabrik' : 'extra']);
+        estilos.push([filas.length, /CARRERA/.test(norm(r.ORIGEN)) || /\b(W01|W02|W04|R02|R03)\b/.test(r['CÓDIGOS'] || '') ? 'carrera' : /W03/.test(r['CÓDIGOS'] || '') ? 'ergo' : fab ? 'fabrik' : norm(r.ORIGEN) === 'CLASE' ? 'clase' : 'extra']);
       });
       // v0.31.2 · fila fija para añadir un bloque en esta sesión (si no se rellena, no existe y no sale en la app)
       filas.push(['', 'Antes de la clase', '', '', 'EXTRA', '', '', '', '', '', '', 'NEW|' + iso + '|' + tu]);
@@ -127,7 +127,7 @@ function pintarHojaSemana_(lunes) {
   sh.setFrozenRows(4);
   [130, 44, 240, 380, 150, 50, 120, 100, 110, 260, 300, 80].forEach(function (w, j) { sh.setColumnWidth(j + 1, w); });
   // Formato en bloque (una llamada por propiedad): mucho más rápido que fila a fila
-  var colores = { cab: ['#121212', '#ffffff'], am: ['#fff2cc', '#000000'], pm: ['#e8eaf6', '#000000'], carrera: ['#dbeafe', '#000000'], ergo: ['#e0f2fe', '#000000'], fabrik: ['#f4f5f7', '#000000'], extra: ['#fff7ed', '#000000'] };
+  var colores = { cab: ['#121212', '#ffffff'], am: ['#fff2cc', '#000000'], pm: ['#e8eaf6', '#000000'], carrera: ['#dbeafe', '#000000'], ergo: ['#e0f2fe', '#000000'], fabrik: ['#f4f5f7', '#000000'], extra: ['#fff7ed', '#000000'], clase: ['#f0fdf4', '#14532d'] };
   var tipoFila = {}; estilos.forEach(function (e) { tipoFila[e[0]] = e[1]; });
   var bg = [], fc = [], fw = [];
   for (var f = 1; f <= filas.length; f++) {
@@ -138,6 +138,7 @@ function pintarHojaSemana_(lunes) {
   claves.forEach(function (f) { fc[f - 1][2] = '#b8860b'; fw[f - 1][2] = 'bold'; });   // 🎯 título en dorado
   cancel.forEach(function (f) { bg[f - 1] = new Array(12).fill('#e5e5e5'); fc[f - 1] = new Array(12).fill('#8a8a8a'); });
   sh.getRange(1, 1, filas.length, 12).setBackgrounds(bg).setFontColors(fc).setFontWeights(fw);
+  estilos.forEach(function (e) { if (e[1] === 'clase') sh.getRange(e[0], 1, 1, 12).setBorder(true, true, true, true, null, null, '#16a34a', SpreadsheetApp.BorderStyle.SOLID_THICK); });   // v0.31.4 · bloques para la clase: borde verde
   cancel.forEach(function (f) { sh.getRange(f, 3).setFontLine('line-through'); });
   // v0.26 · columna propia para fusionar (propuesta que apruebas o rechazas)
   sh.getRange(4, 13).setValue('🔗 FUSIONAR CON (propuesta)').setBackground('#e8590c').setFontColor('#ffffff').setFontWeight('bold'); sh.setColumnWidth(13, 260);

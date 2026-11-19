@@ -296,7 +296,7 @@ function contextoSemana_(lunes, excluirId, excluirFn) {
     if (norm(r.ORIGEN) === 'FABRIK') d.fabrik = true;
     d.cargas[t] = d.cargas[t].concat(cargasDe_(r['TÍTULO'] + '\n' + r.CONTENIDO, r.INTENSIDAD || d.fabrikRpe));
     d.min[t] += min; d.codigos = d.codigos.concat(codigosDe_(r['CÓDIGOS'])); if (norm(r.ORIGEN) !== 'FABRIK') d.nExtra[t]++;
-    if (norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'MOVILIDAD' && !esIntocable_(codigosDe_(r['CÓDIGOS']))) { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[t]++; d.minExtraX[t] += min; }
+    if (norm(r.ORIGEN) !== 'FABRIK' && norm(r.ORIGEN) !== 'MOVILIDAD' && norm(r.ORIGEN) !== 'CLASE' && !esIntocable_(codigosDe_(r['CÓDIGOS']))) { d.nExtraX = d.nExtraX || { AM: 0, PM: 0 }; d.minExtraX = d.minExtraX || { AM: 0, PM: 0 }; d.nExtraX[t]++; d.minExtraX[t] += min; }
     if (t === 'AM') { var cAM = codigosDe_(r['CÓDIGOS']); d.codigosAM = (d.codigosAM || []).concat(cAM); if (cAM.some(function (c) { return /^(W01|W02|W04)$/.test(c); })) d.minCarreraAM = (d.minCarreraAM || 0) + min;
       else if (!cAM.some(function (c) { return /^W0[123]$/.test(c); })) d.nExtraAMcal = (d.nExtraAMcal || 0) + 1; }
     if (/R01|R02|R03|R04|W04/.test(r['CÓDIGOS'])) d.duro = true;
