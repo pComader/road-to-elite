@@ -775,6 +775,7 @@
   }
   /** v0.29 · activación 6–8′ antes del primer bloque de cada turno (plegada). */
   function htmlActivacion(d, iso, tk) {
+    return '';   // v0.31.5 · regla de Pablo (19/11): el calentamiento general lo hace él; solo existe el bloque «Warm-up diario»
     var l = (d.activacion || {})[iso + '|' + tk];
     if (!l || !l.length) return '';
     return '<details class="activ"><summary>🔥 Activación 6–8′</summary><ul>' + l.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></details>';

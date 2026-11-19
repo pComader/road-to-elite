@@ -439,21 +439,63 @@ function ordenarHalteroJueves_(lunes, nuevos) {
   var ords = L.map(function (r) { return ordenNum_(r.ORDEN) || 0; }).sort(function (a, b) { return a - b; });
   L.sort(function (a, b) { return pos(a) - pos(b); }).forEach(function (r, i) { r.ORDEN = ords[i]; });
 }
-/** Pablo 17/11 · todos los lunes, warm-up de activación tobillo–cintilla/rodilla–cadera antes de la clase (no cuenta como extra). */
-function warmupLunes_(lunes, nuevos, sello, permitidos, log) {
+// ===================== v0.31.5 · WARM-UP DIARIO (regla de Pablo 19/11/2026) =====================
+// REGLA (para cualquier IA): Pablo hace él su calentamiento general. Lo de Gabi (movilidad/activación) va plegado como información,
+// nunca como bloque principal. El ÚNICO bloque de warm-up del día es este, extra a Fabrik, antes de la primera sesión del día:
+//   · TODOS los días 3 ejercicios: 1 cintilla + movilidad cadera-tobillo · 1 cuello-trapecio · 1 manguito rotador.
+//   · LUNES y MIÉRCOLES además 3 de fortalecimiento (isométricos, peso o gomas): 1 cadera-tobillo-cintilla · 1 cuello-trapecio · 1 manguito.
+//   · Los ejercicios rotan dentro de los pools de abajo (por día para la movilidad, por semana para el fortalecimiento).
+//   · Código W41 (warm-up diario, meta 7/sem) y W42 (fortalecimiento preventivo, meta 2/sem). No cuenta como extra (máx. 2–3 bloques por sesión).
+var WU_CADERA_ = [
+  '90/90 de cadera con transiciones · 6+6 lentas', 'World\'s greatest stretch (zancada + rotación torácica) · 5+5', 'Couch stretch (flexor de cadera y recto femoral) · 45″ por lado',
+  'Cossack squat lento · 5+5', 'Rodilla a la pared (dorsiflexión de tobillo) · 10+10', 'Sentadilla profunda con balanceo de tobillos · 60″',
+  'Rodillo en TFL y glúteo medio (no directamente sobre la cintilla) · 45″ por lado', 'Zancada lateral con balanceo de aductor · 6+6'];
+var WU_CUELLO_ = [
+  'Chin tucks (retracción cervical) tumbado · 10 × 3″', 'CARs cervicales muy lentos, solo en rango cómodo · 3 por sentido', 'Open book tumbado de lado (cabeza apoyada) · 6+6',
+  'Wall slides de serrato (antebrazos en la pared) · 8', 'Retracción + depresión escapular («shrug inverso») · 10 × 3″',
+  'Estiramiento suave de trapecio superior y elevador de la escápula · 30″ por lado (solo sin dolor)', 'Extensión torácica sobre rodillo · 8 respiraciones'];
+var WU_MANGUITO_ = [
+  'Rotación externa con banda, codo pegado al cuerpo · 15+15', 'Rotación interna con banda, codo pegado al cuerpo · 15+15', 'CARs de hombro lentos · 3+3',
+  'Band pull-apart · 15', 'Face pull con banda ligera · 12', 'Sleeper stretch suave · 30″ por lado', 'Pass-through con banda · 10'];
+var WU_F_CADERA_ = [
+  'Abducción de cadera tumbado de lado, pausa 2″ arriba · 2 × 12+12', 'Monster walks con banda en los tobillos · 2 × 10 m + 10 m', 'Puente de glúteo a una pierna isométrico · 2 × 30″+30″',
+  'Tibialis raise contra la pared · 2 × 15', 'Isometría de sóleo en la pared (rodilla flexionada) · 2 × 30″+30″', 'Spanish squat isométrico con banda · 3 × 30″',
+  'Plancha lateral con abducción de pierna · 2 × 8+8'];
+var WU_F_CUELLO_ = [
+  'Isometría de flexores profundos (chin tuck tumbado, cabeza a 2 cm del suelo) · 5 × 10″', 'Isometrías de cuello en 4 direcciones contra la mano · 4 × 5″ por dirección, 30–50 % del esfuerzo',
+  'Y-raise boca abajo con discos ligeros (trapecio inferior) · 2 × 10', 'T-raise boca abajo (trapecio medio) · 2 × 10', 'Encogimiento con pausa 2″ arriba, mancuernas ligeras · 2 × 12 (solo sin dolor)'];
+var WU_F_MANGUITO_ = [
+  'Rotación externa tumbado de lado con mancuerna de 2–4 kg · 2 × 12+12', 'Isometría de rotación externa a 90° con banda · 3 × 20″+20″', 'Cuban press ligero · 2 × 10',
+  'Y-T-W boca abajo con discos de 1–2 kg · 2 × 6 de cada', 'Rotación externa a 90° con banda, excéntrica de 3″ · 2 × 10+10'];
+function contenidoWarmup_(iso) {
+  var d = Math.round(new Date(iso + 'T12:00:00Z').getTime() / 864e5), dow = (new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7, sem = Math.floor((d - 4) / 7);   // dow 0 = lunes
+  var pick = function (L, n) { return L[((n % L.length) + L.length) % L.length]; };
+  var fuerte = dow === 0 || dow === 2, k = sem * 2 + (dow === 2 ? 1 : 0);
+  var t = 'Antes de la primera sesión del día (tu calentamiento general lo haces tú):\n' +
+    '1) Cintilla y cadera-tobillo · ' + pick(WU_CADERA_, d + 3 * sem) + '\n2) Cuello y trapecio · ' + pick(WU_CUELLO_, d + 3 * sem) + '\n3) Manguito rotador · ' + pick(WU_MANGUITO_, d + 3 * sem);
+  if (fuerte) t += '\n\nFORTALECIMIENTO (lunes y miércoles):\n4) Cadera-tobillo-cintilla · ' + pick(WU_F_CADERA_, k) + '\n5) Cuello y trapecio · ' + pick(WU_F_CUELLO_, k) + '\n6) Manguito rotador · ' + pick(WU_F_MANGUITO_, k) +
+    '\n\nSi el cuello está irritado: en el 5) solo isometría suave o se quita.';
+  return { texto: t + '\n\nRegistra: qué zona notaste más cargada (0–10)', fuerte: fuerte, dow: dow };
+}
+/** Un warm-up diario (W41, + W42 lunes y miércoles) por cada día de la semana que tenga sesión. No duplica si ya existe. */
+function warmupLunes_(lunes, nuevos, sello, permitidos, log) {   // el nombre se mantiene por compatibilidad: ahora cubre los 7 días
   if (permitidos && !permitidos[lunes]) return;
   var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
-  var ses = listar_(HOJAS.PLAN).concat(nuevos).filter(function (r) { return celdaIso_(r.FECHA) === lunes && act(r); });
-  if (ses.some(function (r) { return codigosDe_(r['CÓDIGOS']).indexOf('W41') >= 0; })) return;
-  var pm = ses.filter(function (r) { return r.TURNO !== 'AM'; }), f0 = pm.map(function (r) { return ordenNum_(r.ORDEN) || 50; });
-  var orden = (f0.length ? Math.min.apply(null, f0) : 50) - 1;
-  nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(lunes), 'DÍA': 'Lunes', TURNO: 'PM', ORDEN: orden, ORIGEN: 'MOVILIDAD', BLOQUE: 'Warm-up · tobillo, cintilla/rodilla y cadera', 'TÍTULO': 'Warm-up · tobillo, cintilla/rodilla y cadera',
-    CONTENIDO: '6–8′ antes de la clase, 1 vuelta continua:\n- 60″ rodillo en cintilla y TFL por lado\n- 8+8 rodilla sobre pie en pared (tobillo, talón apoyado)\n- 10+10 clamshell con banda + 10 monster walks\n- 5+5 cossack squat lento\n- 5+5 90/90 de cadera con paso a rodilla\n- 10 sentadillas con pausa 2″ + 3 saltos suaves\n\nRegistra: zona que más costó',
-    INTENSIDAD: '🟢 Movilidad', MIN: 8, 'CÓDIGOS': 'W41', 'POR QUÉ (cursiva)': 'Pablo 17/11: todos los lunes, para empezar la semana con tobillo, cintilla/rodilla y cadera activados. No cuenta como extra (máx. 2 extras + 1 warm-up por sesión).',
-    ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() });
-  if (log) log.push('Warm-up del lunes');
+  var todo = listar_(HOJAS.PLAN).concat(nuevos), DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  for (var i = 0; i < 7; i++) {
+    var iso = sumarDias(lunes, i), ses = todo.filter(function (r) { return celdaIso_(r.FECHA) === iso && act(r); });
+    if (!ses.length || ses.some(function (r) { return codigosDe_(r['CÓDIGOS']).indexOf('W41') >= 0; })) continue;
+    var am = ses.filter(function (r) { return r.TURNO === 'AM'; }), tu = am.length ? 'AM' : 'PM', del = ses.filter(function (r) { return (r.TURNO === 'AM' ? 'AM' : 'PM') === tu; });
+    var orden = Math.min.apply(null, del.map(function (r) { return ordenNum_(r.ORDEN) || 50; })) - 1;
+    var c = contenidoWarmup_(iso);
+    nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': DIAS[i], TURNO: tu, ORDEN: orden, ORIGEN: 'MOVILIDAD',
+      BLOQUE: 'Warm-up diario · cintilla, cuello y manguito' + (c.fuerte ? ' + fortalecimiento' : ''), 'TÍTULO': 'Warm-up diario · cintilla, cuello y manguito' + (c.fuerte ? ' + fortalecimiento' : ''),
+      CONTENIDO: c.texto, INTENSIDAD: '🟢 Movilidad', MIN: c.fuerte ? 12 : 6, 'CÓDIGOS': c.fuerte ? 'W41|W42' : 'W41',
+      'POR QUÉ (cursiva)': 'Regla de Pablo (19/11): cintilla, cuello-trapecio y manguito le han molestado más de una vez. Cada día un ejercicio de cada zona que sirve de calentamiento; lunes y miércoles, además, fortalecimiento. Los ejercicios rotan.',
+      ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() });
+    if (log) log.push('Warm-up diario ' + iso);
+  }
 }
-
 /** v0.31.2 · todas las semanas: el domingo por la noche deja escrito el warm-up del lunes siguiente (PROGRAMADO) si no está. */
 function asegurarWarmupLunes_(lunes) {
   var n = []; warmupLunes_(lunes, n, 'Warm-up automático ' + ahora_(), null, null);
