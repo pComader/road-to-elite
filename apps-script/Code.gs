@@ -8139,43 +8139,59 @@ function ordenarHalteroJueves_(lunes, nuevos) {
   var ords = L.map(function (r) { return ordenNum_(r.ORDEN) || 0; }).sort(function (a, b) { return a - b; });
   L.sort(function (a, b) { return pos(a) - pos(b); }).forEach(function (r, i) { r.ORDEN = ords[i]; });
 }
-// ===================== v0.31.5 · WARM-UP DIARIO (regla de Pablo 19/11/2026) =====================
+// ===================== v0.31.5 · WARM-UP DIARIO (regla de Pablo 19/11/2026; ampliado a 5 zonas el 23/11/2026) =====================
 // REGLA (para cualquier IA): Pablo hace él su calentamiento general. Lo de Gabi (movilidad/activación) va plegado como información,
-// nunca como bloque principal. El ÚNICO bloque de warm-up del día es este, extra a Fabrik, antes de la primera sesión del día:
-//   · TODOS los días 3 ejercicios: 1 cintilla + movilidad cadera-tobillo · 1 cuello-trapecio · 1 manguito rotador.
-//   · LUNES y MIÉRCOLES además 3 de fortalecimiento (isométricos, peso o gomas): 1 cadera-tobillo-cintilla · 1 cuello-trapecio · 1 manguito.
-//   · Los ejercicios rotan dentro de los pools de abajo (por día para la movilidad, por semana para el fortalecimiento).
+// nunca como bloque principal. El ÚNICO bloque de warm-up del día es este, extra a Fabrik, antes de la primera sesión del día (≈5′):
+//   · TODOS los días 5 ejercicios: 1 cadera-tobillo · 1 cuello-trapecio · 1 manguito · 1 movilidad TORÁCICA · 1 fuerza de GLÚTEO MEDIO (el más crítico).
+//   · LUNES y MIÉRCOLES, versión isométrica (fortalecimiento): cadera-tobillo, cuello, manguito y glúteo medio en isométrico (la torácica sigue siendo movilidad).
+//   · Todos rotan cada día por día de la semana + semana, sin repetir el mismo ejercicio en días consecutivos (pools de ≥10 en torácica y glúteo).
 //   · Código W41 (warm-up diario, meta 7/sem) y W42 (fortalecimiento preventivo, meta 2/sem). No cuenta como extra (máx. 2–3 bloques por sesión).
 var WU_CADERA_ = [
   '90/90 de cadera con transiciones · 6+6 lentas', 'World\'s greatest stretch (zancada + rotación torácica) · 5+5', 'Couch stretch (flexor de cadera y recto femoral) · 45″ por lado',
-  'Cossack squat lento · 5+5', 'Rodilla a la pared (dorsiflexión de tobillo) · 10+10', 'Sentadilla profunda con balanceo de tobillos · 60″',
-  'Rodillo en TFL y glúteo medio (no directamente sobre la cintilla) · 45″ por lado', 'Zancada lateral con balanceo de aductor · 6+6'];
+  'Zancada lateral con balanceo de aductor · 6+6', 'Rodilla a la pared (dorsiflexión de tobillo) · 10+10', 'Sentadilla profunda con balanceo de tobillos · 60″',
+  'Rodillo en TFL y cintilla (no directamente sobre la cintilla) · 45″ por lado', 'Rana (frog stretch) con balanceo · 10 balanceos'];
 var WU_CUELLO_ = [
-  'Chin tucks (retracción cervical) tumbado · 10 × 3″', 'CARs cervicales muy lentos, solo en rango cómodo · 3 por sentido', 'Open book tumbado de lado (cabeza apoyada) · 6+6',
+  'Chin tucks (retracción cervical) tumbado · 10 × 3″', 'CARs cervicales muy lentos, solo en rango cómodo · 3 por sentido', 'Retracción cervical de pie con la espalda en la pared · 10 × 3″',
   'Wall slides de serrato (antebrazos en la pared) · 8', 'Retracción + depresión escapular («shrug inverso») · 10 × 3″',
-  'Estiramiento suave de trapecio superior y elevador de la escápula · 30″ por lado (solo sin dolor)', 'Extensión torácica sobre rodillo · 8 respiraciones'];
+  'Estiramiento suave de trapecio superior y elevador de la escápula · 30″ por lado (solo sin dolor)', 'Inclinación lateral cervical con mano suave, sin tirar · 20″ por lado'];
 var WU_MANGUITO_ = [
   'Rotación externa con banda, codo pegado al cuerpo · 15+15', 'Rotación interna con banda, codo pegado al cuerpo · 15+15', 'CARs de hombro lentos · 3+3',
   'Band pull-apart · 15', 'Face pull con banda ligera · 12', 'Sleeper stretch suave · 30″ por lado', 'Pass-through con banda · 10'];
+var WU_TORACICA_ = [   // v0.32.1 · movilidad torácica (12)
+  'Open book tumbado de lado · 8+8', 'Thread the needle (cuadrupedia) · 8+8', 'Extensiones torácicas sobre foam roller · 10 respiraciones',
+  'Rotación cuadrupedia con mano en la nuca · 8+8', 'Cat-camel con rotación · 8', 'Extensión torácica en banco con PVC · 10',
+  'Rotación torácica en 90/90 sentado · 8+8', 'Wall slides de espalda (cabeza, dorsales y sacro en la pared) · 10', 'Rock-back con rotación torácica · 6+6',
+  'Lat stretch en banco, rodillas apoyadas · 30″', 'Rotación torácica sentado con brazos en cruz · 10+10', 'Rotación torácica en posición de caballero (half-kneeling) · 6+6'];
+var WU_GLUTEO_ = [   // v0.32.1 · fuerza de glúteo medio, dinámicos (12)
+  'Abducción lateral tumbado con pausa de 2″ arriba · 2 × 10+10', 'Monster walk lateral con banda · 2 × 10 pasos por lado', 'Hip hike en escalón (caída y subida de pelvis) · 2 × 10+10',
+  'Plancha lateral con abducción de la pierna de arriba · 2 × 8+8', 'Clamshell con banda fuerte · 2 × 12+12', 'Abducción de pie con tobillera/banda · 2 × 10+10',
+  'Banded lateral squat walk (sentadilla corta con banda) · 2 × 8 pasos por lado', 'Puente de glúteo a una pierna con banda en las rodillas · 2 × 8+8',
+  'Step-down lateral controlado (3″ de bajada) · 2 × 8+8', 'Cossack con pausa de 2″ abajo · 2 × 6+6', 'Fire hydrant con banda · 2 × 10+10', 'Abducción en cuadrupedia con banda sobre las rodillas · 2 × 10+10'];
 var WU_F_CADERA_ = [
-  'Abducción de cadera tumbado de lado, pausa 2″ arriba · 2 × 12+12', 'Monster walks con banda en los tobillos · 2 × 10 m + 10 m', 'Puente de glúteo a una pierna isométrico · 2 × 30″+30″',
   'Tibialis raise contra la pared · 2 × 15', 'Isometría de sóleo en la pared (rodilla flexionada) · 2 × 30″+30″', 'Spanish squat isométrico con banda · 3 × 30″',
-  'Plancha lateral con abducción de pierna · 2 × 8+8'];
+  'Sentadilla isométrica en 90° con balón entre las rodillas (aductores) · 2 × 30″', 'Elevación de talones isométrica en punta, 2″ arriba · 2 × 12', 'Aductor isométrico tumbado con balón · 2 × 20″'];
 var WU_F_CUELLO_ = [
   'Isometría de flexores profundos (chin tuck tumbado, cabeza a 2 cm del suelo) · 5 × 10″', 'Isometrías de cuello en 4 direcciones contra la mano · 4 × 5″ por dirección, 30–50 % del esfuerzo',
   'Y-raise boca abajo con discos ligeros (trapecio inferior) · 2 × 10', 'T-raise boca abajo (trapecio medio) · 2 × 10', 'Encogimiento con pausa 2″ arriba, mancuernas ligeras · 2 × 12 (solo sin dolor)'];
 var WU_F_MANGUITO_ = [
   'Rotación externa tumbado de lado con mancuerna de 2–4 kg · 2 × 12+12', 'Isometría de rotación externa a 90° con banda · 3 × 20″+20″', 'Cuban press ligero · 2 × 10',
   'Y-T-W boca abajo con discos de 1–2 kg · 2 × 6 de cada', 'Rotación externa a 90° con banda, excéntrica de 3″ · 2 × 10+10'];
+var WU_F_GLUTEO_ = [   // v0.32.1 · glúteo medio ISOMÉTRICO para lunes y miércoles (7)
+  'Wall glute med press a una pierna (empuje lateral de la rodilla contra la pared) · 3 × 20″ por lado', 'Plancha lateral con la pierna de arriba elevada · 2 × 20″ por lado',
+  'Abducción isométrica contra la pared en apoyo unipodal · 3 × 15″ por lado', 'Banded squat hold con rodillas hacia fuera · 3 × 20″',
+  'Copenhague corta (rodilla apoyada en el banco) · 2 × 15″ por lado', 'Puente de glúteo a una pierna isométrico con banda en las rodillas · 2 × 20″ por lado',
+  'Abducción isométrica tumbado de lado, pierna a 30° · 2 × 20″ por lado'];
 function contenidoWarmup_(iso) {
   var d = Math.round(new Date(iso + 'T12:00:00Z').getTime() / 864e5), dow = (new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7, sem = Math.floor((d - 4) / 7);   // dow 0 = lunes
   var pick = function (L, n) { return L[((n % L.length) + L.length) % L.length]; };
-  // v0.32 · 3–4′ y 3 ejercicios cada día (distintos cada día); lunes y miércoles, los 3 en versión isométrica / fortalecimiento (W41|W42)
-  var fuerte = dow === 0 || dow === 2, k = sem * 2 + (dow === 2 ? 1 : 0);
-  var t = 'Antes de la primera sesión del día, 3–4′ (tu calentamiento general lo haces tú):\n' + (fuerte
-    ? 'ISOMÉTRICO (lunes y miércoles):\n1) Cadera-tobillo-cintilla · ' + pick(WU_F_CADERA_, k) + '\n2) Cuello y trapecio · ' + pick(WU_F_CUELLO_, k) + '\n3) Manguito rotador · ' + pick(WU_F_MANGUITO_, k) +
-      '\n\nSi el cuello está irritado: en el 2) solo isometría suave o se quita.'
-    : '1) Cintilla y cadera-tobillo · ' + pick(WU_CADERA_, d + 3 * sem) + '\n2) Cuello y trapecio · ' + pick(WU_CUELLO_, d + 3 * sem) + '\n3) Manguito rotador · ' + pick(WU_MANGUITO_, d + 3 * sem));
+  // v0.32.1 · ≈5′ y 5 zonas cada día (distintas cada día); lunes y miércoles, en versión isométrica / fortalecimiento (W41|W42); la torácica siempre es movilidad
+  var fuerte = dow === 0 || dow === 2, k = sem * 2 + (dow === 2 ? 1 : 0), r = d + 3 * sem;
+  var tor = '\n4) Torácica: ' + pick(WU_TORACICA_, r);
+  var t = 'Antes de la primera sesión del día, ≈5′ (tu calentamiento general lo haces tú):\n' + (fuerte
+    ? 'ISOMÉTRICO (lunes y miércoles):\n1) Cadera-tobillo: ' + pick(WU_F_CADERA_, k) + '\n2) Cuello-trapecio: ' + pick(WU_F_CUELLO_, k) + '\n3) Manguito: ' + pick(WU_F_MANGUITO_, k) + tor +
+      '\n5) Glúteo medio (clave): ' + pick(WU_F_GLUTEO_, k) + '\n\nSi el cuello está irritado: en el 2) solo isometría suave o se quita.'
+    : '1) Cadera-tobillo: ' + pick(WU_CADERA_, r) + '\n2) Cuello-trapecio: ' + pick(WU_CUELLO_, r) + '\n3) Manguito: ' + pick(WU_MANGUITO_, r) + tor +
+      '\n5) Glúteo medio (clave): ' + pick(WU_GLUTEO_, r));
   return { texto: t + '\n\nRegistra: qué zona notaste más cargada (0–10)', fuerte: fuerte, dow: dow };
 }
 /** Un warm-up diario (W41, + W42 lunes y miércoles) por cada día de la semana que tenga sesión. No duplica si ya existe. */
@@ -8190,9 +8206,9 @@ function warmupLunes_(lunes, nuevos, sello, permitidos, log) {   // el nombre se
     var orden = Math.min.apply(null, del.map(function (r) { return ordenNum_(r.ORDEN) || 50; })) - 1;
     var c = contenidoWarmup_(iso);
     nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': DIAS[i], TURNO: tu, ORDEN: orden, ORIGEN: 'MOVILIDAD',
-      BLOQUE: 'Warm-up diario · cintilla, cuello y manguito' + (c.fuerte ? ' · isométrico' : ''), 'TÍTULO': 'Warm-up diario · cintilla, cuello y manguito' + (c.fuerte ? ' · isométrico' : ''),
-      CONTENIDO: c.texto, INTENSIDAD: '🟢 Movilidad', MIN: 4, 'CÓDIGOS': c.fuerte ? 'W41|W42' : 'W41',
-      'POR QUÉ (cursiva)': 'Regla de Pablo (19/11, ajustada 23/11): cintilla, cuello-trapecio y manguito le han molestado más de una vez. Cada día 3 ejercicios (uno de cada zona) en 3–4′, distintos cada día; lunes y miércoles, en versión isométrica de fortalecimiento.',
+      BLOQUE: 'Warm-up diario · 5 zonas (glúteo medio, cadera, cuello, manguito, torácica)' + (c.fuerte ? ' · isométrico' : ''), 'TÍTULO': 'Warm-up diario · 5 zonas (glúteo medio, cadera, cuello, manguito, torácica)' + (c.fuerte ? ' · isométrico' : ''),
+      CONTENIDO: c.texto, INTENSIDAD: '🟢 Movilidad', MIN: 5, 'CÓDIGOS': c.fuerte ? 'W41|W42' : 'W41',
+      'POR QUÉ (cursiva)': 'Regla de Pablo (19/11, ampliada 23/11): cintilla, cuello-trapecio y manguito le han molestado más de una vez; se suman movilidad torácica y fuerza de glúteo medio (la más crítica). Cada día 5 ejercicios (uno de cada zona) en ≈5′, distintos cada día; lunes y miércoles, en versión isométrica de fortalecimiento.',
       ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() });
     if (log) log.push('Warm-up diario ' + iso);
   }
