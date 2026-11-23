@@ -494,17 +494,58 @@ function contenidoWarmup_(iso) {
       '\n5) Glúteo medio (clave): ' + pick(WU_GLUTEO_, r));
   return { texto: t + '\n\nRegistra: qué zona notaste más cargada (0–10)', fuerte: fuerte, dow: dow };
 }
+// ===================== v0.33.1 · WARM-UP OH / SNATCH (regla fija de Pablo 23/11/2026) =====================
+// Un día por semana el warm-up diario SE SUSTITUYE por este bloque (es la única activación extra de ese día):
+//   1 movilidad torácica · 1 movilidad de cadera con gomas · 1 glúteo medio · 1 movilidad rodilla-tobillo
+//   + 3–4 series (según volumen e intensidad de la sesión) de Lu raises + Sots press + windmill.
+// El día: el primero con SQUAT SNATCH o SNATCH BALANCE en Fabrik; si no hay, el primero con SNATCH; si no, el primero con JERK.
+// Va justo antes de la sesión que trae ese bloque (mismo turno).
+var WU_CADERA_GOMAS_ = ['Distracción de cadera con goma en el rack, flexión-rotación interna · 45″ por lado', 'Goma en la cadera, zancada profunda con empuje del glúteo · 8+8',
+  'Goma en la cadera, rotación interna en cuadrupedia (90/90 asistido) · 8+8', 'Goma en la cadera, sentadilla profunda con apertura de rodillas · 10', 'Goma lateral, rock-back en cuadrupedia · 10'];
+var WU_RODILLA_TOBILLO_ = ['Rodilla a la pared (dorsiflexión) con pausa 2″ · 10+10', 'Goma en el tobillo (deslizamiento posterior del astrágalo) · 10+10',
+  'Sentadilla profunda con balanceo de tobillos y codos en las rodillas · 60″', 'Tibialis raise contra la pared · 15', 'Zancada con rodilla por delante de la puntera, rebotes suaves · 10+10'];
+function diaWarmupOH_(lunes, todo) {
+  var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO|OCULTO/.test(norm(r.ESTADO)); };
+  var fab = todo.filter(function (r) { var d = celdaIso_(r.FECHA); return norm(r.ORIGEN) === 'FABRIK' && act(r) && d >= lunes && d <= sumarDias(lunes, 6); })
+    .sort(function (a, b) { return celdaIso_(a.FECHA) < celdaIso_(b.FECHA) ? -1 : celdaIso_(a.FECHA) > celdaIso_(b.FECHA) ? 1 : (ordenNum_(a.ORDEN) || 50) - (ordenNum_(b.ORDEN) || 50); });
+  var tit = function (r) { return norm((r.BLOQUE || '') + ' ' + (r['TÍTULO'] || '')); };
+  var pruebas = [function (r) { return /SQUAT SNATCH|SNATCH BALANCE/.test(tit(r)); }, function (r) { return /SNATCH/.test(tit(r)) && !/GRIP|DEADLIFT|PULL/.test(tit(r)); },
+    function (r) { return /SQUAT SNATCH|SNATCH BALANCE/.test(norm(r.CONTENIDO)); }, function (r) { return /JERK/.test(tit(r)); }];
+  for (var i = 0; i < pruebas.length; i++) { var x = fab.filter(pruebas[i])[0]; if (x) return { iso: celdaIso_(x.FECHA), turno: x.TURNO === 'AM' ? 'AM' : 'PM', bloque: x, motivo: ['squat snatch / snatch balance', 'snatch', 'snatch (en la activación)', 'jerk'][i] }; }
+  return null;
+}
+function contenidoWarmupOH_(iso, series) {
+  var d = Math.round(new Date(iso + 'T12:00:00Z').getTime() / 864e5), sem = Math.floor((d - 4) / 7);
+  var pick = function (L, n) { return L[((n % L.length) + L.length) % L.length]; };
+  return 'Sustituye al warm-up diario de hoy. Antes de la sesión de ' + '{MOTIVO}' + ', ≈10–12′:\n' +
+    '1) Torácica: ' + pick(WU_TORACICA_, sem * 5 + 2) + '\n2) Cadera con gomas: ' + pick(WU_CADERA_GOMAS_, sem) + '\n3) Glúteo medio: ' + pick(WU_GLUTEO_, sem * 3 + 1) +
+    '\n4) Rodilla-tobillo: ' + pick(WU_RODILLA_TOBILLO_, sem) +
+    '\n\nDespués, ' + series + ' series (sin descanso entre ejercicios, 60″ entre series):\n- 8 Lu raises con discos de 1–2,5 kg (pulgar arriba, brazos en Y)\n- 5 Sots press con PVC o barra vacía (fondo de sentadilla, codos bloqueados)\n- 5+5 windmill con KB ligera por encima de la cabeza (mirada a la KB)' +
+    '\n\nRegistra: si alguna posición tiró del hombro o del cuello (0–10)';
+}
 /** Un warm-up diario (W41, + W42 lunes y miércoles) por cada día de la semana que tenga sesión. No duplica si ya existe. */
 function warmupLunes_(lunes, nuevos, sello, permitidos, log) {   // el nombre se mantiene por compatibilidad: ahora cubre los 7 días
   if (permitidos && !permitidos[lunes]) return;
   var act = function (r) { return !/NO HACER|CANCELADO|SUSTITUIDO|SIN HUECO/.test(norm(r.ESTADO)); };
   var todo = listar_(HOJAS.PLAN).concat(nuevos), DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  var oh = null; try { oh = diaWarmupOH_(lunes, todo); } catch (e) {}
   for (var i = 0; i < 7; i++) {
     var iso = sumarDias(lunes, i), ses = todo.filter(function (r) { return celdaIso_(r.FECHA) === iso && act(r); });
     if (!ses.length || ses.some(function (r) { return codigosDe_(r['CÓDIGOS']).indexOf('W41') >= 0; })) continue;
     var am = ses.filter(function (r) { return r.TURNO === 'AM'; }), tu = am.length ? 'AM' : 'PM', del = ses.filter(function (r) { return (r.TURNO === 'AM' ? 'AM' : 'PM') === tu; });
     var orden = Math.min.apply(null, del.map(function (r) { return ordenNum_(r.ORDEN) || 50; })) - 1;
     var c = contenidoWarmup_(iso);
+    if (oh && oh.iso === iso) {   // v0.33.1 · día del warm-up OH/snatch: sustituye al diario y va justo antes de esa sesión
+      var delO = ses.filter(function (r) { return (r.TURNO === 'AM' ? 'AM' : 'PM') === oh.turno; });
+      var duro = delO.some(function (r) { return /RPE\s*\D{0,3}\s*(8|9|10)/.test(String(r.INTENSIDAD || '')); }) || delO.length > 3;
+      nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': DIAS[i], TURNO: oh.turno, ORDEN: Math.min.apply(null, delO.map(function (r) { return ordenNum_(r.ORDEN) || 50; })) - 1, ORIGEN: 'MOVILIDAD',
+        BLOQUE: 'Warm-up OH / snatch · torácica, cadera, glúteo medio, tobillo + Lu raises, Sots press y windmill', 'TÍTULO': 'Warm-up OH / snatch · torácica, cadera, glúteo medio, tobillo + Lu raises, Sots press y windmill',
+        CONTENIDO: contenidoWarmupOH_(iso, duro ? 3 : 4).replace('{MOTIVO}', oh.motivo), INTENSIDAD: '🟢 Movilidad', MIN: 12, 'CÓDIGOS': c.fuerte ? 'W41|W42|W10' : 'W41|W10',
+        'POR QUÉ (cursiva)': 'Regla fija de Pablo (23/11/2026): un día por semana el warm-up diario se sustituye por este bloque de movilidad y estabilidad OH, el día de squat snatch o snatch balance (si no, snatch; si no, jerk). ' + (duro ? '3 series: la sesión es larga o intensa.' : '4 series: la sesión es corta o moderada.'),
+        ESTADO: 'BORRADOR', GENERADO: sello, ACTUALIZADO: ahora_() });
+      if (log) log.push('Warm-up OH/snatch ' + iso + ' (' + oh.motivo + ')');
+      continue;
+    }
     nuevos.push({ ID: nuevoId_(), FECHA: isoAFecha(iso), 'DÍA': DIAS[i], TURNO: tu, ORDEN: orden, ORIGEN: 'MOVILIDAD',
       BLOQUE: 'Warm-up diario · 5 zonas (glúteo medio, cadera, cuello, manguito, torácica)' + (c.fuerte ? ' · isométrico' : ''), 'TÍTULO': 'Warm-up diario · 5 zonas (glúteo medio, cadera, cuello, manguito, torácica)' + (c.fuerte ? ' · isométrico' : ''),
       CONTENIDO: c.texto, INTENSIDAD: '🟢 Movilidad', MIN: 5, 'CÓDIGOS': c.fuerte ? 'W41|W42' : 'W41',
