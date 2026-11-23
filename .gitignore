@@ -23,3 +23,6 @@ desktop.ini
 Backup/
 docs/
 pc-agent/agente.log*
+
+# Worktrees y datos locales de Claude
+.claude/
