@@ -42,6 +42,7 @@ function configurarSin_() {
   prepararHojas();
   try { logc_('OK · Base de datos de WODs: ' + prepararBd_()); } catch (e) { logc_('AVISO · Base de datos de WODs: ' + e); }
   try { logc_('OK · Competis copiadas de ProgramAPP: ' + copiarCompetis_() + ' nuevas'); } catch (e) { logc_('AVISO · Competis: ' + e); }
+  try { MEMO = null; logc_('OK · Buscador de competis (lunes 15:00 con competisLunes): ' + prepararBuscadorCompetis_()); } catch (e) { logc_('AVISO · Buscador de competis: ' + e); }
   try { MEMO = null; logc_('OK · APP · COMPETIS (filtros en el Sheet): ' + pintarCompetisSheet_() + ' competis'); } catch (e) { logc_('AVISO · APP · COMPETIS: ' + e); }
   try { MEMO = null; logc_('OK · APP · ESTÍMULOS EN BLOQUES: ' + pintarHojaEstimulos_(lunesDe_(hoyIso_())) + ' filas (marca REDUCIBLE / INCENTIVAR)'); } catch (e) { logc_('AVISO · Estímulos en bloques: ' + e); }
   try { MEMO = null; logc_('OK · MODO OPERACIÓN: ' + opPrepararConfig_() + ' claves nuevas en APP · CONFIG · ' + opPrepararCatalogo_() + ' estímulos/metas del modo · fase de hoy: ' + opDiario_()); } catch (e) { logc_('AVISO · Modo operación: ' + e); }

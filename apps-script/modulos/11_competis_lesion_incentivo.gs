@@ -38,10 +38,12 @@ function copiarCompetis_() {
     CAMPOS_GABI_COMPETI_.forEach(function (h) { var k = ix(h); if (k < 0) return; var val = row[k]; o[h === 'ESTADO' ? 'ESTADO (Gabi)' : h] = /INICIO|FIN|APERTURA|ENCONTRADA/.test(h) ? fechaCelda_(val) : String(val == null ? '' : val).trim(); });
     Object.assign(o, clasificarCompeti_(o));   // v0.23 · ÁMBITO, CON CLASIFICATORIO, NIVELES, FORMATO
     o.COPIADA = ahora_();
-    var r = ya[id];
+    var r = ya[id] || competiAdoptable_(o, ya);   // v0.33 · la misma competi ya encontrada por el buscador (EVENTOS o calendario) se adopta, no se duplica
+    if (r && !ya[id]) { o.ID = id; ya[id] = r; }
     if (r) {
+      Object.keys(o).forEach(function (k) { var nv = String(o[k] == null ? '' : o[k]), vj = String(r[k] == null ? '' : r[k]); if (vj && (!nv || (k !== 'ESTADO (Gabi)' && vj.indexOf(nv) === 0))) delete o[k]; });   // v0.33 · Gabi vacío no borra lo que completó el buscador
       var cambia = Object.keys(o).some(function (k) { return k !== 'COPIADA' && String(r[k] || '') !== String(o[k] || ''); });
-      if (cambia) { actualizarFila_(HOJAS.COMPETIS, r._fila, o); act++; }
+      if (cambia || o.ID) { actualizarFila_(HOJAS.COMPETIS, r._fila, o); act++; }
     } else {
       o.ID = id; o.SEGUIMIENTO = 'No';
       o['FECHA INSCRIPCIÓN'] = /^\d{2}\/\d{2}\/\d{4}$/.test(o['APERTURA INSCRIPCIÓN'] || '') ? o['APERTURA INSCRIPCIÓN'] : '';
@@ -152,7 +154,13 @@ function editarCompetisSheet_(e) {
 }
 function menuCompetis() { var n = copiarCompetis_(); MEMO = null; var k = pintarCompetisSheet_(); var sh = miLibro_().getSheetByName(COMP_VISTA_); if (sh) miLibro_().setActiveSheet(sh); SpreadsheetApp.getUi().alert('Competis copiadas de la app de Gabi: ' + n + ' nuevas.\n' + (leerConfig_().competis_copia || '') + '\n\nEn «' + COMP_VISTA_ + '» se ven ' + k + ' con los filtros actuales.'); }
 function competisLunes() { return conSalud_('competisLunes', competisLunes_sin_); }
-function competisLunes_sin_() { try { copiarCompetis_(); } catch (e) { Logger.log('Competis: ' + e); } }
+function competisLunes_sin_() { try { buscarCompetis_({}); } catch (e) { Logger.log('Competis: ' + e); try { copiarCompetis_(); } catch (e2) { Logger.log('Competis: ' + e2); } } }   // v0.33 · copia de Gabi + buscador
+/** v0.33 · Fila del buscador (ID EV-… o B-…) que es la misma competi que una nueva de COMPETIS PROPUESTAS (mismo nombre sin años y mismo año). */
+function competiAdoptable_(o, ya) {
+  var k = claveCompeti_(o.NOMBRE), y = anioIso_(celdaIso_(o.INICIO));
+  if (!k) return null;
+  return Object.keys(ya).map(function (i) { return ya[i]; }).filter(function (r) { return /^(EV|B)-/.test(r.ID || '') && claveCompeti_(r.NOMBRE) === k && (!y || !celdaIso_(r.INICIO) || anioIso_(celdaIso_(r.INICIO)) === y); })[0] || null;
+}
 function listaCompetis_() {
   var hoy = hoyIso_();
   return listar_(HOJAS.COMPETIS).filter(function (r) { return r.NOMBRE; }).map(function (r) {
@@ -161,20 +169,21 @@ function listaCompetis_() {
     o._fin = celdaIso_(r.FIN) || o._iso; o._ins = fechaInscCompeti_(r); o._pasada = !!o._iso && (celdaIso_(r.FIN) || o._iso) < hoy; return o;
   }).sort(function (a, b) { return (a._iso || '9999') < (b._iso || '9999') ? -1 : 1; });
 }
+function listaCompetisApp_() { return decorarCompetis_(listaCompetis_()); }   // v0.33 · con ESTADO, estímulos por nombre y «Por confirmar»
 /** Seguimiento de una competi en Google Calendar: competi + inscripción + clasificatorio (eventos de día completo, marcados [Road To Elite]). */
 function seguirCompeti_(b) {
   var r = listar_(HOJAS.COMPETIS).filter(function (x) { return x.ID === String(b.id || ''); })[0];
   if (!r) throw new Error('competi_no_encontrada');
   borrarCalCompeti_(r);
-  if (!b.seguir) { actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'No', GCAL: '', 'INSCRIPCIÓN': '', 'CLASIFICATORIO (hecho)': '' }); return { ok: true }; }
+  if (!b.seguir) { actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: r.ESTADO === 'Inscrito' ? 'Sí' : 'No', GCAL: '', 'INSCRIPCIÓN': r.ESTADO === 'Inscrito' ? r['INSCRIPCIÓN'] : '', 'CLASIFICATORIO (hecho)': '', ESTADO: r.ESTADO === 'Inscrito' ? 'Inscrito' : 'Propuesta' }); return { ok: true }; }
   var fi = celdaIso_(b.inscripcion || r['FECHA INSCRIPCIÓN']), fc = celdaIso_(b.clasificatorio || r['FECHA CLASIFICATORIO']), ini = celdaIso_(r.INICIO), fin = celdaIso_(r.FIN) || ini;
   var cal = calendario_(), ids = [], lugar = [r.CIUDAD, r.PROVINCIA].filter(Boolean).join(', ');
   var desc = MARCA_CAL + ' competi ' + r.ID + '\n' + [r['CATEGORÍAS'], r.PRECIO, r.WEB || r.WODBUSTER || r.INSTAGRAM, r.NOTAS].filter(Boolean).join('\n');
   var dia = function (iso) { return new Date(iso + 'T12:00:00Z'); };
-  if (ini) ids.push('C:' + cal.createAllDayEvent('🏆 ' + r.NOMBRE, dia(ini), dia(sumarDias(fin, 1)), { description: desc, location: lugar }).getId());
+  if (ini && !/(^|\|)C:/.test(r['GCAL INSCRITO'] || '')) ids.push('C:' + cal.createAllDayEvent('🏆 ' + r.NOMBRE, dia(ini), dia(sumarDias(fin, 1)), { description: desc, location: lugar }).getId());
   if (fi) ids.push('I:' + cal.createAllDayEvent('📝 Inscripción · ' + r.NOMBRE, dia(fi), { description: desc + '\n\nAbre la inscripción: ' + (r.WODBUSTER || r.WEB || '') }).getId());
   if (fc) ids.push('Q:' + cal.createAllDayEvent('🎯 Clasificatorio · ' + r.NOMBRE, dia(fc), { description: desc + '\n\nClasificatorio: ' + (r.CLASIFICATORIO || '') + (r['CATEGORÍAS CLASIFICATORIO'] ? ' (' + r['CATEGORÍAS CLASIFICATORIO'] + ')' : '') }).getId());
-  actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'Sí', 'FECHA INSCRIPCIÓN': fi ? isoAFecha(fi) : '', 'FECHA CLASIFICATORIO': fc ? isoAFecha(fc) : '', 'INSCRIPCIÓN': fi ? 'Pendiente' : '', 'CLASIFICATORIO (hecho)': fc ? 'Pendiente' : '', GCAL: ids.join('|') });
+  actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'Sí', 'FECHA INSCRIPCIÓN': fi ? isoAFecha(fi) : '', 'FECHA CLASIFICATORIO': fc ? isoAFecha(fc) : '', 'INSCRIPCIÓN': fi ? 'Pendiente' : '', 'CLASIFICATORIO (hecho)': fc ? 'Pendiente' : '', GCAL: ids.join('|'), ESTADO: r.ESTADO === 'Inscrito' ? 'Inscrito' : 'Siguiendo' });
   return { ok: true, eventos: ids.length };
 }
 function borrarCalCompeti_(r) {
@@ -184,7 +193,7 @@ function borrarCalCompeti_(r) {
 function responderCompeti_(b) {
   var r = listar_(HOJAS.COMPETIS).filter(function (x) { return x.ID === String(b.id || ''); })[0];
   if (!r) throw new Error('competi_no_encontrada');
-  if (!b.hecho) { borrarCalCompeti_(r); actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'No', GCAL: '', 'INSCRIPCIÓN': b.que === 'inscripcion' ? 'No' : r['INSCRIPCIÓN'], 'CLASIFICATORIO (hecho)': b.que === 'clasificatorio' ? 'No' : r['CLASIFICATORIO (hecho)'] }); return { ok: true, quitada: true }; }
+  if (!b.hecho) { borrarCalCompeti_(r); actualizarFila_(HOJAS.COMPETIS, r._fila, { SEGUIMIENTO: 'No', GCAL: '', ESTADO: r.ESTADO === 'Inscrito' ? 'Inscrito' : 'Propuesta', 'INSCRIPCIÓN': b.que === 'inscripcion' ? 'No' : r['INSCRIPCIÓN'], 'CLASIFICATORIO (hecho)': b.que === 'clasificatorio' ? 'No' : r['CLASIFICATORIO (hecho)'] }); return { ok: true, quitada: true }; }
   var o = {}; if (b.que === 'inscripcion') o['INSCRIPCIÓN'] = 'Hecha'; else o['CLASIFICATORIO (hecho)'] = 'Hecho';
   actualizarFila_(HOJAS.COMPETIS, r._fila, o);
   return { ok: true };

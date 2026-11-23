@@ -1703,7 +1703,8 @@
     var en = function (v, l) { return !l.length || String(v || '').split(/\s*,\s*/).some(function (x) { return l.indexOf(x) >= 0; }); };
     var tx = norm(F.texto || '').trim();
     var L = S.competis.filter(function (x) {
-      if (filtro === 'seguimiento' ? x.SEGUIMIENTO !== 'Sí' : filtro === 'proximas' && x._pasada) return false;
+      // v0.33 · ESTADO del buscador: Propuesta / Siguiendo / Inscrito / Descartada
+      if (filtro === 'seguimiento' ? x.SEGUIMIENTO !== 'Sí' : filtro === 'inscritas' ? x.ESTADO !== 'Inscrito' : filtro === 'descartadas' ? x.ESTADO !== 'Descartada' : filtro === 'proximas' && (x._pasada || x.ESTADO === 'Descartada')) return false;
       if (F.desde && (!x._fin || x._fin < F.desde)) return false;
       if (F.hasta && (!x._iso || x._iso > F.hasta)) return false;
       if (F.insDesde && (!x._ins || x._ins < F.insDesde)) return false;
@@ -1726,19 +1727,36 @@
       '<button class="btn-ghost sm" type="button" id="cf-x">Limpiar filtros</button></div></details>';
     var lnk = function (u, t) { u = urlSegura(u); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + t + '</a>' : ''; };
     html += '<details class="set fichas" id="fichas-d"' + (S._fichasOpen ? ' open' : '') + '><summary>🗂 Mis fichas</summary><div class="set-body" id="fichas-body"><div class="hint">Cargando…</div></div></details>';
-    html += '<section class="me" style="display:block"><div class="seg" id="cp-f">' + [['proximas', 'Próximas'], ['seguimiento', 'En seguimiento'], ['todas', 'Todas']].map(function (o) { return '<button type="button" data-cpf="' + o[0] + '" aria-pressed="' + (filtro === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
-      '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa); aquí se copian para Road To Elite (lunes 15:00). ' + esc(S._compCopia || '') + '</div><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Actualizar desde la app de Gabi</button>' + panel + '</section>';
+    html += '<section class="me" style="display:block"><div class="seg" id="cp-f">' + [['proximas', 'Próximas'], ['seguimiento', 'Siguiendo'], ['inscritas', 'Inscrito'], ['descartadas', 'Descartadas'], ['todas', 'Todas']].map(function (o) { return '<button type="button" data-cpf="' + o[0] + '" aria-pressed="' + (filtro === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="hint">Las busca cada lunes la app de Gabi (España y Europa) y el buscador de Road To Elite (lunes 15:00): copia las de Gabi, añade las de sus EVENTOS y de calendarios públicos, y completa cada ficha con su web y WODBuster (Gemini gratis). ' + esc(S._compCopia || '') + '</div>' +
+      '<div class="comp-b"><button class="btn-ghost sm" type="button" id="cp-copiar">↻ Actualizar desde la app de Gabi</button><button class="btn-ghost sm" type="button" id="cp-buscar">🔎 Buscar competis ahora</button></div>' + panel + '</section>';
     html += L.length ? L.map(function (x) {
-      var seg = x.SEGUIMIENTO === 'Sí';
-      return '<div class="comp' + (seg ? ' on' : '') + (x._pasada ? ' pasada' : '') + '"><div class="comp-h"><b>' + esc(x.NOMBRE) + '</b>' + (seg ? '<span class="tag">En seguimiento</span>' : '') + '</div>' +
+      var seg = x.SEGUIMIENTO === 'Sí', est = x.ESTADO || (seg ? 'Siguiendo' : 'Propuesta'), ins = est === 'Inscrito', desc = est === 'Descartada';
+      var fecha = x._porConfirmar ? 'Por confirmar' + (x['ÚLTIMA CONOCIDA'] ? ' · última conocida: ' + x['ÚLTIMA CONOCIDA'] : '') : (x.FECHA || (x.INICIO + (x.FIN && x.FIN !== x.INICIO ? ' – ' + x.FIN : '')));
+      var insI = x['INSCRIPCIÓN INICIO'] || x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN'], insF = x['INSCRIPCIÓN FIN'];
+      var fila = function (t, v, pre) { return v ? '<div class="comp-f"><span class="part-lbl">' + t + '</span><div' + (pre ? ' class="pre"' : '') + '>' + esc(v) + '</div></div>' : ''; };
+      var grupos = {}; (x._est || []).forEach(function (e) { (grupos[e.bloque || 'Otros'] = grupos[e.bloque || 'Otros'] || []).push(e); });
+      var estHtml = (x._est || []).length ? '<div class="comp-f"><span class="part-lbl">Bloques por estímulos · marca los que quieras preparar</span>' + Object.keys(grupos).map(function (g) {
+        return '<div class="hint"><b>' + esc(g) + '</b></div>' + grupos[g].map(function (e) { return '<label class="sh-b"><input type="checkbox" data-cest="' + esc(x.ID) + '" value="' + esc(e.c) + '" checked><span>' + esc(e.nombre) + '</span></label>'; }).join('');
+      }).join('') + '<button class="btn sm" type="button" data-cbloq="' + esc(x.ID) + '">⊕ Preparar bloques (semana que viene)</button></div>' : '<div class="hint">Estímulos: sin WODs ni estándares conocidos todavía.</div>';
+      var ficha = '<details class="cf"><summary>🗂 Ficha completa</summary><div class="exp-body">' +
+        fila('Lugar', x.LUGAR || [x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', ')) + fila('Categorías', x['CATEGORÍAS']) + fila('Precios', x.PRECIOS || x.PRECIO) +
+        fila('Estándares', x['ESTÁNDARES'], true) + fila('WODs de ediciones pasadas', x['WODS PASADOS'], true) + estHtml +
+        '<div class="comp-l">' + [lnk(x.WEB, 'Web oficial'), lnk(x.WODBUSTER, 'WODBuster'), lnk(x.INSTAGRAM, 'Instagram'), lnk(x.FUENTE, 'Fuente')].filter(Boolean).join(' · ') + '</div>' +
+        (x.ACTUALIZADO ? '<div class="hint">Ficha actualizada ' + esc(x.ACTUALIZADO) + (x.BUSCADOR ? ' · ' + esc(String(x.BUSCADOR).split(' · ')[0]) : '') + '</div>' : '') +
+        '<button class="btn-ghost sm" type="button" data-cficha="' + esc(x.ID) + '">↻ Completar ficha ahora</button></div></details>';
+      return '<div class="comp' + (seg ? ' on' : '') + (x._pasada || desc ? ' pasada' : '') + '"><div class="comp-h"><b>' + esc(x.NOMBRE) + '</b><span class="tag">' + esc(ins ? '✅ Inscrito' : est) + '</span></div>' +
         '<div class="comp-tags">' + [x['ÁMBITO'], x['CON CLASIFICATORIO'] === 'Sí' ? '🎯 Clasificatorio' : '', x.NIVELES, x.FORMATO].filter(Boolean).map(function (t) { return '<span class="ctag' + (t === 'Andalucía' ? ' and' : '') + '">' + esc(t) + '</span>'; }).join('') + '</div>' +
-        '<div class="hint">📅 ' + esc(x.INICIO) + (x.FIN && x.FIN !== x.INICIO ? ' – ' + esc(x.FIN) : '') + ' · 📍 ' + esc([x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', ')) + '</div>' +
-        (x['CATEGORÍAS'] ? '<div class="hint">Categorías: ' + esc(x['CATEGORÍAS']) + '</div>' : '') + (x.PRECIO ? '<div class="hint">Precio: ' + esc(x.PRECIO) + '</div>' : '') +
-        (x['APERTURA INSCRIPCIÓN'] || x['FECHA INSCRIPCIÓN'] ? '<div class="hint">📝 Inscripción: ' + esc(x['FECHA INSCRIPCIÓN'] || x['APERTURA INSCRIPCIÓN']) + (x['INSCRIPCIÓN'] ? ' · ' + esc(x['INSCRIPCIÓN']) : '') + '</div>' : '') +
+        '<div class="hint">📅 ' + esc(fecha) + ' · 📍 ' + esc(x.LUGAR || [x.CIUDAD, x.PROVINCIA].filter(Boolean).join(', ')) + '</div>' +
+        (insI || insF ? '<div class="hint">📝 Inscripción: ' + esc(insI || '¿?') + (insF ? ' → ' + esc(insF) : '') + (x['INSCRIPCIÓN'] ? ' · ' + esc(x['INSCRIPCIÓN']) : '') + '</div>' : '') +
         (x.CLASIFICATORIO ? '<div class="hint">🎯 Clasificatorio: ' + esc(x.CLASIFICATORIO) + (x['FECHA CLASIFICATORIO'] ? ' · ' + esc(x['FECHA CLASIFICATORIO']) : '') + (x['CLASIFICATORIO (hecho)'] ? ' · ' + esc(x['CLASIFICATORIO (hecho)']) : '') + '</div>' : '') +
+        (ins && x['GABI INSCRIPCIÓN'] ? '<div class="hint">App de Gabi: ' + esc(x['GABI INSCRIPCIÓN']) + (x['CATEGORÍA ELEGIDA'] ? ' · categoría ' + esc(x['CATEGORÍA ELEGIDA']) : '') + '</div>' : '') +
         (x.NOTAS ? '<div class="hint"><i>' + esc(x.NOTAS) + '</i></div>' : '') +
-        '<div class="comp-l">' + [lnk(x.WEB, 'Web'), lnk(x.WODBUSTER, 'WODBuster'), lnk(x.INSTAGRAM, 'Instagram')].filter(Boolean).join(' · ') + '</div>' +
-        '<div class="comp-b"><button class="btn ' + (seg ? '' : 'btn-primary ') + 'sm" type="button" data-cseg="' + esc(x.ID) + '">' + (seg ? 'Quitar seguimiento' : '★ Seguir (al calendario)') + '</button>' +
+        '<div class="comp-l">' + [lnk(x.WEB, 'Web'), lnk(x.WODBUSTER, 'WODBuster'), lnk(x.INSTAGRAM, 'Instagram')].filter(Boolean).join(' · ') + '</div>' + ficha +
+        '<div class="comp-b">' + (desc ? '<button class="btn sm" type="button" data-cestado="' + esc(x.ID) + '" data-v="Propuesta">↺ Recuperar</button>' :
+          (ins ? '' : '<button class="btn ' + (seg ? '' : 'btn-primary ') + 'sm" type="button" data-cseg="' + esc(x.ID) + '">' + (seg ? 'Quitar seguimiento' : '★ Seguir (al calendario)') + '</button>') +
+          '<button class="btn ' + (ins ? '' : 'btn-primary ') + 'sm" type="button" data-cins="' + esc(x.ID) + '">' + (ins ? '✅ Inscrito · repasar' : '✍ Me inscribo') + '</button>' +
+          '<button class="btn-ghost sm" type="button" data-cestado="' + esc(x.ID) + '" data-v="Descartada">✕ Descartar</button>') +
         '<a class="btn sm wa" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(textoCompetiWa(x)) + '">🟢 WhatsApp</a></div></div>';
     }).join('') : '<div class="empty">No hay competis en esta vista.</div>';
     $app.innerHTML = html;
@@ -1753,6 +1771,26 @@
     document.getElementById('cf-t').onchange = function () { F.texto = this.value.trim(); guardaF(); };
     document.getElementById('cf-x').onclick = function () { S._cf = { ambito: [], clasif: [], niveles: [], formatos: [] }; F = S._cf; guardaF(); };
     document.getElementById('cp-copiar').onclick = function () { var b = this; b.disabled = true; api({ action: 'competis_copiar' }).then(ok).then(function (r) { S.competis = r.competis; S._compCopia = r.copia; render(); toast('Competis actualizadas desde la app de Gabi'); }).catch(falloApi(b)); };
+    // v0.33 · buscador: buscar ahora, completar ficha, descartar/recuperar, «Me inscribo» y preparar bloques por estímulos
+    var trasCompetis = function (r) { S.competis = r.competis; if (r.preguntas) S.data.competisPreguntas = r.preguntas; render(); };
+    document.getElementById('cp-buscar').onclick = function () { var b = this; b.disabled = true; b.textContent = 'Buscando…'; api({ action: 'competis_buscar' }).then(ok).then(function (r) { S._compCopia = r.copia; trasCompetis(r); var x = r.resultado || {}; toast('Buscador: +' + ((x.gabi || 0) + (x.eventos || 0) + (x.calendarios || 0)) + ' nuevas · ' + (x.fichas || 0) + ' fichas'); }).catch(falloApi(b)); };
+    $app.querySelectorAll('[data-cficha]').forEach(function (b) { b.onclick = function () { b.disabled = true; b.textContent = 'Leyendo su web…'; api({ action: 'competi_ficha', id: b.dataset.cficha }).then(ok).then(function (r) { trasCompetis(r); toast('Ficha actualizada'); }).catch(falloApi(b)); }; });
+    $app.querySelectorAll('[data-cestado]').forEach(function (b) { b.onclick = function () { var v = b.dataset.v; b.disabled = true; api({ action: 'competi_estado', id: b.dataset.cestado, estado: v }).then(ok).then(function (r) { trasCompetis(r); toast(v === 'Descartada' ? 'Descartada · fuera de tu calendario' : 'Recuperada como propuesta'); }).catch(falloApi(b)); }; });
+    $app.querySelectorAll('[data-cbloq]').forEach(function (b) { b.onclick = function () {
+      var cods = Array.prototype.slice.call($app.querySelectorAll('[data-cest="' + b.dataset.cbloq + '"]')).filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      if (!cods.length) { toast('Marca al menos un estímulo'); return; }
+      b.disabled = true; api({ action: 'competi_bloques', id: b.dataset.cbloq, codigos: cods }).then(ok).then(function (r) { b.disabled = false; toast(r.n ? r.n + ' bloques pedidos para la semana del ' + etqDia(r.lunes) + ' (refuerzos)' : 'Ya estaban pedidos para esa semana'); }).catch(falloApi(b)); }; });
+    $app.querySelectorAll('[data-cins]').forEach(function (b) { b.onclick = function () {
+      var x = S.competis.filter(function (c) { return c.ID === b.dataset.cins; })[0]; if (!x) return;
+      var cats = String(x['CATEGORÍAS'] || '').split(/\s*[,;\/]\s*/).map(function (c) { return c.replace(/\(.*?\)/g, '').trim(); }).filter(Boolean);
+      abrirHoja('<div class="row"><h2>Me inscribo · ' + esc(x.NOMBRE) + '</h2><button class="btn-ghost" data-close type="button">Cerrar</button></div>' +
+        '<form id="cif" class="avf"><div class="hint">Se añade a tu Google Calendar (la competi' + (x._porConfirmar ? ', cuando haya fecha,' : '') + ' y la inscripción de hoy) y a la app de Gabi: la competi entra en tus EVENTOS (solo tu perfil). Si Gabi aún no la ha aprobado en su app, queda pendiente y se reintenta cada lunes. La categoría o el equipo los eliges luego en su app.</div>' +
+        '<label for="ci-cat">Categoría</label>' + (cats.length ? '<select id="ci-cat"><option value="">—</option>' + cats.map(function (c) { return '<option' + (c === x['CATEGORÍA ELEGIDA'] ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' : '<input id="ci-cat" maxlength="60" placeholder="RX, Elite, parejas…" value="' + esc(x['CATEGORÍA ELEGIDA'] || '') + '">') +
+        '<label for="ci-f">Día de la inscripción</label><input type="date" id="ci-f" value="' + esc((S.data && S.data.hoy) || hoyLocal()) + '">' +
+        '<button class="btn btn-primary" type="submit" id="ci-ok">' + (x.ESTADO === 'Inscrito' ? 'Volver a comprobar' : 'Me inscribo') + '</button></form>');
+      document.getElementById('cif').onsubmit = function (ev) { ev.preventDefault(); var bb = document.getElementById('ci-ok'); bb.disabled = true; bb.textContent = 'Inscribiendo…';
+        api({ action: 'competi_inscribir', id: x.ID, categoria: val('ci-cat'), fecha: val('ci-f') }).then(ok).then(function (r) { cerrarHoja(); trasCompetis(r); toast('Inscrito · calendario ✓ · app de Gabi: ' + String(r.gabi || '').split(' · ')[0]); }).catch(falloApi(bb)); };
+    }; });
     $app.querySelectorAll('[data-cseg]').forEach(function (b) { b.onclick = function () {
       var x = S.competis.filter(function (c) { return c.ID === b.dataset.cseg; })[0];
       if (x.SEGUIMIENTO === 'Sí') { b.disabled = true; api({ action: 'competi_seguir', id: x.ID, seguir: false }).then(ok).then(function (r) { S.competis = r.competis; S.data.competisPreguntas = r.preguntas; render(); toast('Quitada del seguimiento y del calendario'); }).catch(falloApi(b)); return; }
