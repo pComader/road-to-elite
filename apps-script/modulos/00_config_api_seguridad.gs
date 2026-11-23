@@ -6,9 +6,11 @@
  * Seguridad (por capas):
  *  · Solo responde a UNA cuenta (CONFIG.EMAIL_PERMITIDO). Cada petición trae el token de Firebase y se
  *    comprueba aquí, en el servidor, con Google (no basta con que la web lo diga).
- *  · ESCRIBE solo en este archivo (CONFIG.SHEET_ID) y, los domingos, una copia de seguridad en tu carpeta Backups.
- *    Cualquier intento de escribir en otro libro lanza error.
- *  · FABRIK PROGRAM y la app de Gabi (ProgramAPP) se abren SOLO para leer. Ninguna función escribe en ellos.
+ *  · ESCRIBE en este archivo (CONFIG.SHEET_ID) y, los domingos, una copia de seguridad en tu carpeta Backups.
+ *  · FABRIK PROGRAM se abre SOLO para leer.
+ *  · La app de Gabi (ProgramAPP): desde el 23/11/2026 (petición de Pablo) se escribe SOLO en las filas de Pablo de
+ *    FEEDBACK, RESULTADOS y MARCAS, y solo desde 16_sync_gabi.gs (gabiEscribir_/gabiNuevaFila_ comprueban pestaña y EMAIL).
+ *    Nada más de ProgramAPP se modifica (ni otros atletas ni la estructura de sus hojas).
  *
  * Lectura de Fabrik: reutiliza el lector de la app de Gabi (mismas funciones puras, copiadas, sin modificar).
  *   Pestaña 1 = ciclo. Después, parejas: semana + NOTAS. Manda la POSICIÓN, no el nombre.
@@ -24,7 +26,7 @@ var CONFIG = {
   FIREBASE_PROYECTO: 'road-to-elite',
   SHEET_ID: '1q_DbqA4VWLb-1CUuT8ZDGt-yMfiy__YeoT9-4V2IEJ4',      // Road to Elite · Training Coverage (único sitio donde se escribe)
   FABRIK_ID: '1DRBQteuUHesG2gMODigDBTr5LK5PHMsqRIdHpCtT82g',     // FABRIK PROGRAM · SOLO LECTURA
-  PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · SOLO LECTURA (copia semanal de vídeos)
+  PROGRAMAPP_ID: '1yL9AmLel4t5BzOT7fddqxMNVE-YqRm02oP1JeUpwqu8', // App de Gabi · lectura + escritura SOLO de las filas de Pablo (16_sync_gabi.gs)
   BACKUPS_ID: '1X2gFr5Wd-HfI5JsMcfiKscCu5GPXO-aS',
   CARPETA_2DO_CEREBRO: '1FWPEKf0AsbXBjemd8IMFqaURVFCH-U-n',
   KNOWLEDGE_ID: '1a0FcIEymHY1DQmRvlUEUnX-V8rXTeZX3',   // v0.19 · Drive › 2DO CEREBRO › CROSSFIT › KNOWLEDGE (.md por categorías): base de conocimiento
@@ -81,10 +83,12 @@ function accion_(a, body, user) {
     switch (a) {
       case 'inicio':     return json_({ ok: true, email: user.email, config: leerConfig_(), semana: semanaCacheada_(body.semana) });
       case 'semana':     return json_({ ok: true, semana: semanaCacheada_(body.semana) });
-      case 'registrar':  return json_({ ok: true, registro: guardarRegistro_(body.registro || {}) });
+      case 'registrar':  var rgo = guardarRegistro_(body.registro || {}); try { gabiTrasRegistro_(rgo); } catch (eG) { Logger.log('Sync Gabi · registro: ' + eG); } return json_({ ok: true, registro: rgo });
       case 'registro_borrar': borrarRegistro_(body.registro || {}); return json_({ ok: true });
       case 'marcas':     return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
-      case 'marca':      anadirFila_(HOJAS.MARCAS, limpiarMarca_(body.marca || {})); return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
+      case 'marca':      var mko = limpiarMarca_(body.marca || {}); anadirFila_(HOJAS.MARCAS, mko); try { MEMO = null; gabiTrasMarca_(mko); } catch (eG) { Logger.log('Sync Gabi · marca: ' + eG); } MEMO = null; return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
+      case 'avisos_gabi': return json_(Object.assign({ ok: true }, avisosGabiApi_()));
+      case 'aviso_gabi_leido': avisoGabiLeido_(body.id, !!body.todos); return json_(Object.assign({ ok: true }, avisosGabiApi_()));
       case 'marca_borrar': borrarFila_(HOJAS.MARCAS, body.fila, body.coincide || {}); return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
       case 'descuentos': return json_({ ok: true, descuentos: listar_(HOJAS.DESCUENTOS) });
       case 'descuento':  anadirFila_(HOJAS.DESCUENTOS, permitidas_(body.descuento || {}, ['MARCA', 'DESCRIPCIÓN', 'CÓDIGO', 'ENLACE', 'INICIO', 'FIN', 'ESTADO', 'NOTAS'])); return json_({ ok: true, descuentos: listar_(HOJAS.DESCUENTOS) });
@@ -255,7 +259,7 @@ function miLibro_() {
   return (MI_LIBRO_ = ss);
 }
 
-/** Libros de solo lectura (Fabrik y app de Gabi). Nunca se usan para escribir. */
+/** Fabrik: solo lectura. App de Gabi: lectura; las únicas escrituras pasan por gabiEscribir_/gabiNuevaFila_ (16_sync_gabi.gs). */
 function fabrik_() { return SpreadsheetApp.openById(CONFIG.FABRIK_ID); }
 function programApp_() { return SpreadsheetApp.openById(CONFIG.PROGRAMAPP_ID); }
 
