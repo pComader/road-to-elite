@@ -53,6 +53,7 @@ function configurarSin_() {
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');
   logc_('OK · Biblioteca Z6–Z8 y sesiones Q: ' + sembrarBiblioteca_() + ' sesiones nuevas (0 = ya estaban)');
   logc_('OK · Metas nuevas de competición (Z6–Z8 integrado, DU, front squat, burpees, hang snatch/clean): ' + sembrarMetasV12_());
+  try { logc_('OK · v0.32 microbloques: ' + migrarMicrobloques_() + ' cambios (M61 front rack, RC1 a 0, M68, metas IA1/IA2/M68) · metas v0.32 nuevas: ' + sembrarMetasV32_()); } catch (e) { logc_('AVISO · v0.32 microbloques: ' + e); }
   logc_('OK · «Integrar con» y «Cómo mejorarlo» rellenados en ' + sembrarGuiaMetas_() + ' metas (solo celdas vacías)');
   if (!leerConfig_().resumen_auto) ponerConfig_('resumen_auto', 'Sí', 'Correo con los estímulos de la semana al aprobarla (Sí/No)');
   logc_('OK · «Datos a registrar» sin pulsómetro fuera de la carrera: ' + limpiarDatosRegistrar_() + ' estímulos');

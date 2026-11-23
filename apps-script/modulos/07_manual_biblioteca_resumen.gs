@@ -68,7 +68,7 @@ function excepcionSemana_(lunes) {
     if (out || /Ignorado|Pendiente/i.test(e.ESTADO || '')) return;
     var i0 = celdaIso_(e.INICIO), f0 = celdaIso_(e.FIN) || i0;
     if (si(e['MUY EXIGENTE'])) out = 'test o competición muy exigente: ' + e.EVENTO + ' (' + isoAFecha(i0) + ')';
-    else if (/Competici/i.test(e.TIPO || '') && i0 <= dom && f0 >= sab) out = 'competición el fin de semana: ' + e.EVENTO;
+    else if (/Competici/i.test(e.TIPO || '') && i0 <= dom && f0 >= sab && !/GRABAR|WOD LEAGUE|WPD/.test(norm(e.EVENTO))) out   // v0.32 · una grabación de WOD online no quita la semana: sustituye a un P1–P4 = 'competición el fin de semana: ' + e.EVENTO;
   });
   return out;
 }

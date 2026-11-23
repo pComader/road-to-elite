@@ -36,7 +36,8 @@ ESQUEMA['APP · WODS'] = {
 // ---------- 1 · Catálogo de estímulos (editable en APP · ESTÍMULOS; se siembra con estos valores) ----------
 // Etiquetas de CARGA / EVITAR: PIERNA · HOMBRO (empuje/OH) · AGARRE (tirón/agarre) · CORE · IMPACTO (carrera/saltos) · SNC (neural alto) · GLUC (glucolítico) · AERO
 var EST_BASE = [
-  ['M61', 'Zancada con barra · front rack / back rack', 'FRONT RACK (WALKING |REVERSE )?LUNGE|BACK RACK (WALKING |REVERSE )?LUNGE|BARBELL (WALKING |REVERSE )?LUNGE|ZANCADA CON BARRA', 'EXTRA', 'PM', 8, '🟢 Calidad', '3×6+6 zancada atrás con barra (front rack o back rack) · RPE 7 · 90″. Si coincide con la búlgara, va en el mismo bloque.', 'Pierna unilateral con carga axial: transfiere a las OH lunges, al trineo y a la carrera.', 'Técnica: tronco vertical, rodilla trasera casi al suelo. Fisiología: glúteo y cuádriceps con estabilidad de tronco bajo carga axial; baja demanda nerviosa con RPE 7.', 'No el día antes de la calidad de carrera ni de pierna pesada.', 'PIERNA', 'PIERNA', 'Kg, rack (front/back) y reps por pierna'],
+  ['M61', 'Zancada frontal pesada · front rack', 'FRONT RACK (WALKING |REVERSE )?LUNGE|FRONT RACK ZANCADA|ZANCADA FRONTAL|ZANCADA CON BARRA EN FRONT', 'EXTRA', 'PM', 8, '🟢 Calidad', '3×6+6 zancada atrás con barra en FRONT RACK, pesada · RPE 8 · 2′ (back rack y DB ya no cuentan). Si coincide con la búlgara, va en el mismo bloque.', 'Pierna unilateral pesada con la carga delante: transfiere a las zancadas de competición (front rack), al trineo y a la carrera.', 'Técnica: tronco vertical, codos altos, rodilla trasera casi al suelo. Fisiología: glúteo y cuádriceps con estabilidad de tronco bajo carga anterior; demanda nerviosa moderada.', 'No el día antes de la calidad de carrera ni de pierna pesada.', 'PIERNA', 'PIERNA', 'Kg y reps por pierna (solo front rack)'],
+  ['M68', 'Split isométrico · posición de recepción del jerk', 'SPLIT ISO|ISOMETRIC SPLIT|SPLIT ISOMETRICO', 'TÉCNICA', 'PM', 6, '🟢 Estabilidad', '3×20–30″ por lado en split isométrico en la posición de recepción del jerk (barra en front rack o OH ligera; rodilla trasera a 2–3 cm del suelo, pie delantero plano, tronco vertical) · 60″.', 'Una recepción del jerk estable y simétrica: la posición se fija con isometría antes de cargarla.', 'Técnica: pie trasero activo y pelvis neutra. Fisiología: isometría en el ángulo exacto de recepción (la ganancia de fuerza isométrica es específica del ángulo). Biología: rigidez de tendón con poco coste.', 'Antes del split jerk o junto a él; no tras HSPU en fatiga.', 'PIERNA HOMBRO', '', 'Segundos por lado, carga y posición'],
   ['M62', 'T2B estricto / Dragon flag', 'STRICT (T2B|TOES)|T2B ESTRICTO|TOES TO BAR ESTRICTO|DRAGON FLAG', 'EXTRA', 'PM', 8, '🟢 Calidad', '4×3–5 T2B estrictos (sin kip, bajada 2″) o dragon flag excéntrico 4–5″ · 90″', 'Fuerza estricta de core anterior y flexores de cadera: base para T2B y GHD en fatiga.', 'Técnica: hollow activo y escápulas deprimidas. Fisiología: fuerza excéntrica del recto abdominal con poco coste metabólico.', 'No antes de gimnásticos con kip en el metcon.', 'CORE', '', 'Variante, reps y segundos de bajada'],
   ['W17', 'HSPU estricto / facing', 'STRICT HSPU|FACING|DEFICIT STRICT|DÉFICIT STRICT', 'TÉCNICA', 'PM', 12, '🟢 Técnico', '4×3–5 strict HSPU (déficit si sale fácil) · RIR 2 · 2′ entre series', 'Fuerza estricta de empuje vertical: la base que luego aguanta el kipping en fatiga.', 'Técnica: línea cabeza-manos en trípode, codos a 45°. Fisiología: reclutamiento de unidades motoras de alto umbral en deltoides/tríceps con poco volumen. Biología: adaptación neural antes que hipertrófica.', 'Evitar el día de jerk/press pesado o con muchos HSPU en el metcon. No antes de anillas.', 'HOMBRO', 'HOMBRO', 'Reps por serie, déficit (cm) y RIR'],
   ['W15', 'HSPU kipping técnico', 'KIPPING HSPU', 'TÉCNICA', 'PM', 10, '🟢 Técnico', 'EMOM 8′: 3–5 kipping HSPU con reinicio controlado', 'Técnica de kipping fresca para que salga eficiente en el WOD.', 'Técnica: patada sincronizada con la extensión de codos. Fisiología: ciclo estiramiento-acortamiento del tren superior; poco coste metabólico si se corta antes de la fatiga.', 'No el mismo día que HSPU estricto pesado ni antes de jerk.', 'HOMBRO', 'HOMBRO', 'Reps por minuto y fallos'],
@@ -551,6 +552,8 @@ function generarExtras_(lunes, opts) {
     z2Pend.forEach(function (p) { z2Usados[p.ID] = 1; if (!sim) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Propuesto', 'SEMANA DESTINO': isoAFecha(lunes), NOTAS: '+25 % sumado a la Z2 «' + z2Dest['TÍTULO'] + '»' }); });
     log.push('Z2 pendiente: +' + z2Extra + '′ en «' + z2Dest['TÍTULO'] + '»');
   }
+  // v0.32 · programación por MICROBLOQUES (fijo + rotación S1–S4) desde APP · CONFIG › microbloques_desde; en la operación (salvo la previa) manda el generador clásico
+  var MBM = false; try { MBM = usaMicrobloques_(lunes, OP, EXC); if (MBM && !sim) migrarMicrobloques_(); } catch (eMb) { Logger.log('Microbloques: ' + eMb); MBM = false; }
   var yaSem = {};   // v0.18 · al completar solo unos días, lo que ya está programado en el resto de la semana cuenta
   if (permitidos) listar_(HOJAS.PLAN).forEach(function (r) { var dd = celdaIso_(r.FECHA); if (dd >= lunes && dd <= fin && !permitidos[dd] && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && norm(r.ORIGEN) === 'CARRERA') codigosDe_(r['CÓDIGOS']).forEach(function (k) { yaSem[k] = (yaSem[k] || 0) + 1; }); });
   descansoZ2.forEach(function (d) {
@@ -559,7 +562,7 @@ function generarExtras_(lunes, opts) {
     var cand = candDe(o), h = { iso: d.iso, dia: diaDe_(d.iso), turno: d.am ? 'AM' : 'PM', motivos: ['día de descanso con Z2 de recuperación (elegido por ti)'], choques: [] };
     colocar(o, cand, h); o._prio = 'carrera';
   });
-  CARR.sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
+  if (!MBM) CARR.sort(function (a, b) { return ordenC(a) - ordenC(b); }).forEach(function (s) {
     if (codigosDe_(s['CÓDIGOS']).every(yaCarrera)) return;                          // ya lo tienes con candado
     var kS = codigosDe_(s['CÓDIGOS'])[0]; if (kS && yaSem[kS] > 0) { yaSem[kS]--; return; }   // ya programado en los otros días de la semana
     var c = candDe(s); if (s.TURNO_FORZADO) c.turno = s.TURNO_FORZADO;
@@ -591,10 +594,13 @@ function generarExtras_(lunes, opts) {
       'CÓDIGOS': orig['CÓDIGOS'] || '', INTENSIDAD: orig.INTENSIDAD || '', 'POR QUÉ (cursiva)': 'Recolocado desde el ' + p['FECHA ORIGINAL'] + (p.MOTIVO ? ' (' + p.MOTIVO + ')' : '') + '. Solo cuenta cuando lo hagas.', PENDIENTE_ID: p.ID, _prio: 'pendiente' };
     cola.push({ o: o, al: function () { if (!sim) actualizarFila_(HOJAS.PENDIENTES, p._fila, { ESTADO: 'Propuesto', 'SEMANA DESTINO': isoAFecha(lunes) }); } });
   });
+  var MBE = null;
+  if (MBM) { MBE = { lunes: lunes, cat: cat, CARR: CARR, OP: OP, ctx: ctx, colocar: colocar, candDe: candDe, nuevos: nuevos, log: log, sim: sim, permitidos: permitidos, esAuto: esAuto };
+    mbConstruirSemana_(MBE); }
   var cub = function (c) { return ctx.dias.reduce(function (a, d) { return a + d.codigos.filter(function (x) { return x === c; }).length; }, 0); };
   var enCola = function (c) { return cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf(c) >= 0; }).length; };
   var metas = EXC ? [] : listar_(HOJAS.METAS).filter(function (m) { return m.ACTIVA !== 'No'; });
-  metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
+  (MBM ? [] : metas).filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || 'COUNT') === 'COUNT'; }).sort(function (a, b) { return PRIO_ORDEN(a.PRIORIDAD) - PRIO_ORDEN(b.PRIORIDAD); }).forEach(function (m) {
     var cods = codigosDe_(m['CÓDIGOS']), falta = (parseFloat(m.META) || 0) * factorMeta_(m, lunes, 'Semana').f - cods.reduce(function (a, c) { return a + cub(c) + enCola(c); }, 0);
     var cConC = cods.filter(function (x) { return cat[x] && cat[x].CONTENIDO; }), c = cConC[0];
     if (cConC.length > 1 && /ROTA/i.test(m.NOTAS || '')) c = cConC[Math.round(Date.parse(lunes) / 6048e5) % cConC.length];   // v0.30 · rota entre los estímulos del grupo
@@ -620,7 +626,7 @@ function generarExtras_(lunes, opts) {
   }).filter(function (x) { return x.resta > 0; }).sort(function (a, b) { return b.urg - a.urg; });
   var mesEnCola = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).some(mensDe); }).length;
   (function () { var falt = colaMes.reduce(function (a, x) { return a + x.resta; }, 0), wl = weeksLeft_(lunes, per); tope = Math.max(tope0, enSemana + mesEnCola + (wl <= 1 ? falt : Math.ceil(falt / wl))); })();
-  for (var i = 0, vueltas = 0; i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
+  for (var i = 0, vueltas = 0; !MBM && i < colaMes.length && enSemana + mesEnCola < tope && vueltas < 200; i++, vueltas++) {
     var c = codigosDe_(colaMes[i].m['CÓDIGOS']).filter(function (x) { return cat[x] && cat[x].CONTENIDO; })[0];
     if (!c) continue;
     var o = dosisPorAmbito_(deCatalogo(c), 'Mes'); o._prio = 'mes'; cola.push({ o: o }); mesEnCola++;
@@ -628,7 +634,7 @@ function generarExtras_(lunes, opts) {
   }
   // 6.3b · SALTOS de la semana (meta tipo SALTOS, W07): nunca se quedan sin cubrir.
   //   Regla de Pablo: o una sesión de pliometría aparte, o comba doble metida en un estímulo del mes a 4 DU por cada salto que falte.
-  metas.filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || '').toUpperCase() === 'SALTOS'; }).forEach(function (m) {
+  (MBM ? [] : metas).filter(function (m) { return m['ÁMBITO'] === 'Semana' && String(m.TIPO || '').toUpperCase() === 'SALTOS'; }).forEach(function (m) {
     var meta = parseFloat(String(m.META).replace(',', '.')) || 0, cods = codigosDe_(m['CÓDIGOS']);
     if (!meta) return;
     var tiene = function (r) { return codigosDe_(r['CÓDIGOS']).some(function (c) { return cods.indexOf(c) >= 0; }); };
@@ -656,11 +662,11 @@ function generarExtras_(lunes, opts) {
       log.push('Saltos: sesión de pliometría de ' + total + ' (faltaban ' + falta + ')');
     }
   });
-  try { absorberEnP_(cola, log); } catch (eAb) { Logger.log('Absorber en P: ' + eAb); }   // v0.31 · deathnote A6/A7
-  try { agruparCola_(cola, log, weeksLeft_(lunes, per) <= 1); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
+  if (!MBM) try { absorberEnP_(cola, log); } catch (eAb) { Logger.log('Absorber en P: ' + eAb); }   // v0.31 · deathnote A6/A7
+  if (!MBM) try { agruparCola_(cola, log, weeksLeft_(lunes, per) <= 1); } catch (eAg) { Logger.log('Agrupar: ' + eAg); }   // v0.30 · estímulos cortos en bloques de 2–4
   // v0.24 · la zancada con barra (M61) va en el mismo bloque que la búlgara (M45) si coinciden: un estímulo más sin otra sesión
-  (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
-    if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada con barra'; b.o.CONTENIDO += '\n\n+ ZANCADA CON BARRA (front o back rack): 2×6+6 · RPE 7'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();
+  if (!MBM) (function () { var b = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M45') >= 0; })[0], z = cola.filter(function (x) { return codigosDe_(x.o['CÓDIGOS']).indexOf('M61') >= 0; })[0];
+    if (b && z && b !== z) { b.o['TÍTULO'] = 'Búlgara + zancada frontal'; b.o.CONTENIDO += '\n\n+ ZANCADA FRONTAL PESADA (solo front rack): 2×6+6 · RPE 8'; b.o['CÓDIGOS'] = codigosDe_(b.o['CÓDIGOS']).concat(['M61']).join('|'); b.o.MIN = String((parseFloat(b.o.MIN) || 10) + 5); cola.splice(cola.indexOf(z), 1); } })();
   if (OP && OP.enModo && OP.fase !== 'PREVIA' && OP.post < 5) cola = cola.filter(function (x) { return /^OP/.test(x.o['CÓDIGOS'] || '') || (x.o._prio === 'semana' && /W03|W10/.test(x.o['CÓDIGOS'] || '')); });   // v0.27 · reposo y vuelta: solo lo del modo
   // 6.4 · endurance corta (≤35′) por la mañana: se le suma 10–15′ de calidad, lo que más falte (orden de la cola)
   huecoCalidad.forEach(function (hq) {
@@ -682,6 +688,7 @@ function generarExtras_(lunes, opts) {
   });
   // 6.5 · el resto de la cola, por prioridad
   cola.forEach(function (x) { if (anadir(x.o, candDe(x.o)) && x.al) x.al(); });
+  if (MBM) try { mbRellenar_(MBE); } catch (eRe) { Logger.log('Microbloques · relleno: ' + eRe); }   // v0.32 · 100 % de las metas semanales y la parte del mes
   try { ajustarNuevos_(nuevos, lunes, log); } catch (eAj) { Logger.log('ajustarNuevos: ' + eAj); }   // v0.28
   try {   // v0.29 · ensayo de Murph con chaleco y test de WODs del taper
     var yaV29 = {}; listar_(HOJAS.PLAN).forEach(function (r) { var d = celdaIso_(r.FECHA); if (d >= lunes && d <= sumarDias(lunes, 6) && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && /(^|\|)(MU1|CT1)(\||$)/.test(r['CÓDIGOS'] || '')) yaV29[codigosDe_(r['CÓDIGOS'])[0]] = 1; });
@@ -691,7 +698,7 @@ function generarExtras_(lunes, opts) {
       log.push(c === 'MU1' ? 'Ensayo de Murph con chaleco' : 'Taper: test de WODs + estrategia');
     });
   } catch (eV29) { Logger.log('Murph/taper: ' + eV29); }
-  try { ordenarHalteroJueves_(lunes, nuevos); } catch (eHj) { Logger.log('Haltero jueves: ' + eHj); }   // v0.31 · deathnote A2
+  if (!MBM) try { ordenarHalteroJueves_(lunes, nuevos); } catch (eHj) { Logger.log('Haltero jueves: ' + eHj); }   // v0.31 · deathnote A2
   try { warmupLunes_(lunes, nuevos, sello, permitidos, log); } catch (eWu) { Logger.log('Warm-up lunes: ' + eWu); }   // v0.31
   if (OP) try { nuevos = nuevos.concat(opBloques_(lunes, OP, sello, permitidos)); } catch (eOp3) { Logger.log('Modo operación · bloques: ' + eOp3); }
   // 6.6 · escribir (o devolver la simulación)
@@ -707,8 +714,9 @@ function generarExtras_(lunes, opts) {
   previa.yaCuenta = listar_(HOJAS.PLAN).filter(function (r) { var d = celdaIso_(r.FECHA); return d >= lunes && d <= fin && norm(r.ORIGEN) !== 'FABRIK' && /^(PROGRAMADO|BORRADOR)$/.test(r.ESTADO) && !esAuto(r); })
     .map(function (r) { return { titulo: r['TÍTULO'], dia: diaDe_(celdaIso_(r.FECHA)), turno: r.TURNO, estado: r.ESTADO }; });
   previa.dias = diasSel || semanaIsos;
+  previa.microbloques = MBM ? { s: MBE.mb.SM.s, semanas: MBE.mb.SM.n, ocultos: MBE.mb.ocultos.map(function (r) { return r['TÍTULO']; }) } : null;
   if (sim) return previa;
-  nuevos.forEach(function (o) { delete o._prio; delete o._fabrikZ2; delete o._condicional; });
+  nuevos.forEach(function (o) { delete o._prio; delete o._fabrikZ2; delete o._condicional; delete o._mb; });
   if (sinR04) ponerConfig_('r04_' + lunes, sinR04, '2.ª P integrada: motivo por el que no se programó esa semana');
   if (EXC) ponerConfig_('excepcion_' + lunes, EXC, 'Semana sin requisito semanal: motivo');
   asegurarColumna_(HOJAS.PLAN, 'REFUERZO_ID'); asegurarColumna_(HOJAS.SEMANAS, 'BALANCE ESTÍMULOS'); asegurarColumna_(HOJAS.PLAN, 'ALTERNATIVAS');

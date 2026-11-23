@@ -71,6 +71,22 @@ function sembrarMetasV12_() {
   });
   return n;
 }
+// v0.32 · metas nuevas de los microbloques (decisión de Pablo 20–23/11/2026): estímulos IA (los define Claude en el libro Motor) y split isométrico
+var METAS_V32_ = [
+  ['Mes', 'P3 · Estímulos IA', 'ESTÍMULO IA 1', 2, 'IA1', 'Lo define Claude en el libro Motor (pestaña MOTOR · ESTÍMULOS IA: carencia, objetivo, contenido por semana, dónde y vigencia). El generador solo lo coloca.', 60.1],
+  ['Mes', 'P3 · Estímulos IA', 'ESTÍMULO IA 2', 2, 'IA2', 'Lo define Claude en el libro Motor (pestaña MOTOR · ESTÍMULOS IA). El generador solo lo coloca.', 60.2],
+  ['Mes', 'Haltero · estabilidad', 'SPLIT ISOMÉTRICO · POSICIÓN DE RECEPCIÓN DEL JERK', 2, 'M68', 'Dos exposiciones al mes de split isométrico en la posición de recepción del jerk (microbloque MB7, S1 y S3).', 31.6]
+];
+function sembrarMetasV32_() {
+  var ya = {}; listar_(HOJAS.METAS).forEach(function (m) { ya[m['ÁMBITO'] + '|' + String(m['CÓDIGOS'] || '').trim().toUpperCase()] = 1; });
+  var n = 0;
+  METAS_V32_.forEach(function (x) {
+    if (ya[x[0] + '|' + x[4]]) return;
+    guardarMeta_({ 'ÁMBITO': x[0], PRIORIDAD: x[1], 'ESTÍMULO': x[2], META: String(x[3]), 'MÁXIMO': '', TIPO: 'COUNT', UNIDAD: x[3] + ' sesiones/mes', 'CÓDIGOS': x[4], ACTIVA: 'Sí', NOTAS: x[5], ORDEN: String(x[6]) });
+    n++;
+  });
+  return n;
+}
 /** Texto inicial (editable) de «INTEGRAR CON» y «CÓMO MEJORARLO» por código. Solo rellena celdas vacías. */
 var GUIA_METAS_ = {
   M61: ['Con la sentadilla búlgara, en el mismo bloque de pierna unilateral.', 'Alterna front y back rack cada mes; sube carga cuando las 6 por pierna salgan a RPE 6.'],

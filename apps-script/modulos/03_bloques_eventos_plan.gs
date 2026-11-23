@@ -961,14 +961,15 @@ function crearDesdeFilaNueva_(sh, f, id, lunes) {
 }
 
 // ===================== v0.31.3 · ESTÍMULOS POR BLOQUE Y NOMBRE (Pablo 17/11: los códigos no le dicen nada) =====================
-var ORDEN_BLOQUES_EST_ = ['Motor', 'Empuje vertical', 'Estabilidad OH', 'RMU y gimnásticos', 'Haltero y potencia', 'Haltero técnico', 'Pierna accesoria', 'Cadena posterior', 'Core', 'Comba', 'Interferencia', 'Movilidad', 'Otros'];
+var ORDEN_BLOQUES_EST_ = ['Motor', 'Empuje vertical', 'Estabilidad OH', 'RMU y gimnásticos', 'Haltero y potencia', 'Haltero técnico', 'Pierna accesoria', 'Cadena posterior', 'Core', 'Comba', 'Interferencia', 'Movilidad', 'Estímulos IA', 'Otros'];
 function bloqueEstimulo_(c, r) {
   for (var k in FAMILIAS_) if (FAMILIAS_[k].indexOf(c) >= 0) return k === 'Unilateral' ? 'Pierna accesoria' : k;
   if (/^(W0[1-4]|R0[1-4]|V01|RC1|RF1|W40|MU1|OP3)$/.test(c) || norm(r && r.ORIGEN) === 'CARRERA') return 'Motor';
   if (/^(W13|M30|M49|M48|M01|M31|M36|M37)$/.test(c)) return 'RMU y gimnásticos';
-  if (/^(W20|W23|W24|W34|M17|M63|M52|W07|W08)$/.test(c)) return 'Haltero y potencia';
+  if (/^(W20|W23|W24|W34|M17|M63|M52|W07|W08|M68)$/.test(c)) return 'Haltero y potencia';
   if (/^(T0[1-3]|C0[1-4]|M57|M38|M05|M07|M54|M55|M64|M59)$/.test(c)) return 'Interferencia';
-  if (/^(W10|W41)$/.test(c) || norm(r && r.ORIGEN) === 'MOVILIDAD') return 'Movilidad';
+  if (/^(W10|W41|W42)$/.test(c) || norm(r && r.ORIGEN) === 'MOVILIDAD') return 'Movilidad';
+  if (/^IA\d$/.test(c)) return 'Estímulos IA';   // v0.32
   return 'Otros';
 }
 function ordenEstimulos_(a, b) {
