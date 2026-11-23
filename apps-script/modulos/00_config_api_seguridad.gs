@@ -176,10 +176,15 @@ function accion_(a, body, user) {
       case 'registrar_dia': var nRd = registrarDia_(body.iso); return json_({ ok: true, n: nRd, semana: semanaCompleta_(body.iso) });
       case 'regla_activa': reglaActiva_(body.clave, !!body.activa); return json_(Object.assign({ ok: true }, datosAprendizaje_()));
       case 'lesion_zonas': return json_({ ok: true, zonas: ZONAS_LESION_ });
-      case 'competis': return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
-      case 'competi_seguir': seguirCompeti_(body); return json_({ ok: true, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
-      case 'competi_responder': var rcp = responderCompeti_(body); return json_({ ok: true, quitada: !!rcp.quitada, competis: listaCompetis_(), preguntas: preguntasCompetis_() });
-      case 'competis_copiar': copiarCompetis_(); return json_({ ok: true, competis: listaCompetis_(), copia: leerConfig_().competis_copia || '' });
+      case 'competis': return json_({ ok: true, competis: listaCompetisApp_(), copia: leerConfig_().competis_copia || '' });
+      case 'competi_seguir': seguirCompeti_(body); return json_({ ok: true, competis: listaCompetisApp_(), preguntas: preguntasCompetis_() });
+      case 'competi_responder': var rcp = responderCompeti_(body); return json_({ ok: true, quitada: !!rcp.quitada, competis: listaCompetisApp_(), preguntas: preguntasCompetis_() });
+      case 'competis_copiar': copiarCompetis_(); return json_({ ok: true, competis: listaCompetisApp_(), copia: leerConfig_().competis_copia || '' });
+      case 'competis_buscar': var bcp = buscarCompetis_({ forzar: true, iaMax: 3 }); return json_({ ok: true, resultado: bcp, competis: listaCompetisApp_(), copia: leerConfig_().competis_buscador_ultimo || '' });   // v0.33
+      case 'competi_estado': estadoCompeti_(body); return json_({ ok: true, competis: listaCompetisApp_(), preguntas: preguntasCompetis_() });
+      case 'competi_inscribir': var icp = inscribirCompeti_(body); return json_({ ok: true, gabi: icp.gabi, competis: listaCompetisApp_(), preguntas: preguntasCompetis_() });
+      case 'competi_ficha': buscarCompetis_({ forzar: true, ids: [String(body.id || '')], iaMax: 1 }); return json_({ ok: true, competis: listaCompetisApp_() });
+      case 'competi_bloques': var bqc = bloquesCompeti_(body); return json_({ ok: true, n: bqc.n, lunes: bqc.lunes });
       case 'metcon_generar': return json_({ ok: true, metcon: metconGuiado_(body.deseo, { min: body.min, material: body.material, lunes: body.lunes, formato: body.formato }) });
       case 'motor_wods': return json_({ ok: true, wods: listar_(HOJAS.MOTOR).slice(-80).map(function (r) { return { id: r.ID, fuente: r.FUENTE, nombre: r.NOMBRE, formato: r.FORMATO, min: r.MIN, movimientos: r.MOVIMIENTOS, interferencias: r.INTERFERENCIAS, ciencia: r.CIENCIA, conceptos: r['CONCEPTOS (Ollama)'], por: r['ANALIZADO POR'] }; }) });
       case 'backup_ahora': var bk = backupJueves(); return json_({ ok: true, backup: bk, config: leerConfig_() });
