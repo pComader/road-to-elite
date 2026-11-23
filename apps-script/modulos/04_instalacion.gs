@@ -48,6 +48,7 @@ function configurarSin_() {
   try { logc_('OK · APRENDIZAJE: pestañas listas en Road to Elite · Motor (' + [HOJAS.APR_SEM, HOJAS.APR_ANA, HOJAS.APR_DN, HOJAS.APR_REG].filter(function (h) { return !!hojaMia_(h); }).length + ' de 4)'); } catch (e) { logc_('AVISO · Aprendizaje: ' + e); }
   try { MEMO = null; logc_('OK · v0.29 rendimiento: ' + prepararV29a_()); } catch (e) { logc_('AVISO · v0.29a: ' + e); }
   try { MEMO = null; logc_('OK · v0.29 competición: ' + prepararV29b_()); } catch (e) { logc_('AVISO · v0.29b: ' + e); }
+  try { MEMO = null; logc_('OK · Sync con la app de Gabi (cada hora, en revisarAvisos): ' + prepararSyncGabi_()); } catch (e) { logc_('AVISO · Sync Gabi: ' + e); }
   try { logc_('OK · LESIONES · ADAPTACIONES: ' + prepararLesiones_() + ' propuestas nuevas (apruébalas en Road to Elite · Motor)'); } catch (e) { logc_('AVISO · Lesiones: ' + e); }
   try { logc_('OK · Motor: ' + prepararMotor_()); } catch (e) { logc_('AVISO · Motor: ' + e); }
   logc_('OK · Estímulos sembrados: ' + sembrarEstimulos_() + ' (0 = ya estaban)');

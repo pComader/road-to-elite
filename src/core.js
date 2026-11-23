@@ -1117,6 +1117,14 @@
     // v0.29 · pendiente: competiciones futuras sin objetivo A/B (se marca en Calendario › Editar)
     if (!S._evObj && navigator.onLine) { S._evObj = 'cargando'; api({ action: 'eventos' }).then(ok).then(function (r) { S._evObj = (r.eventos || []).filter(function (e) { return /^(Competición|HYROX)$/.test(e.TIPO || '') && !e.OBJETIVO && aIso(e.INICIO) >= d.hoy && !/Ignorado|Pendiente de aprobar/.test(e.ESTADO || ''); }); if (document.getElementById('day')) render(); }).catch(function () { S._evObj = null; }); }
     if ((d.pausa || []).length) h += '<div class="draft-banner"><span>⏸ En pausa (esperan en pendientes, no caducan): ' + d.pausa.map(function (p) { return esc(p.nombre) + ' <button class="btn-ghost sm" type="button" data-reanudar="' + esc(p.codigo) + '">Reanudar</button>'; }).join(' · ') + '</span></div>';
+    // Avisos y notas de Gabi (app Fabrik Program): salen aquí hasta marcarlos como leídos; también en Menú › Avisos de Gabi
+    if (!S._gabi && navigator.onLine) { S._gabi = 'cargando'; api({ action: 'avisos_gabi' }).then(ok).then(function (r) { S._gabi = r.avisos || []; if (document.getElementById('day')) render(); }).catch(function () { S._gabi = null; }); }
+    var gabiNo = Array.isArray(S._gabi) ? S._gabi.filter(function (a) { return !a.leido; }) : [];
+    gabiNo.slice(0, 3).forEach(function (a) {
+      h += '<div class="draft-banner gabi-av"><span>📣 <b>Gabi · ' + esc(a.titulo) + '</b>' + (a.mensaje ? '<br>' + esc(a.mensaje).replace(/\n/g, '<br>') : '') +
+        (a.enlace ? '<br><a href="' + esc(a.enlace) + '" target="_blank" rel="noopener">' + esc(a.enlace) + '</a>' : '') + '</span><button class="btn btn-primary sm" type="button" data-gabi-leido="' + esc(a.id) + '">Leído</button></div>';
+    });
+    if (gabiNo.length > 3) h += '<div class="draft-banner gabi-av"><span>📣 ' + (gabiNo.length - 3) + ' avisos más de Gabi en Menú › Avisos de Gabi</span><button class="btn sm" type="button" data-gabi-leido="*">Todos leídos</button></div>';
     if (Array.isArray(S._evObj) && S._evObj.length) h += '<div class="draft-banner"><span>🎯 Pendiente: ' + S._evObj.length + (S._evObj.length === 1 ? ' competición' : ' competiciones') + ' sin objetivo A/B (' + esc(S._evObj.slice(0, 3).map(function (e) { return e.EVENTO; }).join(', ')) + (S._evObj.length > 3 ? '…' : '') + '). Con A, la app marca el taper.</span><button class="btn btn-primary sm" type="button" data-ir-cal>Marcar</button></div>';
     Object.keys(d.propuestas || {}).forEach(function (cid) {
       var c = (d.cambios || []).filter(function (x) { return x.ID === cid; })[0];
@@ -1964,6 +1972,7 @@
     if ((b = t.closest('[data-compartir]'))) { abrirCompartir(+b.dataset.compartir); return; }
     if ((b = t.closest('[data-reanudar]'))) { b.disabled = true; api({ action: 'pausa_quitar', codigo: b.dataset.reanudar, semana: S.data.semana }).then(ok).then(function (r) { aplicarSemana(r.semana); toast('Reanudado: vuelve a programarse'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-ir-cal]'))) { S._evObj = null; abrirCalendario(); return; }
+    if ((b = t.closest('[data-gabi-leido]'))) { b.disabled = true; var gid = b.dataset.gabiLeido; api({ action: 'aviso_gabi_leido', id: gid === '*' ? '' : gid, todos: gid === '*' }).then(ok).then(function (r) { S._gabi = r.avisos || []; if (S.vista === 'ajustes') S._abrir = 's-gabi'; render(); toast('Leído · queda en Menú › Avisos de Gabi'); }).catch(falloApi(b)); return; }
     if ((b = t.closest('[data-sesion]'))) { abrirSesion(+b.dataset.sesion); return; }
     if ((b = t.closest('[data-todo-hecho]'))) {
       if (!confirmar(b, '¿Todo hecho? Toca otra vez')) return;

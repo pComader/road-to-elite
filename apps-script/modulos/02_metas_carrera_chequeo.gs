@@ -387,6 +387,7 @@ function revisarAvisos_sin_() {
   var bkAlerta = ''; try { revisarBackup_(); bkAlerta = leerConfig_().backup_alerta || ''; } catch (e) { Logger.log('Backup: ' + e); }
   try { revisarSalud_(); } catch (e) { Logger.log('Salud: ' + e); }
   try { v29aCadaHora_(); } catch (e) { Logger.log('v29a hora: ' + e); }
+  try { syncGabiHora_(); } catch (e) { Logger.log('Sync Gabi: ' + e); }   // bloques Fabrik, marcas y avisos de Gabi (16_sync_gabi.gs)
   if (!pushActivo_()) return;
   var hecho = {}; try { hecho = JSON.parse(PROPS.getProperty('AVISOS_HECHOS') || '{}'); } catch (e) {}
   var avisar = function (clave, titulo, texto) { if (hecho[clave]) return; if (enviarPush_(titulo, texto)) hecho[clave] = hoyIso_(); };

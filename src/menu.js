@@ -31,6 +31,8 @@
     html += grupo('Competición', L('ir-competis', '🏆', 'Competis · España y Europa · seguimiento'));
     var pend = (d.pendientes || []);
     html += seccion('s-pend', 'Pendientes', htmlPendientes(pend), pend.length ? String(pend.length) : '', '↺');
+    var gabiL = Array.isArray(S._gabi) ? S._gabi : [], gabiN = gabiL.filter(function (a) { return !a.leido; }).length;
+    html += seccion('s-gabi', 'Avisos de Gabi', htmlAvisosGabi(gabiL), gabiN ? String(gabiN) : '', '📣');
     html += seccion('s-avisos', 'Avisos de tests y competiciones', htmlAvisosEventos(d), '', '⏱');
     html += seccion('s-marcas', 'Mis marcas', htmlMarcas(d), '', '◆');
     html += seccion('s-wods', 'WODs de referencia y guardados', '<div id="wods-body"><div class="hint">Cargando…</div></div>', '', '★');
@@ -64,6 +66,7 @@
     document.getElementById('ir-rendimiento').onclick = function () { S.vista = 'rendimiento'; S.rend = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('ir-resumen').onclick = function () { S.vista = 'resumen'; S.res = null; render(); window.scrollTo({ top: 0 }); };
     document.getElementById('s-salud').addEventListener('toggle', function () { if (this.open) cargarSalud(); });
+    document.getElementById('s-gabi').addEventListener('toggle', function () { if (this.open && !Array.isArray(S._gabi)) api({ action: 'avisos_gabi' }).then(ok).then(function (r) { S._gabi = r.avisos || []; S._abrir = 's-gabi'; render(); }).catch(function () {}); });
     document.getElementById('ir-hoja').onclick = function () { S.vista = 'hoja'; render(); window.scrollTo({ top: 0 }); };
     // v0.31.2 · Menú › Reprogramar: el aviso «semana ya programada» remitía aquí pero el botón no existía
     document.getElementById('ir-reprogramar').onclick = function () { if (!S.data) return; abrirPreviaExtras(S.data.semana, null, { reabrir: true, modo: 'semana' }); };
@@ -1383,6 +1386,15 @@
       S.data.notasBloque = (S.data.notasBloque || []).filter(function (n) { return !(aIso(n.FECHA) === ref.iso && n.ID_PLAN === ref.id); }).concat([r.nota]);
       render(); toast(restaurar ? 'Recomendación restaurada' : 'Guardado');
     }).catch(falloApi(btn));
+  }
+  // ---------- avisos y notas de Gabi (app Fabrik Program) · también los leídos ----------
+  function htmlAvisosGabi(l) {
+    if (!l.length) return '<div class="hint">' + (Array.isArray(S._gabi) ? 'Gabi no ha publicado avisos ni notas para ti.' : 'Cargando…') + '</div>';
+    return '<div class="pr-list">' + l.map(function (a) {
+      return '<div class="pr-row"><b>' + esc(a.titulo) + '</b><span class="hint">' + esc(a.tipo || 'Aviso') + (a.desde ? ' · ' + esc(a.desde) : '') + (a.leido ? ' · leído' : '') + '</span>' +
+        (a.mensaje ? '<div>' + esc(a.mensaje).replace(/\n/g, '<br>') + '</div>' : '') + (a.enlace ? '<a href="' + esc(a.enlace) + '" target="_blank" rel="noopener">' + esc(a.enlace) + '</a>' : '') +
+        (a.leido ? '' : '<button class="btn-ghost sm" type="button" data-gabi-leido="' + esc(a.id) + '">Marcar leído</button>') + '</div>';
+    }).join('') + '</div><div class="hint">Solo cuentan los que publica Gabi para ti (individual, tu grupo o todos). Te llega también un correo por cada uno.</div>';
   }
   // ---------- avisos de tests y competiciones (también los vistos) ----------
   function htmlAvisosEventos(d) {
