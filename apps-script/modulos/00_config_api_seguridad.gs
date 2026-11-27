@@ -86,7 +86,9 @@ function accion_(a, body, user) {
       case 'registrar':  var rgo = guardarRegistro_(body.registro || {}); try { gabiTrasRegistro_(rgo); } catch (eG) { Logger.log('Sync Gabi · registro: ' + eG); } return json_({ ok: true, registro: rgo });
       case 'registro_borrar': borrarRegistro_(body.registro || {}); return json_({ ok: true });
       case 'marcas':     return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
-      case 'marca':      var mko = limpiarMarca_(body.marca || {}); anadirFila_(HOJAS.MARCAS, mko); try { MEMO = null; gabiTrasMarca_(mko); } catch (eG) { Logger.log('Sync Gabi · marca: ' + eG); } MEMO = null; return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
+      case 'marca':      var mko = limpiarMarca_(body.marca || {}), mkDup = marcaRepetida_(mko, listar_(HOJAS.MARCAS));
+                       if (!mkDup) { anadirFila_(HOJAS.MARCAS, mko); try { MEMO = null; gabiTrasMarca_(mko); } catch (eG) { Logger.log('Sync Gabi · marca: ' + eG); } }
+                       MEMO = null; return json_({ ok: true, duplicada: mkDup, marcas: listar_(HOJAS.MARCAS) });
       case 'avisos_gabi': return json_(Object.assign({ ok: true }, avisosGabiApi_()));
       case 'aviso_gabi_leido': avisoGabiLeido_(body.id, !!body.todos); return json_(Object.assign({ ok: true }, avisosGabiApi_()));
       case 'marca_borrar': borrarFila_(HOJAS.MARCAS, body.fila, body.coincide || {}); return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
@@ -379,13 +381,53 @@ function permitidas_(o, campos) {
   return out;
 }
 
+// v0.33.2 · auditoría de RM. Nombre de ejercicio y tipo canónicos, valor validado (número real, no texto: el libro es es_ES y «102.5» como texto
+//   se lee a veces como fecha o como 1025), fecha dd/mm/aaaa válida y unidad derivada del tipo.
+var MARCA_ALIAS_ = { 'PRESS BANCA': 'BENCH PRESS', 'BANCA': 'BENCH PRESS', 'PESO MUERTO': 'DEADLIFT', 'ARRANQUE': 'SNATCH', 'ARRANQUE DE POTENCIA': 'POWER SNATCH',
+  'CARGADA': 'CLEAN', 'CARGADA DE POTENCIA': 'POWER CLEAN', 'SENTADILLA TRASERA': 'BACK SQUAT', 'SENTADILLA FRONTAL': 'FRONT SQUAT', 'PUSH-PRESS': 'PUSH PRESS',
+  'SQUAT SNATCH': 'SNATCH', 'SQUAT CLEAN': 'CLEAN', 'PRESS DE BANCA': 'BENCH PRESS', 'DEAD LIFT': 'DEADLIFT', 'BENCH': 'BENCH PRESS' };
+function marcaNombre_(s) {
+  var n = norm(s).replace(/\s+/g, ' ').trim();
+  return MARCA_ALIAS_[n] || n;
+}
+var MARCA_TIPOS_ = { '1RM': ['1RM', 'kg'], '3RM': ['3RM', 'kg'], '5RM': ['5RM', 'kg'], 'KILOS': ['Kilos', 'kg'], 'TIEMPO': ['Tiempo', 'min:seg'], 'REPS': ['Reps', 'reps'],
+  'DISTANCIA': ['Distancia', 'm'], 'CALORIAS': ['Calorías', 'cal'] };
+function marcaTipo_(t, unidad) {
+  var k = norm(t).replace(/\s/g, '');
+  if (!k) k = /^(MIN|SEG|MIN:SEG)/.test(norm(unidad)) ? 'TIEMPO' : /^REPS?$/.test(norm(unidad)) ? 'REPS' : /^KM?$|^M$/.test(norm(unidad)) ? 'DISTANCIA' : /^CAL/.test(norm(unidad)) ? 'CALORIAS' : '1RM';
+  if (!MARCA_TIPOS_[k]) throw new Error('marca_tipo_no_valido');
+  return MARCA_TIPOS_[k];
+}
+/** Valor de una marca: Number en kilos/reps/distancia/calorías (coma o punto), «mm:ss» o «h:mm:ss» (texto) en tiempos. Lanza marca_valor_no_valido. */
+function marcaValor_(v, tipo) {
+  var s = String(v == null ? '' : v).trim();
+  if (tipo === 'Tiempo') {
+    var m = s.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!m || Number(m[2]) > 59 || (m[3] != null && Number(m[3]) > 59)) throw new Error('marca_valor_no_valido');
+    return m[1] + ':' + ('0' + m[2]).slice(-2) + (m[3] != null ? ':' + ('0' + m[3]).slice(-2) : '');
+  }
+  s = s.replace(/\s*(kg|reps?|m|cal)$/i, '').replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error('marca_valor_no_valido');
+  var n = Math.round(parseFloat(s) * 100) / 100, tope = { 'Reps': 5000, 'Distancia': 1000000, 'Calorías': 10000 }[tipo] || 700;
+  if (!(n > 0) || n > tope) throw new Error('marca_valor_no_valido');
+  return n;
+}
 function limpiarMarca_(m) {
   var o = permitidas_(m, ['FECHA', 'MOVIMIENTO', 'TIPO', 'VALOR', 'UNIDAD', 'EVENTO', 'NOTAS']);
-  if (!o.MOVIMIENTO || !o.VALOR) throw new Error('marca_incompleta');
-  o.MOVIMIENTO = o.MOVIMIENTO.toUpperCase();
-  o.FECHA = o.FECHA || hoyTxt_();
+  if (!o.MOVIMIENTO || o.VALOR == null || String(o.VALOR).trim() === '') throw new Error('marca_incompleta');
+  o.MOVIMIENTO = marcaNombre_(o.MOVIMIENTO);
+  if (!o.MOVIMIENTO) throw new Error('marca_incompleta');
+  var t = marcaTipo_(o.TIPO, o.UNIDAD); o.TIPO = t[0]; o.UNIDAD = t[1];
+  o.VALOR = marcaValor_(o.VALOR, t[0] === '1RM' || t[0] === '3RM' || t[0] === '5RM' ? 'Kilos' : t[0]);
+  if (o.FECHA) { var iso = celdaIso_(o.FECHA); if (!iso) throw new Error('fecha_no_valida'); o.FECHA = isoAFecha(iso); } else o.FECHA = hoyTxt_();
   o.FUENTE = 'App Road To Elite';
   return o;
+}
+/** ¿Ya existe esa marca (mismo movimiento, tipo, valor y día)? Evita duplicados por doble toque, reintentos o cola sin conexión. */
+function marcaRepetida_(o, filas) {
+  var k = function (mov, tipo, val, f) { return marcaNombre_(mov) + '|' + norm(tipo).replace(/\s/g, '') + '|' + String(val).replace(',', '.').replace(/^(\d+)\.0+$/, '$1') + '|' + celdaIso_(f); };
+  var kn = k(o.MOVIMIENTO, o.TIPO, o.VALOR, o.FECHA);
+  return filas.some(function (r) { return r.MOVIMIENTO && r.VALOR && k(r.MOVIMIENTO, r.TIPO, r.VALOR, r.FECHA) === kn; });
 }
 
 function hoyIso_() { return Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyy-MM-dd'); }

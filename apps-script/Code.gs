@@ -86,7 +86,9 @@ function accion_(a, body, user) {
       case 'registrar':  var rgo = guardarRegistro_(body.registro || {}); try { gabiTrasRegistro_(rgo); } catch (eG) { Logger.log('Sync Gabi · registro: ' + eG); } return json_({ ok: true, registro: rgo });
       case 'registro_borrar': borrarRegistro_(body.registro || {}); return json_({ ok: true });
       case 'marcas':     return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
-      case 'marca':      var mko = limpiarMarca_(body.marca || {}); anadirFila_(HOJAS.MARCAS, mko); try { MEMO = null; gabiTrasMarca_(mko); } catch (eG) { Logger.log('Sync Gabi · marca: ' + eG); } MEMO = null; return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
+      case 'marca':      var mko = limpiarMarca_(body.marca || {}), mkDup = marcaRepetida_(mko, listar_(HOJAS.MARCAS));
+                       if (!mkDup) { anadirFila_(HOJAS.MARCAS, mko); try { MEMO = null; gabiTrasMarca_(mko); } catch (eG) { Logger.log('Sync Gabi · marca: ' + eG); } }
+                       MEMO = null; return json_({ ok: true, duplicada: mkDup, marcas: listar_(HOJAS.MARCAS) });
       case 'avisos_gabi': return json_(Object.assign({ ok: true }, avisosGabiApi_()));
       case 'aviso_gabi_leido': avisoGabiLeido_(body.id, !!body.todos); return json_(Object.assign({ ok: true }, avisosGabiApi_()));
       case 'marca_borrar': borrarFila_(HOJAS.MARCAS, body.fila, body.coincide || {}); return json_({ ok: true, marcas: listar_(HOJAS.MARCAS) });
@@ -379,13 +381,53 @@ function permitidas_(o, campos) {
   return out;
 }
 
+// v0.33.2 · auditoría de RM. Nombre de ejercicio y tipo canónicos, valor validado (número real, no texto: el libro es es_ES y «102.5» como texto
+//   se lee a veces como fecha o como 1025), fecha dd/mm/aaaa válida y unidad derivada del tipo.
+var MARCA_ALIAS_ = { 'PRESS BANCA': 'BENCH PRESS', 'BANCA': 'BENCH PRESS', 'PESO MUERTO': 'DEADLIFT', 'ARRANQUE': 'SNATCH', 'ARRANQUE DE POTENCIA': 'POWER SNATCH',
+  'CARGADA': 'CLEAN', 'CARGADA DE POTENCIA': 'POWER CLEAN', 'SENTADILLA TRASERA': 'BACK SQUAT', 'SENTADILLA FRONTAL': 'FRONT SQUAT', 'PUSH-PRESS': 'PUSH PRESS',
+  'SQUAT SNATCH': 'SNATCH', 'SQUAT CLEAN': 'CLEAN', 'PRESS DE BANCA': 'BENCH PRESS', 'DEAD LIFT': 'DEADLIFT', 'BENCH': 'BENCH PRESS' };
+function marcaNombre_(s) {
+  var n = norm(s).replace(/\s+/g, ' ').trim();
+  return MARCA_ALIAS_[n] || n;
+}
+var MARCA_TIPOS_ = { '1RM': ['1RM', 'kg'], '3RM': ['3RM', 'kg'], '5RM': ['5RM', 'kg'], 'KILOS': ['Kilos', 'kg'], 'TIEMPO': ['Tiempo', 'min:seg'], 'REPS': ['Reps', 'reps'],
+  'DISTANCIA': ['Distancia', 'm'], 'CALORIAS': ['Calorías', 'cal'] };
+function marcaTipo_(t, unidad) {
+  var k = norm(t).replace(/\s/g, '');
+  if (!k) k = /^(MIN|SEG|MIN:SEG)/.test(norm(unidad)) ? 'TIEMPO' : /^REPS?$/.test(norm(unidad)) ? 'REPS' : /^KM?$|^M$/.test(norm(unidad)) ? 'DISTANCIA' : /^CAL/.test(norm(unidad)) ? 'CALORIAS' : '1RM';
+  if (!MARCA_TIPOS_[k]) throw new Error('marca_tipo_no_valido');
+  return MARCA_TIPOS_[k];
+}
+/** Valor de una marca: Number en kilos/reps/distancia/calorías (coma o punto), «mm:ss» o «h:mm:ss» (texto) en tiempos. Lanza marca_valor_no_valido. */
+function marcaValor_(v, tipo) {
+  var s = String(v == null ? '' : v).trim();
+  if (tipo === 'Tiempo') {
+    var m = s.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!m || Number(m[2]) > 59 || (m[3] != null && Number(m[3]) > 59)) throw new Error('marca_valor_no_valido');
+    return m[1] + ':' + ('0' + m[2]).slice(-2) + (m[3] != null ? ':' + ('0' + m[3]).slice(-2) : '');
+  }
+  s = s.replace(/\s*(kg|reps?|m|cal)$/i, '').replace(',', '.');
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error('marca_valor_no_valido');
+  var n = Math.round(parseFloat(s) * 100) / 100, tope = { 'Reps': 5000, 'Distancia': 1000000, 'Calorías': 10000 }[tipo] || 700;
+  if (!(n > 0) || n > tope) throw new Error('marca_valor_no_valido');
+  return n;
+}
 function limpiarMarca_(m) {
   var o = permitidas_(m, ['FECHA', 'MOVIMIENTO', 'TIPO', 'VALOR', 'UNIDAD', 'EVENTO', 'NOTAS']);
-  if (!o.MOVIMIENTO || !o.VALOR) throw new Error('marca_incompleta');
-  o.MOVIMIENTO = o.MOVIMIENTO.toUpperCase();
-  o.FECHA = o.FECHA || hoyTxt_();
+  if (!o.MOVIMIENTO || o.VALOR == null || String(o.VALOR).trim() === '') throw new Error('marca_incompleta');
+  o.MOVIMIENTO = marcaNombre_(o.MOVIMIENTO);
+  if (!o.MOVIMIENTO) throw new Error('marca_incompleta');
+  var t = marcaTipo_(o.TIPO, o.UNIDAD); o.TIPO = t[0]; o.UNIDAD = t[1];
+  o.VALOR = marcaValor_(o.VALOR, t[0] === '1RM' || t[0] === '3RM' || t[0] === '5RM' ? 'Kilos' : t[0]);
+  if (o.FECHA) { var iso = celdaIso_(o.FECHA); if (!iso) throw new Error('fecha_no_valida'); o.FECHA = isoAFecha(iso); } else o.FECHA = hoyTxt_();
   o.FUENTE = 'App Road To Elite';
   return o;
+}
+/** ¿Ya existe esa marca (mismo movimiento, tipo, valor y día)? Evita duplicados por doble toque, reintentos o cola sin conexión. */
+function marcaRepetida_(o, filas) {
+  var k = function (mov, tipo, val, f) { return marcaNombre_(mov) + '|' + norm(tipo).replace(/\s/g, '') + '|' + String(val).replace(',', '.').replace(/^(\d+)\.0+$/, '$1') + '|' + celdaIso_(f); };
+  var kn = k(o.MOVIMIENTO, o.TIPO, o.VALOR, o.FECHA);
+  return filas.some(function (r) { return r.MOVIMIENTO && r.VALOR && k(r.MOVIMIENTO, r.TIPO, r.VALOR, r.FECHA) === kn; });
 }
 
 function hoyIso_() { return Utilities.formatDate(new Date(), CONFIG.ZONA, 'yyyy-MM-dd'); }
@@ -5679,7 +5721,7 @@ function rmDe_(nombre) {
   var memo = rmDe_.memo; if (!memo) { try { memo = listar_(HOJAS.MARCAS); } catch (e) { memo = []; } rmDe_.memo = memo; }
   return memo.reduce(function (mx, r) {
     var v = parseFloat(String(r.VALOR || '').replace(',', '.'));
-    if (!v || norm(r.MOVIMIENTO).indexOf(q) < 0 || /LB/.test(norm(r.UNIDAD)) || /TIEMPO|REPS|SEG|MIN|CAL/.test(norm(r.UNIDAD) + ' ' + norm(r.TIPO))) return mx;
+    if (!v || norm(r.MOVIMIENTO).indexOf(q) < 0 || /LB/.test(norm(r.UNIDAD)) || /TIEMPO|REPS|SEG|MIN|CAL|DISTANCIA/.test(norm(r.UNIDAD) + ' ' + norm(r.TIPO)) || /^[35]RM$/.test(norm(r.TIPO).trim()) || /^K?M$/.test(norm(r.UNIDAD).trim())) return mx;   // v0.33.2 · un 3RM/5RM o una distancia no son un 1RM
     return Math.max(mx, v);
   }, 0);
 }
@@ -8824,7 +8866,7 @@ function serieIndicador_(clave) {
     v29Seguro_(HOJAS.MARCAS).forEach(function (m) {
       var mov = norm(m.MOVIMIENTO).trim(), tipo = norm(m.TIPO).replace(/\s/g, '');
       var esMov = clave === 'snatch' ? mov === 'SNATCH' : (mov === 'CLEAN & JERK' || mov === 'CLEAN AND JERK' || mov === 'C&J');
-      if (!esMov || tipo.indexOf('1RM') < 0) return;
+      if (!esMov || (tipo.indexOf('1RM') < 0 && tipo !== 'KILOS')) return;   // v0.33.2 · «Kilos» (marca nueva del menú) también es un máximo
       var f = celdaIso_(m.FECHA), v = v29Num_(m.VALOR); if (!f || v == null) return;
       out.push({ fecha: f, v: v, txt: N(v) });
     });
@@ -9927,6 +9969,8 @@ function gabiSello_(t) {
   return y + ('0' + m[2]).slice(-2) + ('0' + m[1]).slice(-2) + ('0' + (m[4] || 0)).slice(-2) + (m[5] || '00');
 }
 function gabiValor_(v) { var s = String(v == null ? '' : v).trim().replace(',', '.'); return /^\d+\.0+$/.test(s) ? s.replace(/\.0+$/, '') : s; }
+// v0.33.2 · un número se escribe como número (un texto «72.5» en un libro es_ES puede leerse como fecha o como 725)
+function gabiNumero_(s) { return /^\d+(\.\d+)?$/.test(s) ? parseFloat(s) : s; }
 function gabiComentario_(r) { var c = String(r.FEEDBACK || r.NOTAS || '').trim(); return /^Todo hecho \(un toque\)$/.test(c) ? '' : c; }
 /** Bloque de Gabi de una fila FABRIK de APP · PLAN: { iso (día en la app de Gabi), n, lunes, dia }. */
 function gabiRef_(r) {
@@ -10090,8 +10134,9 @@ function gabiSyncBloques_(libro, cf, P, E, nuevas, out, ids) {
   });
 }
 /** Marcas: lo que falta en un lado se añade en el otro (clave MARCA|fecha|valor). Las copias que vinieron de Gabi no se devuelven. */
-var GABI_TIPO_A_RTE_ = { KILOS: ['1RM', 'kg'], TIEMPO: ['Tiempo', 'min:seg'], REPS: ['Reps', 'reps'] };
-function gabiTipoRteAGabi_(m) { var t = norm(m.TIPO).trim(); if (t === '1RM' || (!t && norm(m.UNIDAD).trim() === 'KG')) return 'Kilos'; if (t === 'TIEMPO') return 'Tiempo'; if (t === 'REPS') return 'Reps'; return ''; }
+var GABI_TIPO_A_RTE_ = { KILOS: ['1RM', 'kg'], TIEMPO: ['Tiempo', 'min:seg'], REPS: ['Reps', 'reps'], DISTANCIA: ['Distancia', 'm'], CALORIAS: ['Calorías', 'cal'] };
+// v0.33.2 · «Kilos» (marca nueva del menú), «Distancia» y «Calorías» también existen en la app de Gabi; antes solo salían 1RM, Tiempo y Reps
+function gabiTipoRteAGabi_(m) { var t = norm(m.TIPO).trim(); if (t === '1RM' || t === 'KILOS' || (!t && norm(m.UNIDAD).trim() === 'KG')) return 'Kilos'; if (t === 'TIEMPO') return 'Tiempo'; if (t === 'REPS') return 'Reps'; if (t === 'DISTANCIA') return 'Distancia'; if (t === 'CALORIAS') return 'Calorías'; return ''; }
 function gabiSyncMarcas_(libro, cf, P, E, nuevas, out, soloMarca) {
   var MK = gabiTabla_(libro, 'MARCAS', 'EMAIL'); if (!MK) return;
   var clave = function (mov, iso, val) { return 'mk|' + norm(mov).replace(/\s+/g, ' ').trim() + '|' + iso + '|' + gabiValor_(val); };
@@ -10115,7 +10160,7 @@ function gabiSyncMarcas_(libro, cf, P, E, nuevas, out, soloMarca) {
     if (enRte[k] || E[k]) return;
     var f = enGabi[k], iso = celdaIso_(MK.g(f, 'FECHA')); if (iso < cf.desde) return;
     var t = GABI_TIPO_A_RTE_[norm(MK.g(f, 'TIPO')).trim()] || [MK.g(f, 'TIPO'), ''];
-    bajar.push({ FECHA: isoAFecha(iso), MOVIMIENTO: MK.g(f, 'MARCA').toUpperCase(), TIPO: t[0], VALOR: gabiValor_(MK.g(f, 'VALOR')), UNIDAD: t[1], EVENTO: MK.g(f, 'EVENTO'), NOTAS: MK.g(f, 'NOTAS'), FUENTE: 'App Gabi (sync ' + hoyTxt_() + ')' });
+    bajar.push({ FECHA: isoAFecha(iso), MOVIMIENTO: MK.g(f, 'MARCA').toUpperCase(), TIPO: t[0], VALOR: gabiNumero_(gabiValor_(MK.g(f, 'VALOR'))), UNIDAD: t[1], EVENTO: MK.g(f, 'EVENTO'), NOTAS: MK.g(f, 'NOTAS'), FUENTE: 'App Gabi (sync ' + hoyTxt_() + ')' });
     out.marcas.bajadas++; gabiGuardarEstado_(E, k, 'ambos', 'Gabi ' + iso, nuevas);
   });
   if (bajar.length) filasEnHoja_(HOJAS.MARCAS, bajar);

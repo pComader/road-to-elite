@@ -102,6 +102,8 @@ function gabiSello_(t) {
   return y + ('0' + m[2]).slice(-2) + ('0' + m[1]).slice(-2) + ('0' + (m[4] || 0)).slice(-2) + (m[5] || '00');
 }
 function gabiValor_(v) { var s = String(v == null ? '' : v).trim().replace(',', '.'); return /^\d+\.0+$/.test(s) ? s.replace(/\.0+$/, '') : s; }
+// v0.33.2 · un número se escribe como número (un texto «72.5» en un libro es_ES puede leerse como fecha o como 725)
+function gabiNumero_(s) { return /^\d+(\.\d+)?$/.test(s) ? parseFloat(s) : s; }
 function gabiComentario_(r) { var c = String(r.FEEDBACK || r.NOTAS || '').trim(); return /^Todo hecho \(un toque\)$/.test(c) ? '' : c; }
 /** Bloque de Gabi de una fila FABRIK de APP · PLAN: { iso (día en la app de Gabi), n, lunes, dia }. */
 function gabiRef_(r) {
@@ -265,8 +267,9 @@ function gabiSyncBloques_(libro, cf, P, E, nuevas, out, ids) {
   });
 }
 /** Marcas: lo que falta en un lado se añade en el otro (clave MARCA|fecha|valor). Las copias que vinieron de Gabi no se devuelven. */
-var GABI_TIPO_A_RTE_ = { KILOS: ['1RM', 'kg'], TIEMPO: ['Tiempo', 'min:seg'], REPS: ['Reps', 'reps'] };
-function gabiTipoRteAGabi_(m) { var t = norm(m.TIPO).trim(); if (t === '1RM' || (!t && norm(m.UNIDAD).trim() === 'KG')) return 'Kilos'; if (t === 'TIEMPO') return 'Tiempo'; if (t === 'REPS') return 'Reps'; return ''; }
+var GABI_TIPO_A_RTE_ = { KILOS: ['1RM', 'kg'], TIEMPO: ['Tiempo', 'min:seg'], REPS: ['Reps', 'reps'], DISTANCIA: ['Distancia', 'm'], CALORIAS: ['Calorías', 'cal'] };
+// v0.33.2 · «Kilos» (marca nueva del menú), «Distancia» y «Calorías» también existen en la app de Gabi; antes solo salían 1RM, Tiempo y Reps
+function gabiTipoRteAGabi_(m) { var t = norm(m.TIPO).trim(); if (t === '1RM' || t === 'KILOS' || (!t && norm(m.UNIDAD).trim() === 'KG')) return 'Kilos'; if (t === 'TIEMPO') return 'Tiempo'; if (t === 'REPS') return 'Reps'; if (t === 'DISTANCIA') return 'Distancia'; if (t === 'CALORIAS') return 'Calorías'; return ''; }
 function gabiSyncMarcas_(libro, cf, P, E, nuevas, out, soloMarca) {
   var MK = gabiTabla_(libro, 'MARCAS', 'EMAIL'); if (!MK) return;
   var clave = function (mov, iso, val) { return 'mk|' + norm(mov).replace(/\s+/g, ' ').trim() + '|' + iso + '|' + gabiValor_(val); };
@@ -290,7 +293,7 @@ function gabiSyncMarcas_(libro, cf, P, E, nuevas, out, soloMarca) {
     if (enRte[k] || E[k]) return;
     var f = enGabi[k], iso = celdaIso_(MK.g(f, 'FECHA')); if (iso < cf.desde) return;
     var t = GABI_TIPO_A_RTE_[norm(MK.g(f, 'TIPO')).trim()] || [MK.g(f, 'TIPO'), ''];
-    bajar.push({ FECHA: isoAFecha(iso), MOVIMIENTO: MK.g(f, 'MARCA').toUpperCase(), TIPO: t[0], VALOR: gabiValor_(MK.g(f, 'VALOR')), UNIDAD: t[1], EVENTO: MK.g(f, 'EVENTO'), NOTAS: MK.g(f, 'NOTAS'), FUENTE: 'App Gabi (sync ' + hoyTxt_() + ')' });
+    bajar.push({ FECHA: isoAFecha(iso), MOVIMIENTO: MK.g(f, 'MARCA').toUpperCase(), TIPO: t[0], VALOR: gabiNumero_(gabiValor_(MK.g(f, 'VALOR'))), UNIDAD: t[1], EVENTO: MK.g(f, 'EVENTO'), NOTAS: MK.g(f, 'NOTAS'), FUENTE: 'App Gabi (sync ' + hoyTxt_() + ')' });
     out.marcas.bajadas++; gabiGuardarEstado_(E, k, 'ambos', 'Gabi ' + iso, nuevas);
   });
   if (bajar.length) filasEnHoja_(HOJAS.MARCAS, bajar);

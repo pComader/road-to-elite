@@ -113,7 +113,7 @@
     var m = {}, rm = (S.user && S.user.marcas) || {};
     Object.keys(rm).forEach(function (k) { if (rm[k] > 0) m[norm(k).replace(/\s+/g, ' ').trim()] = Number(rm[k]); });
     ((S.data && S.data.misMarcas) || []).forEach(function (x) {
-      if (x.tipo !== 'Kilos') return;
+      if (x.tipo !== 'Kilos' || x.rep) return;
       var v = parseFloat(String(x.valor).replace(',', '.')), k = norm(x.marca).replace(/\s+/g, ' ').trim();
       if (v > 0 && !(m[k] >= v)) m[k] = v;
     });
@@ -255,15 +255,18 @@
   /** Marcas de la hoja → formato de la app de Gabi ({marca, tipo, valor, fecha}) + 1RM por levantamiento. */
   var UNIDAD_TIPO = { kg: 'Kilos', 'min:seg': 'Tiempo', reps: 'Reps', cal: 'Calorías', m: 'Distancia', km: 'Distancia', w: 'Kilos' };
   var TIPO_UNIDAD = { Kilos: 'kg', Tiempo: 'min:seg', Reps: 'reps', 'Calorías': 'cal', Distancia: 'm' };
+  // v0.33.2 · el tipo manda cuando falta la unidad (marcas que vienen de la app de Gabi o del importador: UNIDAD vacía → antes un tiempo salía como «kg»);
+  //   3RM/5RM son marcas aparte («SNATCH 3RM»): no cuentan como 1RM ni para los % de Fabrik; nombres con espacios sobrantes se unifican.
+  var TIPO_NOMBRE = { KILOS: 'Kilos', '1RM': 'Kilos', TIEMPO: 'Tiempo', REPS: 'Reps', DISTANCIA: 'Distancia', CALORIAS: 'Calorías' };
   function prepararMarcas(filas) {
     S.misMarcas = (filas || []).filter(function (r) { return r.MOVIMIENTO && r.VALOR; }).map(function (r) {
-      var u = String(r.UNIDAD || 'kg').toLowerCase();
-      return { marca: String(r.MOVIMIENTO).toUpperCase().trim(), tipo: UNIDAD_TIPO[u] || (r.TIPO === 'Tiempo' ? 'Tiempo' : 'Kilos'), valor: String(r.VALOR),
+      var u = String(r.UNIDAD || '').toLowerCase(), t = norm(r.TIPO).replace(/\s/g, ''), rep = /^[35]RM$/.test(t), nom = String(r.MOVIMIENTO).toUpperCase().replace(/\s+/g, ' ').trim();
+      return { marca: nom + (rep ? ' ' + t : ''), tipo: UNIDAD_TIPO[u] || TIPO_NOMBRE[t] || (rep ? 'Kilos' : r.TIPO === 'Tiempo' ? 'Tiempo' : 'Kilos'), valor: String(r.VALOR), rep: rep,
         fecha: aIso(r.FECHA) || '', notas: r.NOTAS || '', fuente: r.FUENTE || '', fila: r._fila, raw: { FECHA: r.FECHA, MOVIMIENTO: r.MOVIMIENTO, VALOR: r.VALOR } };
-    }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+    }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : (b.fila || 0) - (a.fila || 0); });
     var rm = {};
     S.misMarcas.forEach(function (x) {
-      if (x.tipo !== 'Kilos' || LEVANTAMIENTOS.indexOf(x.marca) < 0) return;
+      if (x.tipo !== 'Kilos' || x.rep || LEVANTAMIENTOS.indexOf(x.marca) < 0) return;
       var v = parseFloat(String(x.valor).replace(',', '.'));
       if (v > 0 && !(rm[x.marca] >= v)) rm[x.marca] = v;
     });
@@ -1389,7 +1392,7 @@
   function urlSegura(u) { return /^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : ''; }
   function mensajeError(m) {
     return { fecha_no_valida: 'Esa fecha no es válida.', elige_estimulo: 'Marca al menos un estímulo para incentivar.', zona_no_valida: 'Elige la zona de la molestia.', fabrik_no_se_cambia: 'Los bloques de Fabrik no se cambian de estímulo.', estimulo_no_encontrado: 'Ese estímulo no está en el catálogo.', falta_dia_competi: 'Elige el día de la competi.', elige_dos: 'Marca al menos 2 bloques.', maximo_cuatro: 'Como mucho 4 bloques.', dos_metcons: 'No se fusionan dos metcons: cambiarían su estímulo.', bloque_no_activo: 'Uno de los bloques está cancelado o sustituido.', otra_semana: 'Los bloques tienen que ser de la misma semana.', no_es_fusion: 'Ese bloque no es una fusión.', dia_con_turno: 'El día entero solo se cambia por otro día entero.', misma_sesion: 'Es la misma sesión.', sesion_no_valida: 'Sesión no válida.',
-      marca_incompleta: 'Falta el movimiento o el valor.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
+      marca_incompleta: 'Falta el movimiento o el valor.', marca_valor_no_valido: 'Ese valor no es válido (kilos o reps: solo número; tiempo: mm:ss).', marca_tipo_no_valido: 'Ese tipo de marca no existe.', registro_incompleto: 'Falta la fecha o el bloque.', rpe_no_valido: 'El RPE va del 1 al 10.',
       la_fila_ha_cambiado: 'La hoja ha cambiado: recarga e inténtalo otra vez.', no_encontrado: 'Ya no existe.', no_autorizado: 'Cuenta no autorizada.',
       sesion_caducada: 'La sesión ha caducado: vuelve a entrar.', eventos_sin_decidir: 'Decide cómo proceder con cada evento antes de confirmar.',
       evento_incompleto: 'Pon nombre y fecha al evento.', falta_evento: 'Escribe qué ha surgido.', faltan_datos: 'Faltan datos del bloque.', memoria_llena: 'La memoria del navegador está llena: no se pudo guardar sin conexión.', modulo_no_disponible: 'Sin conexión: esta parte aún no se ha descargado.', solo_borrador: 'Solo se pueden quitar bloques en borrador.', token_no_valido: 'No se pudo registrar el dispositivo.', meta_incompleta: 'Pon el estímulo y el ámbito.', falta_fecha: 'Falta la fecha.' }[m] || ('No se pudo guardar' + (m ? ' (' + m + ')' : '') + '. Revisa la conexión.');

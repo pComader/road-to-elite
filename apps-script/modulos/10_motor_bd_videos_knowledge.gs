@@ -358,7 +358,7 @@ function rmDe_(nombre) {
   var memo = rmDe_.memo; if (!memo) { try { memo = listar_(HOJAS.MARCAS); } catch (e) { memo = []; } rmDe_.memo = memo; }
   return memo.reduce(function (mx, r) {
     var v = parseFloat(String(r.VALOR || '').replace(',', '.'));
-    if (!v || norm(r.MOVIMIENTO).indexOf(q) < 0 || /LB/.test(norm(r.UNIDAD)) || /TIEMPO|REPS|SEG|MIN|CAL/.test(norm(r.UNIDAD) + ' ' + norm(r.TIPO))) return mx;
+    if (!v || norm(r.MOVIMIENTO).indexOf(q) < 0 || /LB/.test(norm(r.UNIDAD)) || /TIEMPO|REPS|SEG|MIN|CAL|DISTANCIA/.test(norm(r.UNIDAD) + ' ' + norm(r.TIPO)) || /^[35]RM$/.test(norm(r.TIPO).trim()) || /^K?M$/.test(norm(r.UNIDAD).trim())) return mx;   // v0.33.2 · un 3RM/5RM o una distancia no son un 1RM
     return Math.max(mx, v);
   }, 0);
 }

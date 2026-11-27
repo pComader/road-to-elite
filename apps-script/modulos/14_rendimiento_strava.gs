@@ -104,7 +104,7 @@ function serieIndicador_(clave) {
     v29Seguro_(HOJAS.MARCAS).forEach(function (m) {
       var mov = norm(m.MOVIMIENTO).trim(), tipo = norm(m.TIPO).replace(/\s/g, '');
       var esMov = clave === 'snatch' ? mov === 'SNATCH' : (mov === 'CLEAN & JERK' || mov === 'CLEAN AND JERK' || mov === 'C&J');
-      if (!esMov || tipo.indexOf('1RM') < 0) return;
+      if (!esMov || (tipo.indexOf('1RM') < 0 && tipo !== 'KILOS')) return;   // v0.33.2 · «Kilos» (marca nueva del menú) también es un máximo
       var f = celdaIso_(m.FECHA), v = v29Num_(m.VALOR); if (!f || v == null) return;
       out.push({ fecha: f, v: v, txt: N(v) });
     });

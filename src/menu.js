@@ -138,19 +138,28 @@
       '<input id="pr-nt" maxlength="200" placeholder="Nota (opcional)">' +
       '<button class="btn" type="submit" id="pr-ok">Añadir marca</button></form>';
   }
+  // v0.33.2 · por la cola sin conexión (antes fallaba sin red); si el servidor no devuelve la lista (en cola / operación repetida) se añade en local
   function guardarMarcaApi(m) {
-    return api({ action: 'marca', marca: m }).then(ok).then(function (r) { S.marcasFilas = r.marcas; prepararMarcas(r.marcas); return r; });
+    return apiGuardar({ action: 'marca', marca: m }).then(ok).then(function (r) {
+      if (r.marcas) { S.marcasFilas = r.marcas; prepararMarcas(r.marcas); }
+      else if (r.cola) { S.marcasFilas = (S.marcasFilas || []).concat([m]); prepararMarcas(S.marcasFilas); }
+      return r;
+    });
   }
   function enlazarMarcas() {
     var f = document.getElementById('marcasf');
     if (f) f.onsubmit = function (ev) {
       ev.preventDefault();
-      var actuales = (S.user && S.user.marcas) || {}, cambios = [];
+      // v0.33.2 · solo se guarda un 1RM MAYOR que el vigente: uno igual o menor no sube nada (antes quedaba una fila inútil en MARCAS y en la app de Gabi
+      //   y el mensaje decía «guardado» aunque el 1RM siguiera siendo el mayor). Para corregir un valor mal puesto: borra esa marca en el historial.
+      var actuales = (S.user && S.user.marcas) || {}, cambios = [], menores = [];
       f.querySelectorAll('input[data-lev]').forEach(function (inp) {
-        var n = parseFloat(String(inp.value).replace(',', '.'));
-        if (n > 0 && n !== actuales[inp.dataset.lev]) cambios.push({ MOVIMIENTO: inp.dataset.lev, TIPO: '1RM', VALOR: String(n), UNIDAD: 'kg', FECHA: aTxt(S.data.hoy), NOTAS: 'Puesto en la app' });
+        var n = parseFloat(String(inp.value).replace(',', '.')), ant = actuales[inp.dataset.lev];
+        if (!(n > 0) || n === ant) return;
+        if (ant > 0 && n < ant) { menores.push(cap(inp.dataset.lev) + ' (' + String(ant).replace('.', ',') + ' kg)'); return; }
+        cambios.push({ MOVIMIENTO: inp.dataset.lev, TIPO: '1RM', VALOR: String(n), UNIDAD: 'kg', FECHA: aTxt(S.data.hoy), NOTAS: 'Puesto en la app' });
       });
-      if (!cambios.length) { toast('No hay cambios.'); return; }
+      if (!cambios.length) { toast(menores.length ? 'Ya tienes más en ' + menores.join(', ') + '. Para corregir uno mal puesto, bórralo en el historial.' : 'No hay cambios.'); return; }
       var btn = document.getElementById('gm'); btn.disabled = true; btn.textContent = 'Guardando…';
       cambios.reduce(function (p, m) { return p.then(function () { return guardarMarcaApi(m); }); }, Promise.resolve())
         .then(function () { toast('1RM guardados'); S._abrir = 's-marcas'; render(); })
