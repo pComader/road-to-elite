@@ -199,6 +199,7 @@ function analizarSemana_(lunes) {
 function procesarDeathnote_() {
   var filas = []; try { filas = listar_(HOJAS.APR_DN).filter(function (r) { return r.ESTADO === 'PENDIENTE' && (String(r.RESPUESTA || '').trim() || String(r.COMENTARIO || '').trim()); }); } catch (e) { return 0; }
   filas.forEach(function (r) {
+    if (r.TIPO === 'propuesta') { actualizarFila_(HOJAS.APR_DN, r._fila, { ESTADO: 'RESPONDIDA', PROCESADO: ahora_() }); return; }   // v0.34.1 · propuestas de un deathnote de Claude: se guarda la respuesta y la aplica Claude (no crea reglas)
     var c = {}; try { c = JSON.parse(r.CONTEXTO || '{}'); } catch (e) {}
     var R = norm(r.RESPUESTA || ''), d = [], autos = c.a || [], s = c.s, lunes = celdaIso_(r.LUNES);
     var revertir = function () { autos.forEach(function (a) { d.push([a[0], a[1], a[2], -a[3]]); }); };
