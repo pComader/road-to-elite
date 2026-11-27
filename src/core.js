@@ -945,23 +945,168 @@
     var f = aTxt(iso);
     return (S.data.registro || []).filter(function (r) { return (r.FECHA === f || aIso(r.FECHA) === iso) && r.ID_PLAN === idPlan; })[0] || null;
   }
+  // ---------- v0.34 · valorar el bloque y apuntar el resultado: misma experiencia que la app de Gabi ----------
+  //  · «Valora el bloque» (plegable): toca un RPE 1–10 y se guarda al instante (sin botón); el resumen enseña RPE y resultado.
+  //  · Un metcon sin resultado abre «Tu resultado» solo tras el primer RPE. Si no, «＋ Apuntar mi resultado».
+  //  · «Tu resultado»: nivel RX/Adaptado, tipo (for time · AMRAP · máx. · carga · cal/km) y campos a medida (tiempo mm:ss).
+  //  · Contrato intacto: va a APP · REGISTRO › «DATOS (parciales/vatios)» con el formato que ya sincroniza con Gabi
+  //    («12:10» · «CAP + 126 reps» · «7 rondas + 9 reps» · «26 reps», + « · Adaptado: qué cambiaste»).
+  var TIPOS_RES = [['Tiempo', 'For time'], ['AMRAP', 'AMRAP'], ['Máximo', 'Máx. reps/cal/m'], ['Carga', 'Carga (kg)'], ['Máquina', 'Cal / km']];
+  function tipoResultadoDe(b) {
+    var t = norm((b.titulo || '') + '\n' + (b.partes || []).map(function (p) { return p.texto; }).join('\n'));
+    if (/AMRAP/.test(t) && !/TIME CAP|FOR TIME/.test(t)) return 'AMRAP';
+    if (/FOR TIME|TIME CAP|\bRFT\b|\d+\s*ROUNDS FOR/.test(t)) return 'Tiempo';
+    if (!esMetcon(b)) return 'Carga';
+    if (/\bRM\b|HEAVY|MAX LOAD|CARGA MAX/.test(t)) return 'Carga';
+    if (/(EMOM|EVERY|INTERVAL)/.test(t) && /(CAL|ROW|SKI|BIKE|ERG|RUN|\bKM\b)/.test(t)) return 'Máquina';
+    if (/\bMAX\b/.test(t)) return 'Máximo';
+    return 'Tiempo';
+  }
+  /** Texto de DATOS → campos del formulario. null si no es un resultado reconocible (parciales, vatios…). */
+  function leerResultado(txt) {
+    var t = String(txt || '').trim(), m; if (!t) return null;
+    var o = { nivel: 'RX', adapt: '' };
+    if ((m = t.match(/^(.*?)\s*·\s*(RX|Adaptado)(?::\s*(.*))?$/i))) { t = m[1]; o.nivel = /^a/i.test(m[2]) ? 'Adaptado' : 'RX'; o.adapt = (m[3] || '').trim(); }
+    if ((m = t.match(/^CAP \+ (\d+) reps$/i))) { o.tipo = 'Tiempo'; o.cap = true; o.reps = m[1]; }
+    else if (/^\d{1,3}:\d{2}(?::\d{2})?$/.test(t)) { o.tipo = 'Tiempo'; o.tiempo = t; }
+    else if ((m = t.match(/^(\d+) rondas?(?: \+ (\d+) reps)?$/i))) { o.tipo = 'AMRAP'; o.rondas = m[1]; o.reps = m[2] || ''; }
+    else if ((m = t.match(/^([\d.,]+) (reps|cal|m)$/i))) { o.tipo = 'Máximo'; o.valor = m[1]; o.unidad = m[2].toLowerCase(); }
+    else if ((m = t.match(/^([\d.,]+) kg$/i))) { o.tipo = 'Carga'; o.kg = m[1]; }
+    else if ((m = t.match(/^(?:([\d.,]+) cal)?(?:\s*·\s*)?(?:([\d.,]+) km)?$/i)) && (m[1] || m[2])) { o.tipo = 'Máquina'; o.cal = m[1] || ''; o.km = m[2] || ''; }
+    else return null;
+    return o;
+  }
+  function segRes(id, opciones, sel) {
+    return '<div class="seg" role="group" id="' + id + '">' + opciones.map(function (o) { return '<button type="button" data-val="' + esc(o[0]) + '" aria-pressed="' + (o[0] === sel) + '">' + esc(o[1]) + '</button>'; }).join('') + '</div>';
+  }
+  function camposResultado(tipo, E) {
+    E = E || {};
+    if (tipo === 'Tiempo') return '<div class="rs-row"><div><label for="rs-t-m">Tiempo</label>' + campoTiempo('rs-t', E.tiempo) + '<div class="hint">Minutos y segundos. Las horas solo si pasas de 60 min.</div></div></div>' +
+      '<label class="chk"><input type="checkbox" id="rs-cap"' + (E.cap ? ' checked' : '') + '> No terminé (time cap)</label>' +
+      '<div id="rs-capw"' + (E.cap ? '' : ' hidden') + '><label for="rs-cr">Repeticiones hechas</label><input id="rs-cr" inputmode="numeric" placeholder="reps · ej. 152" value="' + esc(E.reps || '') + '"></div>';
+    if (tipo === 'AMRAP') return '<div class="rs-row two"><div><label for="rs-ro">Rondas</label><input id="rs-ro" inputmode="numeric" placeholder="ej. 6" value="' + esc(E.rondas || '') + '"></div>' +
+      '<div><label for="rs-re">Reps de la última ronda</label><input id="rs-re" inputmode="numeric" placeholder="ej. 14" value="' + esc(E.reps || '') + '"></div></div>';
+    if (tipo === 'Máximo') return '<div class="rs-row two"><div><label for="rs-mv">Resultado</label><input id="rs-mv" inputmode="decimal" placeholder="ej. 85" value="' + esc(E.valor || '') + '"></div>' +
+      '<div><label for="rs-mu">Unidad</label><select id="rs-mu">' + ['reps', 'cal', 'm'].map(function (u) { return '<option' + (E.unidad === u ? ' selected' : '') + '>' + u + '</option>'; }).join('') + '</select></div></div>';
+    if (tipo === 'Carga') return '<div class="rs-row"><div><label for="rs-kg">Kilos</label><input id="rs-kg" inputmode="decimal" placeholder="kg · ej. 102.5" value="' + esc(E.kg || '') + '"></div></div>';
+    return '<div class="rs-row two"><div><label for="rs-ca">Calorías</label><input id="rs-ca" inputmode="numeric" placeholder="cal · ej. 120" value="' + esc(E.cal || '') + '"></div>' +
+      '<div><label for="rs-km">Distancia</label><input id="rs-km" inputmode="decimal" placeholder="km · ej. 4.2" value="' + esc(E.km || '') + '"></div></div><div class="hint">Rellena una de las dos o ambas.</div>';
+  }
+  function enlazarCamposResultado() {
+    var cap = document.getElementById('rs-cap');
+    var bloquear = function (v) { ['h', 'm', 's'].forEach(function (k) { var e = document.getElementById('rs-t-' + k); if (e) e.disabled = v; }); var w = document.getElementById('rs-t'); if (w) w.classList.toggle('off', v); };
+    if (cap) { cap.onchange = function () { document.getElementById('rs-capw').hidden = !cap.checked; bloquear(cap.checked); }; if (cap.checked) bloquear(true); }
+    enlazarTiempo('rs-t');
+  }
+  function num1(v) { return String(v || '').trim().replace(',', '.'); }
+  /** Campos del formulario → texto de DATOS (o null si falta algo: ya avisa con un toast). */
+  function textoResultado(y) {
+    var t, m;
+    if (y.tipo === 'Tiempo') {
+      if (document.getElementById('rs-cap').checked) t = 'CAP + ' + (parseInt(val('rs-cr'), 10) || 0) + ' reps';
+      else { m = leerTiempo('rs-t'); if (!m) { toast(m === null ? 'Revisa el tiempo: los segundos van de 0 a 59.' : 'Pon tu tiempo (minutos y segundos).'); return null; } t = m; }
+    } else if (y.tipo === 'AMRAP') {
+      var ro = parseInt(val('rs-ro'), 10); if (!(ro >= 0) || val('rs-ro') === '') { toast('Pon las rondas.'); return null; }
+      var re = parseInt(val('rs-re'), 10) || 0; t = ro + ' rondas' + (re ? ' + ' + re + ' reps' : '');
+    } else if (y.tipo === 'Máximo') {
+      var v = num1(val('rs-mv')); if (!(parseFloat(v) >= 0) || v === '') { toast('Pon el resultado.'); return null; } t = v + ' ' + val('rs-mu');
+    } else if (y.tipo === 'Carga') {
+      var kg = num1(val('rs-kg')); if (!(parseFloat(kg) > 0)) { toast('Pon los kilos.'); return null; } t = kg + ' kg';
+    } else {
+      var ca = num1(val('rs-ca')), km = num1(val('rs-km')); if (!(parseFloat(ca) > 0) && !(parseFloat(km) > 0)) { toast('Pon calorías, distancia o las dos.'); return null; }
+      t = [parseFloat(ca) > 0 ? ca + ' cal' : '', parseFloat(km) > 0 ? km + ' km' : ''].filter(Boolean).join(' · ');
+    }
+    if (y.nivel === 'Adaptado') { var ad = val('rs-ad'); if (!ad) { toast('Cuenta en una línea qué adaptaste.'); return null; } t += ' · Adaptado: ' + ad; }
+    return t;
+  }
+  function abrirResultado(ref) {
+    var r = registroDe(ref.iso, ref.id) || {}, prevDat = String(r['DATOS (parciales/vatios)'] || '').trim(), o = leerResultado(prevDat);
+    var y = { tipo: o ? o.tipo : (ref.tp || 'Tiempo'), nivel: o ? o.nivel : 'RX' };
+    abrirHoja('<div class="row"><h2>Tu resultado</h2><button class="btn-ghost" data-close type="button">Ahora no</button></div>' +
+      '<div class="hint">' + esc(ref.bloque) + ' · ' + fechaCorta(ref.iso) + ' · se guarda en tu registro y se sincroniza con la app de Gabi</div>' +
+      '<label>Nivel</label>' + segRes('rs-niv', [['RX', 'RX'], ['Adaptado', 'Adaptado']], y.nivel) +
+      '<div id="rs-adw"' + (y.nivel === 'Adaptado' ? '' : ' hidden') + '><input id="rs-ad" maxlength="140" placeholder="Qué adaptaste · ej. T2B → knee raises, 40 kg" value="' + esc((o && o.adapt) || '') + '"></div>' +
+      '<label>Tipo de resultado</label>' + segRes('rs-tipo', TIPOS_RES, y.tipo) +
+      '<div id="rs-campos">' + camposResultado(y.tipo, o && o.tipo === y.tipo ? o : null) + '</div>' +
+      '<button class="btn btn-primary" type="button" id="rs-ok">Guardar resultado</button>' +
+      (o ? '<button class="btn" type="button" id="rs-del">Borrar mi resultado</button>' : ''));
+    enlazarCamposResultado();
+    $scrim.querySelectorAll('.seg').forEach(function (sg) {
+      sg.onclick = function (ev) {
+        var bt = ev.target.closest('button[data-val]'); if (!bt) return;
+        sg.querySelectorAll('button').forEach(function (z) { z.setAttribute('aria-pressed', String(z === bt)); });
+        if (sg.id === 'rs-tipo') { y.tipo = bt.dataset.val; document.getElementById('rs-campos').innerHTML = camposResultado(y.tipo, o && o.tipo === y.tipo ? o : null); enlazarCamposResultado(); }
+        if (sg.id === 'rs-niv') { y.nivel = bt.dataset.val; document.getElementById('rs-adw').hidden = y.nivel !== 'Adaptado'; }
+      };
+    });
+    var guardar = function (txt, boton, msg) {
+      var reg = Object.assign({}, r, { FECHA: aTxt(ref.iso), ID_PLAN: ref.id, BLOQUE: r.BLOQUE || ref.bloque, HECHO: !r.HECHO || r.HECHO === 'No' ? 'Sí' : r.HECHO, 'DATOS (parciales/vatios)': txt });
+      delete reg._fila; delete reg.REGISTRADO;
+      // unos parciales/vatios que no eran un resultado no se pierden: pasan a NOTAS
+      if (prevDat && !o && txt !== prevDat && String(r.NOTAS || '').indexOf(prevDat) < 0) reg.NOTAS = (r.NOTAS ? r.NOTAS + ' · ' : '') + 'Parciales: ' + prevDat;
+      if (y.tipo === 'Carga' && txt && !reg.CARGAS) reg.CARGAS = txt.split(' · ')[0];
+      boton.disabled = true; var txtBtn = boton.textContent; boton.textContent = 'Guardando…';
+      apiGuardar({ action: 'registrar', registro: reg }).then(ok).then(function (res) {
+        S.data.registro = S.data.registro.filter(function (z) { return !(z.FECHA === reg.FECHA && z.ID_PLAN === reg.ID_PLAN); }).concat([res.registro || reg]);
+        cerrarHoja(); repintarFila(ref.iso, ref.id); toast(res.cola ? msg + ' · se enviará al volver la conexión' : msg);
+      }).catch(function (er) { boton.disabled = false; boton.textContent = txtBtn; toast(mensajeError(er.message)); });
+    };
+    document.getElementById('rs-ok').onclick = function () { var txt = textoResultado(y); if (txt != null) guardar(txt, this, 'Resultado guardado'); };
+    var del = document.getElementById('rs-del');
+    if (del) del.onclick = function () { if (!confirmar(del, '¿Seguro? Pulsa otra vez')) return; guardar('', del, 'Resultado borrado'); };
+  }
+  /** Repinta solo la fila de un bloque (sin recargar el día), conservando «Valora el bloque» abierto. */
+  function repintarFila(iso, id) {
+    var w = [].filter.call(document.querySelectorAll('.reg-fila'), function (e) { return e.dataset.fila === iso + '|' + id; })[0];
+    var x = S.data && S.data.dias.filter(function (d) { return d.iso === iso; })[0];
+    var b = x && x.bloques.filter(function (y) { return idPlanDe(x, y) === id; })[0];
+    if (!w || !b) { render(); return; }
+    var abierto = !!(w.querySelector('details.rate-d') || {}).open, tmp = document.createElement('div');
+    tmp.innerHTML = filaRegistro(S.data, x, b);
+    var nuevo = tmp.firstElementChild, det = nuevo.querySelector('details.rate-d'); if (det && abierto) det.open = true;
+    w.replaceWith(nuevo);
+  }
+  /** RPE del bloque al tocar: se pinta ya y se guarda; si falla, vuelve a lo de antes. */
+  function guardarRpeBloque(rq, k) {
+    var prev = registroDe(rq.iso, rq.id), base = prev || {};
+    var tenia = !!(prev && String(prev['DATOS (parciales/vatios)'] || '').trim()), teniaRpe = !!(prev && String(prev.RPE || '').trim());
+    var rg = Object.assign({}, base, { FECHA: aTxt(rq.iso), ID_PLAN: rq.id, BLOQUE: base.BLOQUE || rq.bloque, HECHO: !base.HECHO || base.HECHO === 'No' ? 'Sí' : base.HECHO, RPE: String(k) });
+    delete rg._fila; delete rg.REGISTRADO;
+    var lista = S.data.registro, antes = lista.slice();
+    S.data.registro = lista.filter(function (y) { return !(y.FECHA === rg.FECHA && y.ID_PLAN === rg.ID_PLAN); }).concat([rg]);
+    repintarFila(rq.iso, rq.id);
+    apiGuardar({ action: 'registrar', registro: rg }).then(ok).then(function (res) {
+      S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === rg.FECHA && y.ID_PLAN === rg.ID_PLAN); }).concat([res.registro || rg]);
+      toast(res.cola ? 'RPE ' + k + ' · se enviará al volver la conexión' : 'RPE guardado');
+      if (rq.met && !teniaRpe && !tenia) setTimeout(function () { if ($scrim.hidden) abrirResultado(rq); }, 350);
+    }).catch(function (er) { S.data.registro = antes; repintarFila(rq.iso, rq.id); toast(mensajeError(er.message)); });
+  }
+
   function filaRegistro(d, x, b) {
-    var r = registroDe(x.iso, idPlanDe(x, b));
-    var est = r ? (r.HECHO === 'Sí' ? '<span class="reg-st ok">✔ Hecho</span>' : r.HECHO === 'Parcial' ? '<span class="reg-st part">◐ Parcial</span>' : '<span class="reg-st no">✕ No hecho</span>') +
-      (r.RPE ? '<span class="vb-v" style="--c:' + rpeColor(String(r.RPE)) + '">RPE ' + esc(r.RPE) + '</span>' : '') : '<span class="hint">Sin registrar</span>';
-    var dato = esc(JSON.stringify({ iso: x.iso, id: idPlanDe(x, b), bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo, run: esCarrera(b), tipo: tipoCarrera(b.titulo + ' ' + (b.intensidad || '') + ' ' + (b.origen || '')) }));
-    var cr = carreraDe(x.iso, idPlanDe(x, b));
+    var id = idPlanDe(x, b), r = registroDe(x.iso, id);
+    var est = r ? (r.HECHO === 'Sí' ? '<span class="reg-st ok">✔ Hecho</span>' : r.HECHO === 'Parcial' ? '<span class="reg-st part">◐ Parcial</span>' : '<span class="reg-st no">✕ No hecho</span>') : '<span class="hint">Sin registrar</span>';
+    var run = esCarrera(b), met = esMetcon(b);
+    var dato = esc(JSON.stringify({ iso: x.iso, id: id, bloque: (b.extra ? 'EXTRA · ' : b.n + ': ') + b.titulo, run: run, tipo: tipoCarrera(b.titulo + ' ' + (b.intensidad || '') + ' ' + (b.origen || '')), met: met, tp: tipoResultadoDe(b) }));
+    var cr = carreraDe(x.iso, id);
     var off = /NO HACER|CANCELADO|PROPUESTA/.test(norm(b.estado));
-    var nh = esc(JSON.stringify({ id: idPlanDe(x, b), fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }));
+    var nh = esc(JSON.stringify({ id: id, fecha: x.iso, titulo: b.titulo, turno: b.turno, orden: b.orden, ref: b.extra ? '' : (b.fabrikDia || x.nombre) + '·' + b.n }));
     if (cr) est += '<span class="vb-v run">🏃 ' + esc(cr['DISTANCIA (km)'] || '') + (cr['DISTANCIA (km)'] ? ' km' : '') + (cr['RITMO MEDIO (/km)'] ? ' · ' + esc(cr['RITMO MEDIO (/km)']) + '/km' : '') + (cr['FC MEDIA'] ? ' · ' + esc(cr['FC MEDIA']) + ' ppm' : '') + '</span>';
     var rapido = !r && !off && x.iso <= d.hoy ? '<button type="button" class="btn-ghost sm ok1" data-hecho="' + dato + '" aria-label="Marcar como hecho tal cual">✔ Hecho</button>' : '';
     if (rapido) est = '';
-    if (r && !r.RPE && r.HECHO !== 'No' && x.iso <= d.hoy && x.iso >= sumarDias(d.hoy, -1)) {
-      var chips = ''; for (var k = 1; k <= 10; k++) chips += '<button type="button" class="rpe-chip sm" style="--c:' + rpeColor(String(k)) + '" data-rpe-rap="' + k + '">' + k + '</button>';
-      est += '<span class="rpe-rap" data-rpe-blq="' + dato + '"><span class="hint">RPE</span>' + chips + '</span>';
-    }
-    return '<div class="reg-row">' + est + '<span class="grow"></span>' + (off || r ? '' : '<button type="button" class="btn-ghost sm" data-nohacer="' + nh + '">No hacer</button>') + rapido +
+    var fila = '<div class="reg-row">' + est + '<span class="grow"></span>' + (off || r ? '' : '<button type="button" class="btn-ghost sm" data-nohacer="' + nh + '">No hacer</button>') + rapido +
       '<button type="button" class="btn-ghost sm" data-reg="' + dato + '">' + (r ? 'Editar' : 'Registrar') + '</button></div>';
+    var rate = '';
+    if (!off && x.iso <= d.hoy) {   // como en la app de Gabi: solo se valora el día de hoy y los anteriores
+      var rpe = r ? String(r.RPE || '') : '', dat = r ? String(r['DATOS (parciales/vatios)'] || '').trim() : '', tieneRes = !!leerResultado(dat);
+      var chips = '<div class="chips" role="group" aria-label="RPE del 1 al 10">';
+      for (var k = 1; k <= 10; k++) chips += '<button type="button" class="rpe-chip' + (String(k) === rpe ? ' on' : '') + '" style="--c:' + rpeColor(String(k)) + '" data-rpe-rap="' + k + '" aria-pressed="' + (String(k) === rpe) + '">' + k + '</button>';
+      chips += '</div>';
+      rate = '<details class="rate-d"><summary>Valora el bloque<span class="vb-sum">' + (rpe ? '<span class="vb-v" style="--c:' + rpeColor(rpe) + '">RPE ' + esc(rpe) + '</span>' : '') +
+        (dat && r.HECHO !== 'No' ? '<span class="vb-r">' + esc(dat.length > 34 ? dat.slice(0, 33) + '…' : dat) + '</span>' : '') + '</span></summary>' +
+        '<div class="exp-body" data-rpe-blq="' + dato + '"><div class="hint">1 muy fácil · 10 esfuerzo máximo</div>' + chips +
+        (run ? '' : '<div class="vb-acc"><button type="button" class="btn-ghost" data-resultado="' + dato + '">' + (tieneRes ? 'Cambiar mi resultado' : '＋ Apuntar mi resultado') + '</button></div>') + '</div></details>';
+    }
+    return '<div class="reg-fila" data-fila="' + esc(x.iso + '|' + id) + '">' + fila + rate + '</div>';
   }
   function abrirRegistro(ref) {
     var r = registroDe(ref.iso, ref.id) || {};
@@ -1954,16 +2099,11 @@
       }).catch(falloApi(b));
       return;
     }
-    if ((b = t.closest('[data-rpe-rap]'))) {
-      var rq = JSON.parse(b.closest('[data-rpe-blq]').dataset.rpeBlq), prev = registroDe(rq.iso, rq.id) || {};
-      var rg2 = Object.assign({}, prev, { FECHA: aTxt(rq.iso), ID_PLAN: rq.id, BLOQUE: prev.BLOQUE || rq.bloque, HECHO: prev.HECHO || 'Sí', RPE: b.dataset.rpeRap });
-      delete rg2._fila; delete rg2.REGISTRADO;
-      apiGuardar({ action: 'registrar', registro: rg2 }).then(ok).then(function (res) {
-        S.data.registro = S.data.registro.filter(function (y) { return !(y.FECHA === rg2.FECHA && y.ID_PLAN === rg2.ID_PLAN); }).concat([res.registro || rg2]);
-        render(); toast('RPE ' + rg2.RPE + ' guardado');
-      }).catch(falloApi(null));
+    if ((b = t.closest('[data-rpe-rap]'))) {   // v0.34 · RPE del bloque: un toque y se guarda (como en la app de Gabi)
+      guardarRpeBloque(JSON.parse(b.closest('[data-rpe-blq]').dataset.rpeBlq), +b.dataset.rpeRap);
       return;
     }
+    if ((b = t.closest('[data-resultado]'))) { abrirResultado(JSON.parse(b.dataset.resultado)); return; }
     if ((b = t.closest('[data-mover]'))) {
       var mv = b.dataset.mover.split('|'), xd = S.data.dias[+mv[0]], bq = xd && xd.bloques.filter(function (y) { return (y.extra ? y.id : y.idPlan) === mv[1]; })[0];
       if (bq) abrirEditarBloque(bq, xd); return;
